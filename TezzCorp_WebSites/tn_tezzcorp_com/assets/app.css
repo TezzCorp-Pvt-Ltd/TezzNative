@@ -363,7 +363,7 @@ pre {
 }
 
 .nav-container {
-  max-width: 1400px;
+  max-width: 1280px;
   margin: 0 auto;
   padding: 10px 24px;
   display: flex;
@@ -2314,12 +2314,12 @@ pre code {
 }
 
 html.light pre {
-  background: #0f172a;
-  border-color: rgba(0, 0, 0, 0.12);
+  background: #f8fafc;
+  border-color: rgba(15, 23, 42, 0.12);
 }
 
 html.light pre code {
-  color: #e2e8f0;
+  color: #0f172a;
 }
 
 /* Strong, em, mark — ensure visibility in both modes */
@@ -3620,22 +3620,118 @@ html.light .warning-box {
   color: #0f172a !important;
 }
 
-/* Code & Terminal Dark Contrast Guard */
+/* ── Day Mode Light Theme for Code & Terminal Cards ────────── */
 html.light pre,
 html.light .code-view,
 html.light .code-snippet,
-html.light .terminal-cmd,
+html.light .editor-pane,
+html.light .tn-code-card,
 html.light .hero-terminal-card,
 html.light .terminal-body {
-  background: #0b1120 !important;
-  border: 1px solid rgba(56, 189, 248, 0.25) !important;
-  color: #f8fafc !important;
+  background: #f8fafc !important;
+  border: 1px solid rgba(15, 23, 42, 0.12) !important;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04) !important;
+  color: #0f172a !important;
 }
 
 html.light pre code,
 html.light .code-view code,
 html.light .code-snippet code,
-html.light .terminal-cmd code,
-html.light .terminal-output {
-  color: #38bdf8 !important;
+html.light .editor-pane code {
+  color: #0f172a !important;
+  background: transparent !important;
+}
+
+/* Day Mode Code Syntax Highlighting */
+html.light .kw,
+html.light .code-keyword {
+  color: #e11d48 !important; /* Rose keyword */
+  font-weight: 700 !important;
+}
+
+html.light .fn,
+html.light .code-fn {
+  color: #0284c7 !important; /* Azure function */
+  font-weight: 600 !important;
+}
+
+html.light .ty,
+html.light .code-type {
+  color: #7c3aed !important; /* Purple type */
+  font-weight: 600 !important;
+}
+
+html.light .str,
+html.light .code-string {
+  color: #059669 !important; /* Emerald string */
+}
+
+html.light .num,
+html.light .code-number {
+  color: #d97706 !important; /* Amber number */
+  font-weight: 600 !important;
+}
+
+html.light .cmt,
+html.light .code-comment {
+  color: #64748b !important; /* Slate comment */
+  font-style: italic !important;
+}
+
+/* Day Mode Terminal Strips */
+html.light .terminal-cmd {
+  background: #f1f5f9 !important;
+  border: 1px solid rgba(15, 23, 42, 0.12) !important;
+  color: #0f172a !important;
+}
+
+html.light .terminal-cmd code {
+  color: #0284c7 !important;
+  font-weight: 700 !important;
+  background: transparent !important;
+}
+
+html.light .terminal-header,
+html.light .run-header,
+html.light .playground-nav-tabs {
+  background: #f1f5f9 !important;
+  border-color: rgba(15, 23, 42, 0.1) !important;
+  color: #0f172a !important;
+}
+
+html.light .terminal-output,
+html.light .run-pane {
+  background: #ffffff !important;
+  border-color: rgba(15, 23, 42, 0.1) !important;
+  color: #334155 !important;
+}
+
+html.light .output-line {
+  color: #334155 !important;
+}
+
+html.light .output-line.success {
+  color: #059669 !important;
+  font-weight: 600 !important;
+}
+
+html.light .output-line.perf {
+  color: #0284c7 !important;
+  font-weight: 600 !important;
+}
+
+html.light .copy-btn,
+html.light .code-copy-btn,
+html.light .btn-copy {
+  background: #ffffff !important;
+  border: 1px solid rgba(15, 23, 42, 0.15) !important;
+  color: #475569 !important;
+}
+
+html.light .copy-btn:hover,
+html.light .code-copy-btn:hover,
+html.light .btn-copy:hover {
+  background: #f1f5f9 !important;
+  color: #0284c7 !important;
+  border-color: #0284c7 !important;
 }

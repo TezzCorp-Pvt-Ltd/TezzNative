@@ -1,199 +1,321 @@
 <?php
 declare(strict_types=1);
-$page_title = 'TezzCorp Blog — Technology, Engineering & Company Updates';
-$page_desc  = 'Articles on systems programming, AI, web engineering, and business technology from TezzCorp Pvt Ltd and Rohit Pathak.';
-$active_nav = 'blog';
-include '../includes/header.php';
 
-$posts = [
-  [
-    'slug' => 'tezznative-v1-launch',
-    'cat' => 'Language',
-    'cat_c' => 'var(--blue)',
-    'cat_bg' => 'rgba(59,130,246,.12)',
-    'date' => 'May 15, 2026',
-    'author' => 'Rohit Pathak',
-    'read' => '8 min',
-    'title' => 'Introducing TezzNative v1.0 — A New Era of Systems Programming from India',
-    'excerpt' => 'TezzNative reaches its first stable release: a high-performance compiled language with a single-pass compiler, <50ms build times, native Win32 GUI, and a full ecosystem — all zero-dependency. Here\'s the story behind it.',
-  ],
-  [
-    'slug' => 'tezzllm-federated-ai',
-    'cat' => 'AI / ML',
-    'cat_c' => 'var(--indigo)',
-    'cat_bg' => 'rgba(99,102,241,.12)',
-    'date' => 'April 28, 2026',
-    'author' => 'Rohit Pathak',
-    'read' => '12 min',
-    'title' => 'How TezzLLM Achieves Zero-Dependency On-Device AI with Federated Training',
-    'excerpt' => 'A deep technical dive into the architecture of TezzLLM v2.0: byte-level BPE tokenization, RoPE positional encoding, SwiGLU feedforward networks, federated averaging across 8 parallel trainers, and the design decisions behind a 1M-parameter model that runs in 64MB of RAM.',
-  ],
-  [
-    'slug' => 'school-erp-bihar',
-    'cat' => 'Case Study',
-    'cat_c' => 'var(--green)',
-    'cat_bg' => 'rgba(16,185,129,.12)',
-    'date' => 'March 10, 2026',
-    'author' => 'Rohit Pathak',
-    'read' => '6 min',
-    'title' => 'Building a Full School ERP for Bihar — From Inception to Deployment in 30 Days',
-    'excerpt' => 'How TezzCorp designed and deployed a complete school ERP system — student admissions, fee collection, staff payroll, attendance tracking, and exam management — for a network of Bihar schools under tight deadlines.',
-  ],
-  [
-    'slug' => 'why-zero-dependencies',
-    'cat' => 'Engineering',
-    'cat_c' => 'var(--orange)',
-    'cat_bg' => 'rgba(245,158,11,.12)',
-    'date' => 'February 20, 2026',
-    'author' => 'Rohit Pathak',
-    'read' => '10 min',
-    'title' => 'Why Zero Dependencies Should Be Your Default — The Case for TezzNative\'s Philosophy',
-    'excerpt' => 'Modern software engineering has a dependency problem. TezzNative was built around the radical idea that an entire production stack — compiler, GUI, network, database, AI — should ship as a single binary with no external requirements. Here\'s why.',
-  ],
-  [
-    'slug' => 'crm-sales-automation',
-    'cat' => 'Business',
-    'cat_c' => 'var(--cyan)',
-    'cat_bg' => 'rgba(6,182,212,.12)',
-    'date' => 'January 15, 2026',
-    'author' => 'Rohit Pathak',
-    'read' => '5 min',
-    'title' => 'CRM vs. Manual Sales: How Automation Doubled Revenue for Our Clients',
-    'excerpt' => 'A breakdown of how TezzCorp\'s custom CRM implementations — with pipeline automation, lead scoring, and follow-up triggers — delivered 2x revenue improvement for small and medium businesses in India.',
-  ],
-  [
-    'slug' => 'tezzdb-architecture',
-    'cat' => 'Engineering',
-    'cat_c' => 'var(--purple)',
-    'cat_bg' => 'rgba(139,92,246,.12)',
-    'date' => 'December 8, 2025',
-    'author' => 'Rohit Pathak',
-    'read' => '9 min',
-    'title' => 'TezzDB Deep Dive — Building an ACID-Compliant Embedded Database in Pure TezzNative',
-    'excerpt' => 'The internals of TezzDB: B-tree storage, write-ahead logging for ACID compliance, single-file database format, and how we achieved SQLite-level reliability without touching a line of C or Rust.',
-  ],
+/**
+ * blog/index.php — TezzNative Official Engineering & Research Blog
+ * Dynamic MariaDB-driven article reader & feed with zero-CDN, zero-emoji, responsive Day/Night UI.
+ */
+
+require_once __DIR__ . '/../config/db.php';
+
+$requested_slug = trim((string)($_GET['slug'] ?? ''));
+
+// ── Fallback static posts if DB is ever unavailable ────────────────────────────
+$fallback_posts = [
+    [
+        'id'           => 1,
+        'slug'         => 'tezznative-v1-launch',
+        'category'     => 'Language',
+        'published_at' => '2026-05-15 10:00:00',
+        'author'       => 'Rohit Pathak',
+        'read_time'    => '8 min',
+        'title'        => 'Introducing TezzNative v1.0 — A New Era of Systems Programming from India',
+        'excerpt'      => 'TezzNative reaches its first stable release: a high-performance compiled language with a single-pass compiler, <50ms build times, native Win32 GUI, and a full ecosystem — all zero-dependency. Here is the story behind it.',
+        'content'      => "## The Vision: True Zero-Dependency Systems Programming\n\nFor decades, systems software development has been fractured between low-level speed with cumbersome toolchains and high-level productivity hampered by bloated garbage collectors.\n\nTezzNative was founded on 18 October 2022 by **Rohit Pathak** at **TEZZCORP PRIVATE LIMITED** to prove that engineers can have both: the clean syntax of Python paired with bare-metal x64 machine code generation.\n\n### Breakthrough Architectural Pillars:\n1. **Single-Pass Optimizing Direct PE/ELF Generator**: Emits standalone `.exe` binaries directly from syntax trees in under 50 milliseconds without invoking external linkers or C compilers.\n2. **First-Class 4D Tensor Arithmetic**: Native infix `@` matrix multiplication and element-wise SIMD AVX2 acceleration built directly into language grammar.\n3. **Deterministic Scoped RAII Lifetimes**: Zero garbage collection pauses, instant deterministic destruction via `defer`, and compile-time lifetime verification.\n4. **Hardware-Accelerated GUI Toolkit (`tzgui`)**: High-performance Win32, Direct2D, and OpenGL rendering loop at locked 60 FPS.",
+    ],
+    [
+        'id'           => 2,
+        'slug'         => 'tezzllm-federated-ai',
+        'category'     => 'AI / ML',
+        'published_at' => '2026-04-28 14:00:00',
+        'author'       => 'Rohit Pathak',
+        'read_time'    => '12 min',
+        'title'        => 'How TezzLLM Achieves Zero-Dependency On-Device AI with Federated Training',
+        'excerpt'      => 'A deep technical dive into the architecture of TezzLLM v2.0: byte-level BPE tokenization, RoPE positional encoding, SwiGLU feedforward networks, federated averaging across 8 parallel trainers, and running 1M+ parameters in 64MB RAM.',
+        'content'      => "## On-Device AI Without the Runtime Bloat\n\nMost modern AI runtimes demand gigabytes of Python packages, CUDA runtimes, and gigabytes of memory just to execute a forward pass.\n\n**TezzLLM** takes the opposite approach: engineered in pure TezzNative, it implements the full transformer stack down to byte-level BPE tokenization, Rotary Positional Embeddings (RoPE), SwiGLU activations, and KV-cache optimization in a zero-dependency binary running smoothly in 64MB of system RAM.",
+    ],
+    [
+        'id'           => 3,
+        'slug'         => 'why-zero-dependencies',
+        'category'     => 'Engineering',
+        'published_at' => '2026-02-20 09:30:00',
+        'author'       => 'Rohit Pathak',
+        'read_time'    => '10 min',
+        'title'        => 'Why Zero Dependencies Should Be Your Default — The Case for TezzNative\'s Philosophy',
+        'excerpt'      => 'Modern software engineering has a dependency crisis. TezzNative was built around the radical idea that an entire production stack — compiler, GUI, network, database, AI — should ship as a single binary with no external requirements.',
+        'content'      => "## Reclaiming Control Over Software Supply Chains\n\nWhen every project depends on thousands of transient npm or pip modules, security audits become impossible and build reproducibility degrades.\n\nTezzNative ships with its entire standard library, package manager, and framework ecosystem as self-contained, native code.",
+    ],
 ];
+
+// Helper to render markdown to simple HTML safely
+function tn_render_markdown(string $md): string {
+    $html = htmlspecialchars($md);
+    // Headings
+    $html = preg_replace('/^### (.*?)$/m', '<h3 style="font-size: 1.3rem; margin: 1.5rem 0 0.75rem; color: var(--text);">$1</h3>', $html);
+    $html = preg_replace('/^## (.*?)$/m', '<h2 style="font-size: 1.6rem; margin: 2rem 0 1rem; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 0.5rem;">$1</h2>', $html);
+    $html = preg_replace('/^# (.*?)$/m', '<h1 style="font-size: 2rem; margin: 2.2rem 0 1.2rem; color: var(--text);">$1</h1>', $html);
+    // Bold & italic
+    $html = preg_replace('/\*\*(.*?)\*\*/', '<strong>$1</strong>', $html);
+    $html = preg_replace('/\*(.*?)\*/', '<em>$1</em>', $html);
+    // Code blocks
+    $html = preg_replace('/```(.*?)```/s', '<pre class="code-view" style="margin: 1.25rem 0; padding: 1.25rem; border-radius: 8px; overflow-x: auto; font-family: var(--font-mono); font-size: 0.9rem;"><code>$1</code></pre>', $html);
+    $html = preg_replace('/`([^`]+)`/', '<code style="background: var(--bg2); padding: 2px 6px; border-radius: 4px; font-family: var(--font-mono); font-size: 0.88em; border: 1px solid var(--border);">$1</code>', $html);
+    // Unordered lists
+    $html = preg_replace('/^\- (.*?)$/m', '<li style="margin-left: 1.5rem; margin-bottom: 0.5rem; color: var(--text-secondary);">$1</li>', $html);
+    // Ordered lists
+    $html = preg_replace('/^\d+\. (.*?)$/m', '<li style="margin-left: 1.5rem; margin-bottom: 0.5rem; color: var(--text-secondary);">$1</li>', $html);
+    // Paragraphs
+    $html = nl2br($html);
+    return $html;
+}
+
+// ── Case 1: Display Single Article ─────────────────────────────────────────────
+if ($requested_slug !== '') {
+    $article = null;
+    try {
+        $pdo = tn_pdo();
+        $stmt = $pdo->prepare("SELECT * FROM tn_articles WHERE slug = ? AND status = 'published' LIMIT 1");
+        $stmt->execute([$requested_slug]);
+        $article = $stmt->fetch();
+        if ($article) {
+            $pdo->prepare("UPDATE tn_articles SET views = views + 1 WHERE id = ?")->execute([$article['id']]);
+        }
+    } catch (Throwable $e) {}
+
+    // Fallback check
+    if (!$article) {
+        foreach ($fallback_posts as $fp) {
+            if ($fp['slug'] === $requested_slug) {
+                $article = $fp;
+                break;
+            }
+        }
+    }
+
+    if ($article) {
+        $page_title = htmlspecialchars($article['title']) . ' — TezzNative Blog';
+        $page_desc  = htmlspecialchars($article['excerpt'] ?? '');
+        $active_nav = 'blog';
+        include __DIR__ . '/../includes/header.php';
+        ?>
+        <main id="main-content">
+          <article class="section" style="padding: 3.5rem 0 5rem;">
+            <div class="container" style="max-width: 860px; margin: 0 auto;">
+              <!-- Back to blog index -->
+              <div style="margin-bottom: 2rem;">
+                <a href="/blog/" style="display: inline-flex; align-items: center; gap: 8px; color: var(--blue); font-size: 0.9rem; font-weight: 600; text-decoration: none; transition: gap 0.2s;">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+                  Back to Engineering Blog
+                </a>
+              </div>
+
+              <!-- Header meta -->
+              <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 1.25rem;">
+                <span class="badge" style="background: rgba(14, 165, 233, 0.15); color: #0284c7; font-weight: 700; font-size: 0.78rem; text-transform: uppercase; padding: 4px 10px; border-radius: 9999px;">
+                  <?= htmlspecialchars($article['category'] ?? 'General') ?>
+                </span>
+                <span style="font-size: 0.85rem; color: var(--dim);">
+                  Published <?= date('F d, Y', strtotime($article['published_at'] ?? 'now')) ?>
+                </span>
+                <span style="font-size: 0.85rem; color: var(--dim);">&bull;</span>
+                <span style="font-size: 0.85rem; color: var(--dim);">
+                  <?= htmlspecialchars($article['read_time'] ?? '5 min') ?> read
+                </span>
+              </div>
+
+              <!-- Article Title -->
+              <h1 style="font-size: clamp(2rem, 4vw, 2.75rem); line-height: 1.2; font-weight: 800; color: var(--text); margin-bottom: 1.25rem; letter-spacing: -0.5px;">
+                <?= htmlspecialchars($article['title']) ?>
+              </h1>
+
+              <!-- Excerpt lead -->
+              <?php if (!empty($article['excerpt'])): ?>
+                <p style="font-size: 1.18rem; line-height: 1.6; color: var(--text-secondary); margin-bottom: 2.5rem; padding-bottom: 2rem; border-bottom: 1px solid var(--border);">
+                  <?= htmlspecialchars($article['excerpt']) ?>
+                </p>
+              <?php endif; ?>
+
+              <!-- Article Body -->
+              <div class="article-content" style="font-size: 1.05rem; line-height: 1.8; color: var(--text-secondary);">
+                <?= tn_render_markdown($article['content'] ?? '') ?>
+              </div>
+
+              <!-- Author Card & Footer -->
+              <div style="margin-top: 3.5rem; padding: 2rem; border-radius: 12px; background: var(--bg2); border: 1px solid var(--border); display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap;">
+                <div style="width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg, #00d2ff 0%, #0284c7 100%); display: flex; align-items: center; justify-content: center; font-weight: 800; color: #ffffff; font-size: 1.25rem; flex-shrink: 0;">
+                  RP
+                </div>
+                <div style="flex: 1; min-width: 220px;">
+                  <div style="font-size: 1.1rem; font-weight: 700; color: var(--text);">
+                    <?= htmlspecialchars($article['author'] ?? 'Rohit Pathak') ?>
+                  </div>
+                  <div style="font-size: 0.85rem; color: var(--dim); margin-top: 2px;">
+                    Founder &amp; Chief Architect &bull; TEZZCORP PRIVATE LIMITED
+                  </div>
+                  <p style="font-size: 0.88rem; color: var(--text-secondary); margin-top: 6px;">
+                    Designing next-generation zero-dependency programming languages, optimizing compilers, and high-performance native systems software.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </article>
+        </main>
+        <?php
+        include __DIR__ . '/../includes/footer.php';
+        exit;
+    }
+}
+
+// ── Case 2: Display Blog Feed ──────────────────────────────────────────────────
+$posts = [];
+try {
+    $pdo = tn_pdo();
+    $stmt = $pdo->query("SELECT * FROM tn_articles WHERE type = 'blog' AND status = 'published' ORDER BY featured DESC, published_at DESC");
+    $posts = $stmt->fetchAll();
+} catch (Throwable $e) {}
+
+if (empty($posts)) {
+    $posts = $fallback_posts;
+}
+
+$page_title = 'Engineering Blog — TezzNative Programming Language';
+$page_desc  = 'Official engineering blog: compiler internals, zero-GC memory models, native Win32 GUI, 4D tensor arithmetic, and on-device AI from TEZZCORP PRIVATE LIMITED.';
+$active_nav = 'blog';
+include __DIR__ . '/../includes/header.php';
 ?>
+
 <main id="main-content">
-  <!-- Hero -->
-  <section style="padding:4.5rem 0 3.5rem;border-bottom:1px solid var(--border)">
+  <!-- Hero Section -->
+  <section style="padding: 4.5rem 0 3.5rem; border-bottom: 1px solid var(--border);">
     <div class="container">
-      <div style="display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:1rem">
+      <div style="display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 1.5rem;">
         <div>
-          <div class="eyebrow">TezzCorp Blog</div>
-          <h1 id="blog-page-heading">Technology, Engineering &amp; Updates</h1>
-          <p style="font-size:1.0625rem;margin-top:.75rem;max-width:520px">
-            Insights on systems programming, AI/ML, software architecture, and business technology from the TezzCorp team.
+          <div class="eyebrow" style="color: var(--blue); font-weight: 700; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">Engineering &amp; Research</div>
+          <h1 id="blog-page-heading" style="font-size: clamp(2rem, 3.5vw, 2.8rem); font-weight: 800; color: var(--text); letter-spacing: -0.5px;">TezzNative Blog</h1>
+          <p style="font-size: 1.08rem; margin-top: 0.75rem; max-width: 580px; color: var(--text-secondary); line-height: 1.6;">
+            In-depth architecture articles on native compiler design, deterministic memory lifetimes, tensor acceleration, and systems engineering by Rohit Pathak.
           </p>
         </div>
-        <div style="display:flex;gap:.75rem;align-items:center">
-          <form role="search" style="display:flex;gap:.5rem" onsubmit="return false" id="blog-search-form">
-            <input type="search" placeholder="Search articles..." aria-label="Search blog posts"
-              id="blog-search-input"
-              style="padding:.5625rem 1rem;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:.875rem;font-family:var(--font);outline:none;width:220px;transition:border-color .2s"
-              onfocus="this.style.borderColor='var(--blue)'" onblur="this.style.borderColor='var(--border)'">
-            <button class="btn btn-secondary" type="submit" id="blog-search-btn">
-              <i class="material-icons" aria-hidden="true" style="font-size:1.1rem">search</i>
-            </button>
-          </form>
+
+        <div style="display: flex; gap: 0.75rem; align-items: center;">
+          <div style="position: relative; width: 240px;">
+            <input type="search" placeholder="Search articles..." aria-label="Search blog posts" id="blog-search-input"
+              style="width: 100%; padding: 0.65rem 1rem 0.65rem 2.2rem; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-size: 0.88rem; font-family: var(--font); outline: none; transition: border-color 0.2s;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--dim); pointer-events: none;"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          </div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- Posts Grid -->
-  <section class="section" aria-labelledby="blog-page-heading">
+  <!-- Posts Grid Section -->
+  <section class="section" aria-labelledby="blog-page-heading" style="padding: 3.5rem 0 5rem;">
     <div class="container">
       <div class="blog-grid" id="blog-posts-grid">
         <?php foreach ($posts as $i => $p): ?>
-        <article class="blog-card" id="blog-post-<?= $i + 1 ?>" aria-labelledby="blog-title-<?= $i + 1 ?>" data-title="<?= htmlspecialchars(strtolower($p['title'])) ?>">
-          <div class="blog-card-img" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;color:var(--blue)">
-            <?php
-              $postIcon = match($p['slug']) {
-                'tezzllm-federated-ai'   => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>',
-                'school-erp-bihar'       => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></svg>',
-                'why-zero-dependencies'  => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
-                'crm-sales-automation'   => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
-                'tezzdb-architecture'    => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>',
-                default                  => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/></svg>',
-              };
-              echo $postIcon;
-            ?>
+        <article class="blog-card" id="blog-post-<?= $i + 1 ?>" data-title="<?= htmlspecialchars(strtolower($p['title'])) ?>">
+          <div class="blog-card-img" aria-hidden="true" style="display: flex; align-items: center; justify-content: center; color: var(--blue);">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
           </div>
           <div class="blog-card-body">
-            <div class="blog-meta">
-              <span class="blog-category" style="background:<?= $p['cat_bg'] ?>;color:<?= $p['cat_c'] ?>">
-                <?= htmlspecialchars($p['cat']) ?>
+            <div class="blog-meta" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 0.75rem;">
+              <span class="blog-category" style="background: rgba(14, 165, 233, 0.12); color: #0284c7; font-weight: 700; font-size: 0.72rem; padding: 2px 8px; border-radius: 4px; text-transform: uppercase;">
+                <?= htmlspecialchars($p['category'] ?? 'Engineering') ?>
               </span>
-              <span class="blog-date"><?= htmlspecialchars($p['date']) ?></span>
-              <span class="blog-date">· <?= $p['read'] ?> read</span>
+              <span class="blog-date" style="font-size: 0.8rem; color: var(--dim);">
+                <?= date('M d, Y', strtotime($p['published_at'] ?? 'now')) ?>
+              </span>
+              <span class="blog-date" style="font-size: 0.8rem; color: var(--dim);">
+                &bull; <?= htmlspecialchars($p['read_time'] ?? '5 min') ?>
+              </span>
             </div>
-            <h3 id="blog-title-<?= $i + 1 ?>"><?= htmlspecialchars($p['title']) ?></h3>
-            <p><?= htmlspecialchars($p['excerpt']) ?></p>
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:1.25rem;flex-wrap:wrap;gap:.5rem">
-              <span style="font-size:.8125rem;color:var(--dim);display:inline-flex;align-items:center">
-                <i class="material-icons" aria-hidden="true" style="font-size:0.9rem;margin-right:0.25rem">person</i> <?= htmlspecialchars($p['author']) ?>
+
+            <h3 id="blog-title-<?= $i + 1 ?>" style="font-size: 1.15rem; font-weight: 700; color: var(--text); line-height: 1.4; margin-bottom: 0.6rem;">
+              <?= htmlspecialchars($p['title']) ?>
+            </h3>
+
+            <p style="font-size: 0.88rem; color: var(--muted); line-height: 1.5; margin-bottom: 1.25rem;">
+              <?= htmlspecialchars($p['excerpt'] ?? '') ?>
+            </p>
+
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 1rem; border-top: 1px solid var(--border); flex-wrap: wrap; gap: 0.5rem;">
+              <span style="font-size: 0.81rem; color: var(--dim); display: inline-flex; align-items: center; gap: 4px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                <?= htmlspecialchars($p['author'] ?? 'Rohit Pathak') ?>
               </span>
-              <a href="<?= htmlspecialchars($p['slug']) ?>.php" class="blog-card-link" id="blog-read-<?= $i + 1 ?>">
-                Read Article →
+              <a href="/blog/?slug=<?= urlencode($p['slug']) ?>" class="blog-card-link" style="display: inline-flex; align-items: center; gap: 4px; color: var(--blue); font-size: 0.85rem; font-weight: 600; text-decoration: none;">
+                Read Article
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
               </a>
             </div>
           </div>
         </article>
         <?php endforeach; ?>
       </div>
-      <p id="blog-no-results" style="display:none;text-align:center;color:var(--dim);padding:3rem 0">
-        No articles found for your search.
+
+      <p id="blog-no-results" style="display: none; text-align: center; color: var(--dim); padding: 3rem 0; font-size: 1rem;">
+        No articles found matching your search.
       </p>
     </div>
   </section>
 
-  <!-- Newsletter CTA -->
-  <section class="section-sm" style="background:var(--bg2);border-top:1px solid var(--border)">
+  <!-- Newsletter CTA (Zero CDN, Zero Emoji) -->
+  <section class="section-sm" style="background: var(--bg2); border-top: 1px solid var(--border); padding: 4rem 0;">
     <div class="container">
-      <div class="cta-box" style="max-width:640px;margin:0 auto">
-        <div class="eyebrow" style="color:var(--blue)">Get the Newsletter</div>
-        <h2 style="font-size:1.75rem">Fresh articles every week</h2>
-        <p>Subscribe and get TezzCorp's latest articles on systems programming, AI, and business technology delivered directly to your inbox.</p>
-        <form style="display:flex;gap:.75rem;flex-wrap:wrap;justify-content:center;margin-top:1.5rem" onsubmit="return false" id="blog-newsletter-form">
-          <input type="email" placeholder="your@email.com" aria-label="Email for newsletter"
-            style="flex:1;min-width:220px;padding:.6875rem 1rem;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius);color:var(--text);font-size:.9375rem;font-family:var(--font);outline:none">
-          <button class="btn btn-primary" type="submit" id="blog-subscribe-btn">
-            <i class="material-icons" aria-hidden="true" style="font-size:1.1rem;vertical-align:middle;margin-right:0.2rem">send</i> Subscribe
+      <div class="cta-box" style="max-width: 640px; margin: 0 auto; text-align: center;">
+        <div class="eyebrow" style="color: var(--blue); font-weight: 700; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">Stay Updated</div>
+        <h2 style="font-size: 1.85rem; font-weight: 800; color: var(--text); letter-spacing: -0.5px;">TezzNative Engineering Digest</h2>
+        <p style="font-size: 0.98rem; color: var(--text-secondary); margin-top: 0.75rem; line-height: 1.6;">
+          Receive updates on release versions, compiler benchmarks, and architecture papers directly from the development team at TEZZCORP PRIVATE LIMITED.
+        </p>
+        <form style="display: flex; gap: 0.75rem; flex-wrap: wrap; justify-content: center; margin-top: 1.75rem;" onsubmit="return handleSubscribe(event)">
+          <input type="email" id="nlEmail" placeholder="developer@example.com" aria-label="Email for newsletter" required
+            style="flex: 1; min-width: 240px; max-width: 340px; padding: 0.7rem 1.1rem; background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-size: 0.92rem; font-family: var(--font); outline: none;">
+          <button class="btn btn-primary" type="submit" id="nlBtn" style="display: inline-flex; align-items: center; gap: 6px; padding: 0.7rem 1.25rem;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+            Subscribe
           </button>
         </form>
+        <div id="nlSuccess" style="display: none; margin-top: 12px; color: #10b981; font-size: 0.88rem; font-weight: 600;">
+          Subscription confirmed. Thank you for following TezzNative!
+        </div>
       </div>
     </div>
   </section>
 </main>
 
 <script>
-// Live search
-var searchInput = document.getElementById('blog-search-input');
-var noResults = document.getElementById('blog-no-results');
-searchInput && searchInput.addEventListener('input', function() {
-  var q = this.value.toLowerCase().trim();
-  var cards = document.querySelectorAll('#blog-posts-grid .blog-card');
-  var found = 0;
-  cards.forEach(function(c) {
-    var title = c.dataset.title || '';
-    var show = !q || title.includes(q);
-    c.style.display = show ? '' : 'none';
-    if (show) found++;
+// Search filtering
+const searchInput = document.getElementById('blog-search-input');
+const noResults = document.getElementById('blog-no-results');
+if (searchInput) {
+  searchInput.addEventListener('input', function() {
+    const q = this.value.toLowerCase().trim();
+    const cards = document.querySelectorAll('#blog-posts-grid .blog-card');
+    let found = 0;
+    cards.forEach(card => {
+      const title = card.dataset.title || '';
+      const show = !q || title.includes(q);
+      card.style.display = show ? '' : 'none';
+      if (show) found++;
+    });
+    if (noResults) noResults.style.display = (found === 0) ? 'block' : 'none';
   });
-  noResults.style.display = found === 0 ? 'block' : 'none';
-});
+}
 
-// Newsletter
-document.getElementById('blog-newsletter-form').addEventListener('submit', function(e) {
+function handleSubscribe(e) {
   e.preventDefault();
-  var i = this.querySelector('input');
-  var b = document.getElementById('blog-subscribe-btn');
-  if (i.value) {
-    b.innerHTML = '<i class="material-icons" aria-hidden="true" style="font-size:1.1rem;vertical-align:middle;margin-right:0.2rem">check</i> Subscribed!';
-    i.value = '';
-    setTimeout(function() { b.innerHTML = '<i class="material-icons" aria-hidden="true" style="font-size:1.1rem;vertical-align:middle;margin-right:0.2rem">send</i> Subscribe'; }, 3000);
+  const email = document.getElementById('nlEmail').value;
+  if (email) {
+    document.getElementById('nlEmail').value = '';
+    document.getElementById('nlSuccess').style.display = 'block';
+    setTimeout(() => {
+      const msg = document.getElementById('nlSuccess');
+      if (msg) msg.style.display = 'none';
+    }, 4000);
   }
-});
+  return false;
+}
 </script>
-<?php include '../includes/footer.php'; ?>
+
+<?php include __DIR__ . '/../includes/footer.php'; ?>

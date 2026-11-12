@@ -62,6 +62,41 @@ body {
   transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+.sidebar-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--c-border-subtle);
+}
+
+.sidebar-header-row .sidebar-brand {
+  border-bottom: none;
+  flex: 1;
+}
+
+.sidebar-close-btn {
+  display: none;
+}
+
+/* Mobile Sidebar Backdrop */
+.sidebar-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.78);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 48;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.sidebar-backdrop.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .sidebar-brand {
   padding: 24px;
   display: flex;
@@ -872,18 +907,50 @@ select.form-control option {
 }
 
 @media (max-width: 900px) {
+  .sidebar-backdrop {
+    display: block;
+  }
+
   .console-sidebar {
     position: fixed;
     left: 0;
     top: 0;
     bottom: 0;
+    width: 280px;
+    max-width: 85vw;
     height: 100vh;
+    z-index: 50;
     transform: translateX(-100%);
-    box-shadow: 12px 0 36px rgba(0, 0, 0, 0.6);
+    box-shadow: 16px 0 48px rgba(0, 0, 0, 0.75);
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .console-sidebar.open {
     transform: translateX(0);
+  }
+
+  .sidebar-close-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    margin-right: 14px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--c-border-subtle);
+    border-radius: 8px;
+    color: var(--c-text-secondary);
+    font-size: 1.5rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+  }
+
+  .sidebar-close-btn:hover {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.35);
+    color: var(--c-danger);
   }
 
   .mobile-nav-toggle {
@@ -891,11 +958,11 @@ select.form-control option {
   }
 
   .console-topbar {
-    padding: 0 18px;
+    padding: 0 16px;
   }
 
   .console-body {
-    padding: 20px 16px;
+    padding: 20px 14px;
   }
 }
 

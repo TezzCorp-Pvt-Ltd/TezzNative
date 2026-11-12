@@ -35,17 +35,23 @@ try {
 <body>
 
 <div class="console-wrapper">
+  <!-- Mobile Sidebar Backdrop Overlay -->
+  <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
   <!-- Sidebar -->
   <aside class="console-sidebar" id="consoleSidebar">
-    <a href="/console/" class="sidebar-brand">
-      <div class="sidebar-emblem">
-        <img src="/assets/logo.png" alt="TezzNative">
-      </div>
-      <div>
-        <div class="sidebar-brand-title">Tezz<span style="color: #00d2ff;">Native</span></div>
-        <div class="sidebar-brand-sub">Command Console</div>
-      </div>
-    </a>
+    <div class="sidebar-header-row">
+      <a href="/console/" class="sidebar-brand">
+        <div class="sidebar-emblem">
+          <img src="/assets/logo.png" alt="TezzNative">
+        </div>
+        <div>
+          <div class="sidebar-brand-title">Tezz<span style="color: #00d2ff;">Native</span></div>
+          <div class="sidebar-brand-sub">Command Console</div>
+        </div>
+      </a>
+      <button type="button" class="sidebar-close-btn" id="sidebarCloseBtn" aria-label="Close Sidebar">&times;</button>
+    </div>
 
     <div class="sidebar-menu">
       <div class="sidebar-section-title">Core Management</div>

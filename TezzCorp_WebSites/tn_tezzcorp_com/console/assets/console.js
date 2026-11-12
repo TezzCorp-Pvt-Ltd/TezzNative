@@ -3,19 +3,56 @@
  */
 
 document.addEventListener('DOMContentLoaded', function () {
-  // 1. Mobile Sidebar Drawer Toggle & Overlay Click
+  // 1. Mobile Sidebar Drawer & Overlay Management
   const mobileToggle = document.getElementById('mobileNavToggle');
   const sidebar = document.getElementById('consoleSidebar');
+  const backdrop = document.getElementById('sidebarBackdrop');
+  const closeBtn = document.getElementById('sidebarCloseBtn');
+
+  function openSidebar() {
+    if (sidebar) sidebar.classList.add('open');
+    if (backdrop) backdrop.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeSidebar() {
+    if (sidebar) sidebar.classList.remove('open');
+    if (backdrop) backdrop.classList.remove('active');
+    document.body.style.overflow = '';
+  }
+
   if (mobileToggle && sidebar) {
     mobileToggle.addEventListener('click', function (e) {
       e.stopPropagation();
-      sidebar.classList.toggle('open');
-    });
-
-    document.addEventListener('click', function (e) {
-      if (sidebar.classList.contains('open') && !sidebar.contains(e.target) && !mobileToggle.contains(e.target)) {
-        sidebar.classList.remove('open');
+      if (sidebar.classList.contains('open')) {
+        closeSidebar();
+      } else {
+        openSidebar();
       }
+    });
+  }
+
+  if (closeBtn) {
+    closeBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      closeSidebar();
+    });
+  }
+
+  if (backdrop) {
+    backdrop.addEventListener('click', function () {
+      closeSidebar();
+    });
+  }
+
+  // Auto-close sidebar on mobile nav link click
+  if (sidebar) {
+    sidebar.querySelectorAll('.sidebar-item').forEach(function (link) {
+      link.addEventListener('click', function () {
+        if (window.innerWidth <= 900) {
+          closeSidebar();
+        }
+      });
     });
   }
 
@@ -49,9 +86,7 @@ document.addEventListener('DOMContentLoaded', function () {
       document.querySelectorAll('.c-modal-overlay.active, .modal-backdrop.active').forEach(function (m) {
         m.classList.remove('active');
       });
-      if (sidebar && sidebar.classList.contains('open')) {
-        sidebar.classList.remove('open');
-      }
+      closeSidebar();
     }
   });
 

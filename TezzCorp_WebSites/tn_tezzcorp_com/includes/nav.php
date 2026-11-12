@@ -60,18 +60,26 @@ function tn_nav(string $active = 'home'): void {
     return;
   }
   $rendered = true;
+  $ribbon = function_exists('tn_get_setting') ? tn_get_setting('announcement_ribbon') : null;
+  $banner_enabled = is_array($ribbon) ? !empty($ribbon['enabled']) : true;
+  $banner_badge = (is_array($ribbon) && !empty($ribbon['badge'])) ? $ribbon['badge'] : __('banner_badge', 'OFFICIAL RELEASE');
+  $banner_text = (is_array($ribbon) && !empty($ribbon['text'])) ? $ribbon['text'] : __('banner_text', 'High-Performance Systems & AI Language with Native Tensors, Coroutines & Zero-GC Execution!');
+  $banner_link_text = (is_array($ribbon) && !empty($ribbon['link_text'])) ? $ribbon['link_text'] : __('banner_link', 'Get TezzNative v1.0.0');
+  $banner_link_url = (is_array($ribbon) && !empty($ribbon['link_url'])) ? $ribbon['link_url'] : '/download/';
 ?>
+<?php if ($banner_enabled): ?>
 <!-- Top Announcement Ribbon -->
 <div class="announcement-banner">
   <div class="banner-container">
-    <span class="banner-badge"><?= __('banner_badge', 'OFFICIAL RELEASE') ?></span>
-    <span class="banner-text"><?= __('banner_text', 'High-Performance Systems & AI Language with Native Tensors, Coroutines & Zero-GC Execution!') ?></span>
-    <a href="/download/" class="banner-link">
-      <?= __('banner_link', 'Get TezzNative v1.0.0') ?>
+    <span class="banner-badge"><?= htmlspecialchars($banner_badge) ?></span>
+    <span class="banner-text"><?= htmlspecialchars($banner_text) ?></span>
+    <a href="<?= htmlspecialchars($banner_link_url) ?>" class="banner-link">
+      <?= htmlspecialchars($banner_link_text) ?>
       <svg class="icon-inline" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
     </a>
   </div>
 </div>
+<?php endif; ?>
 
 <!-- Primary Navigation Header -->
 <header class="main-header" id="mainHeader">
@@ -130,6 +138,25 @@ function tn_nav(string $active = 'home'): void {
             <div class="dropdown-item-content">
               <div class="dropdown-item-title"><?= __('nav_playground', 'Playground') ?></div>
               <div class="dropdown-item-desc">Interactive browser code runner</div>
+            </div>
+          </a>
+          <div class="dropdown-divider"></div>
+          <a href="/blog/" class="dropdown-item <?= ($active === 'blog') ? 'active' : '' ?>" role="menuitem">
+            <div class="dropdown-item-icon">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+            </div>
+            <div class="dropdown-item-content">
+              <div class="dropdown-item-title">Engineering Blog</div>
+              <div class="dropdown-item-desc">Architecture, deep dives & benchmarks</div>
+            </div>
+          </a>
+          <a href="/news.php" class="dropdown-item <?= ($active === 'news') ? 'active' : '' ?>" role="menuitem">
+            <div class="dropdown-item-icon">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 20H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v1m2 13a2 2 0 0 1-2-2V7m2 13a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"/></svg>
+            </div>
+            <div class="dropdown-item-content">
+              <div class="dropdown-item-title">News &amp; Releases</div>
+              <div class="dropdown-item-desc">Official company press &amp; launch notes</div>
             </div>
           </a>
           <div class="dropdown-divider"></div>
@@ -284,6 +311,14 @@ function tn_nav(string $active = 'home'): void {
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
         <span>Support</span>
       </a>
+      <a href="/blog/" class="sidebar-link <?= ($active === 'blog') ? 'active' : '' ?>">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        <span>Engineering Blog</span>
+      </a>
+      <a href="/news.php" class="sidebar-link <?= ($active === 'news') ? 'active' : '' ?>">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 20H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v1m2 13a2 2 0 0 1-2-2V7m2 13a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"/></svg>
+        <span>News &amp; Releases</span>
+      </a>
       <a href="/download/" class="sidebar-link <?= ($active === 'download') ? 'active' : '' ?>">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         <span><?= __('nav_downloads', 'All Downloads') ?></span>
@@ -346,5 +381,38 @@ function tn_page_shell_end(): void {
 
 function tn_footer(): void {
   require __DIR__ . '/footer.php';
+}
+
+function tn_badge(string $label, string $color = 'blue'): string {
+  $colorMap = [
+    'blue'    => 'badge-info',
+    'green'   => 'badge-success',
+    'amber'   => 'badge-warning',
+    'warning' => 'badge-warning',
+    'red'     => 'badge-danger',
+    'danger'  => 'badge-danger',
+  ];
+  $cls = $colorMap[strtolower($color)] ?? 'badge-info';
+  return '<span class="badge ' . $cls . '">' . htmlspecialchars($label) . '</span>';
+}
+
+function tn_code(string $title, string $code): void {
+?>
+  <div class="tn-code-card" style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); overflow: hidden; margin-bottom: 24px;">
+    <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; background: var(--bg-surface-raised); border-bottom: 1px solid var(--border-subtle);">
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <span style="width: 10px; height: 10px; border-radius: 50%; background: #ef4444; display: inline-block;"></span>
+        <span style="width: 10px; height: 10px; border-radius: 50%; background: #f59e0b; display: inline-block;"></span>
+        <span style="width: 10px; height: 10px; border-radius: 50%; background: #10b981; display: inline-block;"></span>
+        <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; color: var(--text-secondary); margin-left: 8px;"><?= htmlspecialchars($title) ?></span>
+      </div>
+      <button type="button" onclick="copySnippet(<?= htmlspecialchars(json_encode($code)) ?>, this)" class="btn btn-outline" style="padding: 3px 8px; font-size: 0.74rem;">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+        <span>Copy</span>
+      </button>
+    </div>
+    <pre class="code-view" style="margin: 0; padding: 20px; font-family: var(--font-mono); font-size: 0.88rem; line-height: 1.6; overflow-x: auto;"><code><?= htmlspecialchars($code) ?></code></pre>
+  </div>
+<?php
 }
 ?>

@@ -375,14 +375,33 @@ fn main() -> int:
       });
     });
 
-    // Run button animation
+    // Run button animation & live simulator
     if (runBtn) {
       runBtn.addEventListener('click', function () {
         var activeTab = document.querySelector('.tab-btn.active, .playground-tab.active');
         var key = activeTab ? (activeTab.getAttribute('data-tab') || activeTab.getAttribute('data-demo') || 'async') : 'async';
+        var badge = document.getElementById('termStatusBadge');
+        
+        runBtn.disabled = true;
+        runBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg><span>Compiling...</span>';
+        if (badge) {
+          badge.className = 'badge badge-warning';
+          badge.textContent = 'Building...';
+        }
+
         if (termOut) {
-          termOut.innerHTML = '<div class="output-line" style="color:#ff9933">[tezzc] Compiling and linking native binary...</div>';
-          setTimeout(function () { renderDemo(key); }, 400);
+          termOut.innerHTML = '<div class="output-line" style="color:#0ea5e9;">[tezzc] Parsing AST &amp; resolving 4D tensor types... (0.8ms)</div>' +
+                              '<div class="output-line" style="color:var(--text-tertiary);">[tezzc] Emitting standalone native x64 PE machine code...</div>';
+          
+          setTimeout(function () {
+            renderDemo(key);
+            runBtn.disabled = false;
+            runBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg><span>Run</span>';
+            if (badge) {
+              badge.className = 'badge badge-success';
+              badge.textContent = 'Exit: 0 (OK)';
+            }
+          }, 380);
         }
       });
     }

@@ -325,7 +325,28 @@ require_once __DIR__ . '/includes/nav.php';
       <div class="playground-content-grid">
         <!-- Editor Left -->
         <div class="editor-pane">
-          <pre class="code-view" id="codeView"><span class="cmt">// Native Async/Await Concurrency in TezzNative</span>
+          <!-- Editor Titlebar -->
+          <div class="editor-titlebar" style="display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; border-bottom: 1px solid var(--border-subtle); background: var(--bg-surface-raised);">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <div style="display: flex; gap: 5px;">
+                <span style="width: 10px; height: 10px; border-radius: 50%; background: #ef4444; display: inline-block;"></span>
+                <span style="width: 10px; height: 10px; border-radius: 50%; background: #f59e0b; display: inline-block;"></span>
+                <span style="width: 10px; height: 10px; border-radius: 50%; background: #10b981; display: inline-block;"></span>
+              </div>
+              <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; color: var(--text-primary); margin-left: 8px;">main.tn</span>
+              <span class="badge badge-info" style="font-size: 0.68rem; padding: 1px 6px;">PE64 Standalone</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <button type="button" id="playgroundRunBtn" class="btn btn-primary btn-sm" style="padding: 4px 12px; font-size: 0.78rem;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                <span>Run</span>
+              </button>
+              <button type="button" onclick="copySnippet(document.getElementById('codeView').innerText, this)" class="btn btn-outline btn-sm" style="padding: 4px 8px; font-size: 0.78rem;" title="Copy Code">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              </button>
+            </div>
+          </div>
+          <pre class="code-view" id="codeView" style="margin: 0; padding: 20px; font-family: var(--font-mono); font-size: 0.9rem; line-height: 1.65; overflow-x: auto;"><span class="cmt">// Native Async/Await Concurrency in TezzNative</span>
 <span class="kw">import</span> <span class="str">"task"</span>
 <span class="kw">import</span> <span class="str">"net"</span>
 
@@ -351,19 +372,22 @@ require_once __DIR__ . '/includes/nav.php';
 
         <!-- Terminal Output Right -->
         <div class="run-pane">
-          <div class="run-header">
-            <span class="run-status">Executable Output (Native x64)</span>
-            <span style="font-size: 0.76rem; color: #94a3b8; font-family: var(--font-mono);">Exit: 0</span>
+          <div class="run-header" style="display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; border-bottom: 1px solid var(--border-subtle); background: var(--bg-surface-raised);">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="run-status" style="font-weight: 700; font-size: 0.8rem;">OUTPUT &bull; x64 PE</span>
+              <span class="badge badge-success" id="termStatusBadge" style="font-size: 0.68rem; padding: 1px 6px;">Exit: 0 (OK)</span>
+            </div>
+            <span style="font-size: 0.74rem; color: var(--text-tertiary); font-family: var(--font-mono);">0.94ms &bull; 1.4 MB</span>
           </div>
-          <div class="terminal-output" id="terminalOutput">
-            <div class="output-line">[tezzc] Compiling main.tn to standalone native x64 binary...</div>
-            <div class="output-line">[tezzc] Native compilation finished in 4.2ms. Zero runtime overhead.</div>
+          <div class="terminal-output" id="terminalOutput" style="padding: 18px 20px; font-family: var(--font-mono); font-size: 0.85rem; line-height: 1.6;">
+            <div class="output-line" style="color: var(--text-tertiary);">[tezzc] Compiling main.tn to standalone native x64 binary...</div>
+            <div class="output-line" style="color: #0ea5e9;">[tezzc] Native compilation finished in 4.2ms. Zero runtime overhead.</div>
             <div class="output-line">Spawning concurrent async worker tasks...</div>
-            <div class="output-line">[Worker #1] HTTP GET https://api.tezzcorp.com/v1/user [uid=101] -&gt; 200 OK</div>
-            <div class="output-line">[Worker #2] HTTP GET https://api.tezzcorp.com/v1/user [uid=102] -&gt; 200 OK</div>
-            <div class="output-line success">Task 1 HTTP status: 200</div>
-            <div class="output-line success">Task 2 HTTP status: 200</div>
-            <div class="output-line perf">Execution time: 0.94ms | Peak RAM: 1.4 MB</div>
+            <div class="output-line" style="color: var(--text-secondary);">[Worker #1] HTTP GET https://api.tezzcorp.com/v1/user [uid=101] -&gt; 200 OK</div>
+            <div class="output-line" style="color: var(--text-secondary);">[Worker #2] HTTP GET https://api.tezzcorp.com/v1/user [uid=102] -&gt; 200 OK</div>
+            <div class="output-line success" style="color: #10b981; font-weight: 600;">Task 1 HTTP status: 200</div>
+            <div class="output-line success" style="color: #10b981; font-weight: 600;">Task 2 HTTP status: 200</div>
+            <div class="output-line perf" style="color: #00d2ff; font-weight: 600; margin-top: 6px;">Execution time: 0.94ms | Peak RAM: 1.4 MB</div>
           </div>
         </div>
       </div>

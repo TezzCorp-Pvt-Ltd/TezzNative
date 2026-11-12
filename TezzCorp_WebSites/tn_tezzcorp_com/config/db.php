@@ -55,6 +55,41 @@ function tn_pdo(): PDO {
     throw new RuntimeException("Unable to connect to database");
 }
 
+// ── Settings Helpers ──────────────────────────────────────────────────────────
+function tn_get_setting(string $key, $default = null) {
+    static $cache = [];
+    if (array_key_exists($key, $cache)) {
+        return $cache[$key];
+    }
+    try {
+        $pdo = tn_pdo();
+        $stmt = $pdo->prepare("SELECT setting_val FROM tn_settings WHERE setting_key = ?");
+        $stmt->execute([$key]);
+        $val = $stmt->fetchColumn();
+        if ($val === false) {
+            $cache[$key] = $default;
+            return $default;
+        }
+        $decoded = json_decode((string)$val, true);
+        $res = (json_last_error() === JSON_ERROR_NONE) ? $decoded : $val;
+        $cache[$key] = $res;
+        return $res;
+    } catch (Throwable $e) {
+        return $default;
+    }
+}
+
+function tn_set_setting(string $key, $value): bool {
+    try {
+        $pdo = tn_pdo();
+        $raw = (is_array($value) || is_object($value)) ? json_encode($value, JSON_UNESCAPED_SLASHES) : (string)$value;
+        $stmt = $pdo->prepare("INSERT INTO tn_settings (setting_key, setting_val) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_val = VALUES(setting_val)");
+        return $stmt->execute([$key, $raw]);
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
 // ── Legacy array for includes that do `$cfg = require 'db.php'` ──────────────
 return [
     'site_name'      => 'TezzNative Language',
