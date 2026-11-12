@@ -1,0 +1,488 @@
+// tzgpu_wm.tn — TezzNative GPU Window Manager v1.1
+//
+// Multi-window compositor with GPU-accelerated drop shadows, Z-ordering,
+// drag/resize, minimize/maximize, and animated window transitions.
+//
+// Works on top of tzgpu_ui (which provides the canvas + draw calls).
+
+import "tzgpu_ui"
+import "tween"
+import "gpu_render"
+
+// ── Constants ──────────────────────────────────────────────────────────────
+
+let WM_MAX_WINDOWS:int  = 16
+let WM_TITLEBAR_H:int   = 30
+let WM_BORDER_W:int     = 1
+let WM_MIN_W:int        = 120
+let WM_MIN_H:int        = 60
+let WM_RESIZE_GRIP:int  = 8
+
+// Window state flags
+let WM_STATE_NORMAL:int   = 0
+let WM_STATE_MINIMIZED:int = 1
+let WM_STATE_MAXIMIZED:int = 2
+
+// Close/Min/Max button sizes
+let WM_BTN_SZ:int = 14
+let WM_BTN_GAP:int = 6
+
+// ── Global Window Pool ─────────────────────────────────────────────────────
+
+let g_win_id:[int;16]
+let g_win_alive:[int;16]
+let g_win_title:[str;16]
+let g_win_x:[int;16]
+let g_win_y:[int;16]
+let g_win_w:[int;16]
+let g_win_h:[int;16]
+let g_win_z:[int;16]
+let g_win_state:[int;16]
+let g_win_focused:[int;16]
+let g_win_saved_x:[int;16]
+let g_win_saved_y:[int;16]
+let g_win_saved_w:[int;16]
+let g_win_saved_h:[int;16]
+let g_win_drag_ox:[int;16]
+let g_win_drag_oy:[int;16]
+let g_win_accent:[int;16]
+let g_win_open_tick:[int;16]
+
+// ── Window Manager Struct ──────────────────────────────────────────────────
+
+struct TzGpuWM:
+  count:int
+  next_id:int
+  focused_id:int
+  drag_id:int
+  resize_id:int
+
+// ── Init ──────────────────────────────────────────────────────────────────
+
+fn wm_init(wm:*TzGpuWM) -> int:
+  if wm == 0:
+    ret (0 - 1)
+  wm[0].count      = 0
+  wm[0].next_id    = 1
+  wm[0].focused_id = 0
+  wm[0].drag_id    = 0
+  wm[0].resize_id  = 0
+  i:int = 0
+  while i < WM_MAX_WINDOWS:
+    g_win_alive[i] = 0
+    g_win_id[i]    = 0
+    i = i + 1
+  ret 0
+
+// ── Internal helpers ──────────────────────────────────────────────────────
+
+fn _wm_find_slot(wm:*TzGpuWM) -> int:
+  i:int = 0
+  while i < WM_MAX_WINDOWS:
+    if g_win_alive[i] == 0:
+      ret i
+    i = i + 1
+  ret (0 - 1)
+
+fn _wm_slot_by_id(wm:*TzGpuWM, id:int) -> int:
+  i:int = 0
+  while i < WM_MAX_WINDOWS:
+    if g_win_alive[i] != 0 && g_win_id[i] == id:
+      ret i
+    i = i + 1
+  ret (0 - 1)
+
+fn _wm_hit(mx:int, my:int, x:int, y:int, w:int, h:int) -> int:
+  if mx < x || my < y || mx >= x+w || my >= y+h:
+    ret 0
+  ret 1
+
+// ── Window creation / destruction ─────────────────────────────────────────
+
+fn wm_open(wm:*TzGpuWM, title:str, x:int, y:int, w:int, h:int, accent:int) -> int:
+  if wm == 0:
+    ret (0 - 1)
+  slot:int = _wm_find_slot(wm)
+  if slot < 0:
+    ret (0 - 1)
+  if w < WM_MIN_W:
+    w = WM_MIN_W
+  if h < WM_MIN_H:
+    h = WM_MIN_H
+  g_win_alive[slot]     = 1
+  g_win_id[slot]        = wm[0].next_id
+  g_win_title[slot]     = title
+  g_win_x[slot]         = x
+  g_win_y[slot]         = y
+  g_win_w[slot]         = w
+  g_win_h[slot]         = h
+  g_win_z[slot]         = wm[0].count
+  g_win_state[slot]     = WM_STATE_NORMAL
+  g_win_focused[slot]   = 1
+  g_win_accent[slot]    = accent
+  g_win_open_tick[slot] = 0
+  wm[0].focused_id = wm[0].next_id
+  wm[0].next_id    = wm[0].next_id + 1
+  wm[0].count      = wm[0].count + 1
+  ret g_win_id[slot]
+
+fn wm_close(wm:*TzGpuWM, id:int) -> int:
+  slot:int = _wm_slot_by_id(wm, id)
+  if slot < 0:
+    ret (0 - 1)
+  g_win_alive[slot] = 0
+  if wm[0].count > 0:
+    wm[0].count = wm[0].count - 1
+  if wm[0].focused_id == id:
+    wm[0].focused_id = 0
+  ret 0
+
+// ── Bring to front ────────────────────────────────────────────────────────
+
+fn wm_focus(wm:*TzGpuWM, id:int) -> int:
+  slot:int = _wm_slot_by_id(wm, id)
+  if slot < 0:
+    ret (0 - 1)
+  max_z:int = 0
+  i:int = 0
+  while i < WM_MAX_WINDOWS:
+    if g_win_alive[i] != 0 && g_win_z[i] > max_z:
+      max_z = g_win_z[i]
+    i = i + 1
+  g_win_z[slot]       = max_z + 1
+  g_win_focused[slot] = 1
+  wm[0].focused_id    = id
+  i = 0
+  while i < WM_MAX_WINDOWS:
+    if g_win_alive[i] != 0 && g_win_id[i] != id:
+      g_win_focused[i] = 0
+    i = i + 1
+  ret 0
+
+// ── Maximize / Minimize ───────────────────────────────────────────────────
+
+fn wm_maximize(wm:*TzGpuWM, id:int, screen_w:int, screen_h:int) -> int:
+  slot:int = _wm_slot_by_id(wm, id)
+  if slot < 0:
+    ret (0 - 1)
+  if g_win_state[slot] == WM_STATE_MAXIMIZED:
+    g_win_x[slot]     = g_win_saved_x[slot]
+    g_win_y[slot]     = g_win_saved_y[slot]
+    g_win_w[slot]     = g_win_saved_w[slot]
+    g_win_h[slot]     = g_win_saved_h[slot]
+    g_win_state[slot] = WM_STATE_NORMAL
+  else:
+    g_win_saved_x[slot] = g_win_x[slot]
+    g_win_saved_y[slot] = g_win_y[slot]
+    g_win_saved_w[slot] = g_win_w[slot]
+    g_win_saved_h[slot] = g_win_h[slot]
+    g_win_x[slot]       = 0
+    g_win_y[slot]       = 0
+    g_win_w[slot]       = screen_w
+    g_win_h[slot]       = screen_h
+    g_win_state[slot]   = WM_STATE_MAXIMIZED
+  ret 0
+
+fn wm_minimize(wm:*TzGpuWM, id:int) -> int:
+  slot:int = _wm_slot_by_id(wm, id)
+  if slot < 0:
+    ret (0 - 1)
+  g_win_state[slot] = WM_STATE_MINIMIZED
+  ret 0
+
+fn wm_restore(wm:*TzGpuWM, id:int) -> int:
+  slot:int = _wm_slot_by_id(wm, id)
+  if slot < 0:
+    ret (0 - 1)
+  g_win_state[slot] = WM_STATE_NORMAL
+  ret 0
+
+// ── Sort order (insertion sort by Z) ─────────────────────────────────────
+
+fn _wm_sort_z(order:*int, n:int) -> int:
+  if n <= 1:
+    ret 0
+  i:int = 1
+  unsafe:
+    while i < n:
+      key:int = order[i]
+      j:int   = i - 1
+      while j >= 0:
+        az:int = g_win_z[order[j]]
+        kz:int = g_win_z[key]
+        if az <= kz:
+          break
+        order[j+1] = order[j]
+        j = j - 1
+      order[j+1] = key
+      i = i + 1
+  ret 0
+
+// ── Draw a single window ──────────────────────────────────────────────────
+
+fn _wm_draw_window(wm:*TzGpuWM, ctx:*TzGpuCtx, slot:int) -> int:
+  if g_win_alive[slot] == 0 || g_win_state[slot] == WM_STATE_MINIMIZED:
+    ret 0
+
+  x:int  = g_win_x[slot]
+  y:int  = g_win_y[slot]
+  ww:int = g_win_w[slot]
+  hh:int = g_win_h[slot]
+
+  g_win_open_tick[slot] = g_win_open_tick[slot] + ctx[0].dt
+  open_t:int = g_win_open_tick[slot] * 1000 / 280
+  if open_t > 1000:
+    open_t = 1000
+  if open_t < 1000:
+    hh = hh * open_t / 1000
+    if hh < WM_TITLEBAR_H:
+      hh = WM_TITLEBAR_H
+
+  accent:int = g_win_accent[slot]
+  if accent == 0:
+    accent = ctx[0].theme_accent
+
+  // Shadow
+  if g_win_focused[slot] != 0:
+    gpu_render.gpr_shadow(&ctx[0].canvas, x, y, ww, hh, 8, 160)
+  else:
+    gpu_render.gpr_shadow(&ctx[0].canvas, x, y, ww, hh, 4, 90)
+
+  // Window body
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x, y, ww, hh, 0x111A2B, 8)
+
+  // Client area surface
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x+1, y+WM_TITLEBAR_H+1, ww-2, hh-WM_TITLEBAR_H-2, 0x0C1322, 0)
+
+  // Titlebar
+  tb_color:int = 0x152033
+  if g_win_focused[slot] != 0:
+    tb_color = 0x18253D
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x, y, ww, WM_TITLEBAR_H, tb_color, 8)
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x, y+WM_TITLEBAR_H-6, ww, 6, tb_color, 0)
+
+  // Titlebar top sheen & bottom divider
+  gpu_render.gpr_sheen(&ctx[0].canvas, x+8, y, ww-16, 0x364B6E)
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x, y+WM_TITLEBAR_H, ww, 1, 0x223048, 0)
+
+  // Titlebar accent line when focused
+  if g_win_focused[slot] != 0:
+    gpu_render.gpr_gradient_h(&ctx[0].canvas, x+10, y, 70, 2, accent, gpu_render.gpr_brighten(accent, 40))
+
+  // Title text
+  gpu_render.gpr_text_ex(&ctx[0].canvas, x+14, y+10, g_win_title[slot], 0xF8FAFC, 1, 1)
+
+  // Window controls
+  by:int = y + (WM_TITLEBAR_H - WM_BTN_SZ) / 2
+
+  // Close button (red circle)
+  bx:int = x + ww - WM_BTN_SZ - WM_BTN_GAP
+  close_hot:int = tzgpu_ui._gu_hit(ctx, bx, by, WM_BTN_SZ, WM_BTN_SZ)
+  close_c:int = 0xF43F5E
+  if close_hot != 0:
+    close_c = 0xFB7185
+  gpu_render.gpr_circle(&ctx[0].canvas, bx + WM_BTN_SZ/2, by + WM_BTN_SZ/2, WM_BTN_SZ/2 + 1, 0x080D16)
+  gpu_render.gpr_circle(&ctx[0].canvas, bx + WM_BTN_SZ/2, by + WM_BTN_SZ/2, WM_BTN_SZ/2, close_c)
+
+  // Maximize button (green circle)
+  bx2:int = bx - WM_BTN_SZ - WM_BTN_GAP
+  max_hot:int = tzgpu_ui._gu_hit(ctx, bx2, by, WM_BTN_SZ, WM_BTN_SZ)
+  max_c:int = 0x10B981
+  if max_hot != 0:
+    max_c = 0x34D399
+  gpu_render.gpr_circle(&ctx[0].canvas, bx2 + WM_BTN_SZ/2, by + WM_BTN_SZ/2, WM_BTN_SZ/2 + 1, 0x080D16)
+  gpu_render.gpr_circle(&ctx[0].canvas, bx2 + WM_BTN_SZ/2, by + WM_BTN_SZ/2, WM_BTN_SZ/2, max_c)
+
+  // Minimize button (amber circle)
+  bx3:int = bx2 - WM_BTN_SZ - WM_BTN_GAP
+  min_hot:int = tzgpu_ui._gu_hit(ctx, bx3, by, WM_BTN_SZ, WM_BTN_SZ)
+  min_c:int = 0xF59E0B
+  if min_hot != 0:
+    min_c = 0xFBBF24
+  gpu_render.gpr_circle(&ctx[0].canvas, bx3 + WM_BTN_SZ/2, by + WM_BTN_SZ/2, WM_BTN_SZ/2 + 1, 0x080D16)
+  gpu_render.gpr_circle(&ctx[0].canvas, bx3 + WM_BTN_SZ/2, by + WM_BTN_SZ/2, WM_BTN_SZ/2, min_c)
+
+  // Border outline
+  bc:int = 0x223048
+  if g_win_focused[slot] != 0:
+    bc = 0x364B6E
+  gpu_render.gpr_outline(&ctx[0].canvas, x, y, ww, hh, bc)
+
+  // Bottom-right resize grip indicator
+  rx:int = x + ww - 10
+  ry:int = y + hh - 10
+  gpu_render.gpr_pixel(&ctx[0].canvas, rx+6, ry+6, 0x64748B)
+  gpu_render.gpr_pixel(&ctx[0].canvas, rx+4, ry+6, 0x64748B)
+  gpu_render.gpr_pixel(&ctx[0].canvas, rx+6, ry+4, 0x64748B)
+  gpu_render.gpr_pixel(&ctx[0].canvas, rx+2, ry+6, 0x475569)
+  gpu_render.gpr_pixel(&ctx[0].canvas, rx+4, ry+4, 0x475569)
+  gpu_render.gpr_pixel(&ctx[0].canvas, rx+6, ry+2, 0x475569)
+
+  ret 0
+
+// ── Process input for all windows ─────────────────────────────────────────
+
+fn wm_process(wm:*TzGpuWM, ctx:*TzGpuCtx) -> int:
+  if wm == 0 || ctx == 0:
+    ret 0
+
+  mx:int = ctx[0].mx
+  my:int = ctx[0].my
+  lmb:int = (ctx[0].mb & 1)
+  lmb_down:int = lmb != 0 && (ctx[0].pmb & 1) == 0
+
+  // Handle ongoing drag
+  if wm[0].drag_id != 0:
+    slot:int = _wm_slot_by_id(wm, wm[0].drag_id)
+    if slot >= 0 && lmb != 0:
+      g_win_x[slot] = mx - g_win_drag_ox[slot]
+      g_win_y[slot] = my - g_win_drag_oy[slot]
+      if g_win_x[slot] < 0:
+        g_win_x[slot] = 0
+      if g_win_y[slot] < 0:
+        g_win_y[slot] = 0
+    else:
+      wm[0].drag_id = 0
+
+  // Handle resize
+  if wm[0].resize_id != 0:
+    slot:int = _wm_slot_by_id(wm, wm[0].resize_id)
+    if slot >= 0 && lmb != 0:
+      new_w:int = mx - g_win_x[slot]
+      new_h:int = my - g_win_y[slot]
+      if new_w < WM_MIN_W:
+        new_w = WM_MIN_W
+      if new_h < WM_MIN_H:
+        new_h = WM_MIN_H
+      g_win_w[slot] = new_w
+      g_win_h[slot] = new_h
+    else:
+      wm[0].resize_id = 0
+
+  if lmb_down == 0:
+    ret 0
+
+  // Build sorted window order (Z order: highest on top)
+  order:[int;16]
+  n_order:int = 0
+  i:int = 0
+  while i < WM_MAX_WINDOWS:
+    if g_win_alive[i] != 0 && g_win_state[i] != WM_STATE_MINIMIZED:
+      order[n_order] = i
+      n_order = n_order + 1
+    i = i + 1
+  unsafe:
+    _wm_sort_z(&order[0], n_order)
+
+  // Check top-to-bottom (reversed Z order = highest Z first)
+  j:int = n_order - 1
+  while j >= 0:
+    slot:int = order[j]
+    x:int  = g_win_x[slot]
+    y:int  = g_win_y[slot]
+    ww:int = g_win_w[slot]
+    hh:int = g_win_h[slot]
+    id:int = g_win_id[slot]
+
+    if _wm_hit(mx, my, x, y, ww, hh) != 0:
+      wm_focus(wm, id)
+
+      // Check close btn
+      bx:int  = x + ww - WM_BTN_SZ - WM_BTN_GAP
+      by:int  = y + (WM_TITLEBAR_H - WM_BTN_SZ) / 2
+      if _wm_hit(mx, my, bx, by, WM_BTN_SZ, WM_BTN_SZ) != 0:
+        wm_close(wm, id)
+        ret id
+
+      // Maximize
+      bx2:int = bx - WM_BTN_SZ - WM_BTN_GAP
+      if _wm_hit(mx, my, bx2, by, WM_BTN_SZ, WM_BTN_SZ) != 0:
+        wm_maximize(wm, id, ctx[0].W, ctx[0].H)
+        ret id
+
+      // Minimize
+      bx3:int = bx2 - WM_BTN_SZ - WM_BTN_GAP
+      if _wm_hit(mx, my, bx3, by, WM_BTN_SZ, WM_BTN_SZ) != 0:
+        wm_minimize(wm, id)
+        ret id
+
+      // Titlebar drag
+      if _wm_hit(mx, my, x, y, ww, WM_TITLEBAR_H) != 0 && g_win_state[slot] != WM_STATE_MAXIMIZED:
+        wm[0].drag_id = id
+        g_win_drag_ox[slot] = mx - x
+        g_win_drag_oy[slot] = my - y
+        ret id
+
+      // Resize grip (bottom-right corner)
+      if _wm_hit(mx, my, x+ww-WM_RESIZE_GRIP, y+hh-WM_RESIZE_GRIP, WM_RESIZE_GRIP, WM_RESIZE_GRIP) != 0:
+        wm[0].resize_id = id
+        ret id
+
+      ret id
+
+    j = j - 1
+
+  // Click on desktop — unfocus all
+  i = 0
+  while i < WM_MAX_WINDOWS:
+    g_win_focused[i] = 0
+    i = i + 1
+  wm[0].focused_id = 0
+  ret 0
+
+// ── Draw all windows in Z order ───────────────────────────────────────────
+
+fn wm_draw(wm:*TzGpuWM, ctx:*TzGpuCtx) -> int:
+  if wm == 0 || ctx == 0:
+    ret (0 - 1)
+  order:[int;16]
+  n_order:int = 0
+  i:int = 0
+  while i < WM_MAX_WINDOWS:
+    if g_win_alive[i] != 0:
+      order[n_order] = i
+      n_order = n_order + 1
+    i = i + 1
+  unsafe:
+    _wm_sort_z(&order[0], n_order)
+  j:int = 0
+  while j < n_order:
+    _wm_draw_window(wm, ctx, order[j])
+    j = j + 1
+  ret n_order
+
+// ── Get client area for a window (inside titlebar + borders) ──────────────
+
+fn wm_client_x(wm:*TzGpuWM, id:int) -> int:
+  slot:int = _wm_slot_by_id(wm, id)
+  if slot < 0:
+    ret 0
+  ret g_win_x[slot] + WM_BORDER_W
+
+fn wm_client_y(wm:*TzGpuWM, id:int) -> int:
+  slot:int = _wm_slot_by_id(wm, id)
+  if slot < 0:
+    ret WM_TITLEBAR_H
+  ret g_win_y[slot] + WM_TITLEBAR_H
+
+fn wm_client_w(wm:*TzGpuWM, id:int) -> int:
+  slot:int = _wm_slot_by_id(wm, id)
+  if slot < 0:
+    ret 0
+  ret g_win_w[slot] - 2 * WM_BORDER_W
+
+fn wm_client_h(wm:*TzGpuWM, id:int) -> int:
+  slot:int = _wm_slot_by_id(wm, id)
+  if slot < 0:
+    ret 0
+  ret g_win_h[slot] - WM_TITLEBAR_H - WM_BORDER_W
+
+fn wm_is_focused(wm:*TzGpuWM, id:int) -> int:
+  if wm == 0:
+    ret 0
+  ret wm[0].focused_id == id
+
+fn wm_window_count(wm:*TzGpuWM) -> int:
+  if wm == 0:
+    ret 0
+  ret wm[0].count

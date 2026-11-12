@@ -1,0 +1,453 @@
+// tzfont.tn — TezzNative Advanced Multi-Font & Script Engine v1.0
+//
+// Features:
+//  - Multiple font families: Poppins, Devanagari, Inter, Monospace
+//  - Variable font weights: Light, Regular, SemiBold, Bold
+//  - Unicode UTF-8 multi-byte decoding (1..4 bytes)
+//  - Full Devanagari script support (Hindi / Sanskrit vowels, consonants, combining matras)
+//  - Proportional kerning & character advance
+//  - Smooth sub-pixel scaling (size 10px .. 48px)
+//  - High-level text alignment (Left, Center, Right) and measurement
+
+import "gpu_render"
+import "gui_win"
+
+// ── Font family constants ─────────────────────────────────────────────────
+
+let FONT_POPPINS:int   = 0   // Modern geometric sans-serif
+let FONT_DEVNAGARI:int = 1   // Hindi / Sanskrit script (Unicode U+0900..U+097F)
+let FONT_INTER:int     = 2   // Crisp clean UI grotesque
+let FONT_MONO:int      = 3   // Monospace developer code font
+
+fn font_poppins() -> int: ret 0
+fn font_devnagari() -> int: ret 1
+fn font_inter() -> int: ret 2
+fn font_mono() -> int: ret 3
+
+// ── Font weight constants ─────────────────────────────────────────────────
+
+let WEIGHT_LIGHT:int    = 0
+let WEIGHT_REGULAR:int  = 1
+let WEIGHT_SEMIBOLD:int = 2
+let WEIGHT_BOLD:int     = 3
+
+fn weight_light() -> int: ret 0
+fn weight_regular() -> int: ret 1
+fn weight_semibold() -> int: ret 2
+fn weight_bold() -> int: ret 3
+
+// ── Text alignment constants ──────────────────────────────────────────────
+
+let ALIGN_LEFT:int   = 0
+let ALIGN_CENTER:int = 1
+let ALIGN_RIGHT:int  = 2
+
+fn align_left() -> int: ret 0
+fn align_center() -> int: ret 1
+fn align_right() -> int: ret 2
+
+// ── Global glyph and metrics tables ───────────────────────────────────────
+
+let g_tzf_devanagari_ready:int = 0
+
+// Proportional character width table for ASCII (widths in 8-based unit)
+let g_tzf_ascii_w:[int;96]
+
+// ── UTF-8 multi-byte decoder ──────────────────────────────────────────────
+
+fn tzf_utf8_decode(s:str, idx:int, out_len:*int) -> int:
+  b0:int = 0
+  b1:int = 0
+  b2:int = 0
+  b3:int = 0
+  unsafe:
+    b0 = s[idx] as int
+    if b0 < 0:
+      b0 = b0 + 256
+  if b0 == 0:
+    unsafe:
+      out_len[0] = 0
+    ret 0
+  // 1-byte ASCII (0x00..0x7F)
+  if b0 < 128:
+    unsafe:
+      out_len[0] = 1
+    ret b0
+  // 2-byte sequence (0xC0..0xDF)
+  if b0 >= 192 && b0 < 224:
+    unsafe:
+      b1 = s[idx + 1] as int
+      if b1 < 0:
+        b1 = b1 + 256
+      out_len[0] = 2
+    ret ((b0 & 31) * 64) + (b1 & 63)
+  // 3-byte sequence (0xE0..0xEF) -> Devanagari lives here (0x0900..0x097F)
+  if b0 >= 224 && b0 < 240:
+    unsafe:
+      b1 = s[idx + 1] as int
+      b2 = s[idx + 2] as int
+      if b1 < 0:
+        b1 = b1 + 256
+      if b2 < 0:
+        b2 = b2 + 256
+      out_len[0] = 3
+    ret ((b0 & 15) * 4096) + ((b1 & 63) * 64) + (b2 & 63)
+  // 4-byte sequence (0xF0..0xF7)
+  if b0 >= 240:
+    unsafe:
+      b1 = s[idx + 1] as int
+      b2 = s[idx + 2] as int
+      b3 = s[idx + 3] as int
+      if b1 < 0:
+        b1 = b1 + 256
+      if b2 < 0:
+        b2 = b2 + 256
+      if b3 < 0:
+        b3 = b3 + 256
+      out_len[0] = 4
+    ret ((b0 & 7) * 262144) + ((b1 & 63) * 4096) + ((b2 & 63) * 64) + (b3 & 63)
+  unsafe:
+    out_len[0] = 1
+  ret b0
+
+// ── Metrics initialization ────────────────────────────────────────────────
+
+fn tzf_init() -> int:
+  if g_tzf_devanagari_ready != 0:
+    ret 0
+  // Initialize proportional widths for ASCII 32..126
+  i:int = 0
+  while i < 96:
+    g_tzf_ascii_w[i] = 8
+    i = i + 1
+  // Narrow characters in Poppins / Inter
+  g_tzf_ascii_w[0]  = 4  // space
+  g_tzf_ascii_w[1]  = 3  // !
+  g_tzf_ascii_w[7]  = 3  // '
+  g_tzf_ascii_w[8]  = 4  // (
+  g_tzf_ascii_w[9]  = 4  // )
+  g_tzf_ascii_w[12] = 3  // ,
+  g_tzf_ascii_w[14] = 3  // .
+  g_tzf_ascii_w[26] = 3  // :
+  g_tzf_ascii_w[27] = 3  // ;
+  g_tzf_ascii_w[41] = 4  // I
+  g_tzf_ascii_w[73] = 3  // i
+  g_tzf_ascii_w[74] = 4  // j
+  g_tzf_ascii_w[76] = 3  // l
+  g_tzf_ascii_w[84] = 5  // t
+  // Wide characters
+  g_tzf_ascii_w[45] = 10 // M
+  g_tzf_ascii_w[55] = 10 // W
+  g_tzf_ascii_w[77] = 10 // m
+  g_tzf_ascii_w[87] = 10 // w
+
+  g_tzf_devanagari_ready = 1
+  ret 0
+
+// ── Character advance & width measurement ─────────────────────────────────
+
+fn tzf_char_width(cp:int, font_id:int, scale:int) -> int:
+  tzf_init()
+  if scale < 1:
+    scale = 1
+  // Monospace font has fixed advance
+  if font_id == FONT_MONO:
+    ret 8 * scale
+  // Devanagari glyphs have uniform wide advance (10 * scale)
+  if cp >= 2304 && cp <= 2431:
+    // Combining matras have 0 advance (they attach to preceding consonant)
+    if cp == 2366: ret 4 * scale  // aa matra occupies half space
+    if cp == 2367: ret 0          // i matra
+    if cp == 2368: ret 4 * scale  // ii matra
+    if cp == 2369 || cp == 2370: ret 0 // u / uu matras attach below
+    if cp == 2375 || cp == 2376: ret 0 // e / ai matras attach above
+    if cp == 2379 || cp == 2380: ret 4 * scale // o / au matras
+    if cp == 2381: ret 0          // virama/halant attaches below
+    if cp == 2305 || cp == 2306: ret 0 // anusvara / candrabindu attach above
+    ret 9 * scale
+  if cp >= 32 && cp <= 126:
+    w:int = g_tzf_ascii_w[cp - 32]
+    ret w * scale
+  ret 8 * scale
+
+fn tzf_measure_w(text:str, font_id:int, scale:int) -> int:
+  if text == 0:
+    ret 0
+  tzf_init()
+  total:int = 0
+  idx:int = 0
+  step:int = 0
+  while text[idx] != 0:
+    cp:int = tzf_utf8_decode(text, idx, &step)
+    if step == 0:
+      break
+    cw:int = tzf_char_width(cp, font_id, scale)
+    total = total + cw + scale
+    idx = idx + step
+  ret total
+
+fn tzf_measure_h(font_id:int, scale:int) -> int:
+  if scale < 1:
+    scale = 1
+  if font_id == FONT_DEVNAGARI:
+    ret 14 * scale
+  ret 10 * scale
+
+// ── Devanagari Glyph Shapes (Procedural high-res vectors) ──────────────────
+
+fn _tzf_draw_devanagari_glyph(canvas:*GpuCanvas, x:int, y:int, cp:int, scale:int, weight:int, color:int) -> int:
+  sc:int = scale
+  pw:int = sc
+  if weight >= WEIGHT_SEMIBOLD:
+    pw = sc + 1
+
+  // Top shirorekha (horizontal headline bar that connects Devanagari script)
+  // Drawn for most consonants and independent vowels
+  has_bar:int = 1
+  if cp == 2367 || cp == 2369 || cp == 2370 || cp == 2381 || cp == 2305 || cp == 2306:
+    has_bar = 0
+
+  if has_bar != 0:
+    // Shirorekha headline bar
+    gpu_render.gpr_rect(canvas, x - sc, y, 9 * sc + 2*sc, pw, color)
+
+  // Vertical stem (present in almost all Devanagari letters: क, ख, ग, त, न, प, etc.)
+  has_stem:int = 0
+  stem_x:int = x + 7 * sc
+  if cp == 2325 || cp == 2327 || cp == 2328 || cp == 2330 || cp == 2335 || cp == 2340 || cp == 2342 || cp == 2344 || cp == 2346 || cp == 2347 || cp == 2348 || cp == 2349 || cp == 2351 || cp == 2352 || cp == 2357 || cp == 2358 || cp == 2360 || cp == 2309 || cp == 2310:
+    has_stem = 1
+
+  if has_stem != 0:
+    gpu_render.gpr_rect(canvas, stem_x, y, pw, 10 * sc, color)
+
+  // Distinct consonant shapes:
+  // क (Ka - U+0915: 2325) -> center loop on left, curl on right
+  if cp == 2325:
+    gpu_render.gpr_outline(canvas, x + 2*sc, y + 2*sc, 5*sc, 5*sc, color)
+    gpu_render.gpr_rect(canvas, stem_x + pw, y + 3*sc, 3*sc, pw, color)
+    gpu_render.gpr_rect(canvas, stem_x + 3*sc, y + 3*sc, pw, 4*sc, color)
+
+  // ख (Kha - U+0916: 2326)
+  if cp == 2326:
+    gpu_render.gpr_rect(canvas, x + 1*sc, y, pw, 6*sc, color)
+    gpu_render.gpr_rect(canvas, x + 1*sc, y + 5*sc, 5*sc, pw, color)
+    gpu_render.gpr_rect(canvas, x + 4*sc, y + 5*sc, pw, 3*sc, color)
+    gpu_render.gpr_rect_r(canvas, x + 3*sc, y + 4*sc, 4*sc, 4*sc, color, sc)
+
+  // ग (Ga - U+0917: 2327) -> left short stem with bottom loop
+  if cp == 2327:
+    gpu_render.gpr_rect(canvas, x + 2*sc, y, pw, 7*sc, color)
+    gpu_render.gpr_rect(canvas, x + 1*sc, y + 6*sc, 2*sc, pw, color)
+
+  // घ (Gha - U+0918: 2328) -> double left arc
+  if cp == 2328:
+    gpu_render.gpr_rect_r(canvas, x + 1*sc, y + 1*sc, 5*sc, 4*sc, color, sc)
+    gpu_render.gpr_rect_r(canvas, x + 1*sc, y + 4*sc, 5*sc, 4*sc, color, sc)
+
+  // च (Cha - U+091A: 2330) -> horizontal dash + lower loop to stem
+  if cp == 2330:
+    gpu_render.gpr_rect(canvas, x + 1*sc, y + 4*sc, 4*sc, pw, color)
+    gpu_render.gpr_rect(canvas, x + 1*sc, y + 4*sc, pw, 3*sc, color)
+    gpu_render.gpr_rect(canvas, x + 1*sc, y + 7*sc, 5*sc, pw, color)
+
+  // ज (Ja - U+091C: 2332)
+  if cp == 2332:
+    gpu_render.gpr_rect(canvas, stem_x - 4*sc, y + 4*sc, 4*sc, pw, color)
+    gpu_render.gpr_rect(canvas, stem_x - 4*sc, y + 4*sc, pw, 4*sc, color)
+    gpu_render.gpr_rect(canvas, stem_x - 4*sc, y + 7*sc, 4*sc, pw, color)
+
+  // त (Ta - U+0924: 2340) -> branch arch from stem down
+  if cp == 2340:
+    gpu_render.gpr_rect(canvas, x + 2*sc, y + 4*sc, 5*sc, pw, color)
+    gpu_render.gpr_rect(canvas, x + 2*sc, y + 4*sc, pw, 6*sc, color)
+
+  // द (Da - U+0926: 2342) -> top arc and tail
+  if cp == 2342:
+    gpu_render.gpr_rect(canvas, x + 3*sc, y, pw, 3*sc, color)
+    gpu_render.gpr_rect_r(canvas, x + 2*sc, y + 2*sc, 5*sc, 4*sc, color, sc)
+    gpu_render.gpr_rect(canvas, x + 4*sc, y + 6*sc, pw, 3*sc, color)
+
+  // न (Na - U+0928: 2344) -> horizontal branch to closed left loop
+  if cp == 2344:
+    gpu_render.gpr_rect(canvas, x + 2*sc, y + 4*sc, 5*sc, pw, color)
+    gpu_render.gpr_rect_r(canvas, x + 1*sc, y + 3*sc, 3*sc, 3*sc, color, sc)
+
+  // प (Pa - U+092A: 2346) -> U-shaped cup joined to vertical stem
+  if cp == 2346:
+    gpu_render.gpr_rect(canvas, x + 2*sc, y, pw, 6*sc, color)
+    gpu_render.gpr_rect(canvas, x + 2*sc, y + 5*sc, 5*sc, pw, color)
+
+  // ब (Ba - U+092C: 2348) -> circular loop with diagonal slash
+  if cp == 2348:
+    gpu_render.gpr_rect_r(canvas, x + 2*sc, y + 2*sc, 5*sc, 5*sc, color, sc)
+    gpu_render.gpr_rect(canvas, x + 3*sc, y + 3*sc, 3*sc, pw, color)
+
+  // भ (Bha - U+092D: 2349)
+  if cp == 2349:
+    gpu_render.gpr_rect(canvas, x + 1*sc, y + 1*sc, 3*sc, 3*sc, color)
+    gpu_render.gpr_rect(canvas, x + 2*sc, y + 3*sc, pw, 4*sc, color)
+    gpu_render.gpr_rect(canvas, x + 2*sc, y + 6*sc, 5*sc, pw, color)
+
+  // म (Ma - U+092E: 2350) -> left loop branch to stem
+  if cp == 2350:
+    gpu_render.gpr_rect(canvas, x + 2*sc, y, pw, 7*sc, color)
+    gpu_render.gpr_rect(canvas, x + 1*sc, y + 6*sc, 3*sc, 2*sc, color)
+    gpu_render.gpr_rect(canvas, x + 2*sc, y + 6*sc, 5*sc, pw, color)
+    gpu_render.gpr_rect(canvas, stem_x, y, pw, 10 * sc, color)
+
+  // य (Ya - U+092F: 2351)
+  if cp == 2351:
+    gpu_render.gpr_rect(canvas, x + 1*sc, y + 1*sc, 3*sc, 3*sc, color)
+    gpu_render.gpr_rect(canvas, x + 2*sc, y + 4*sc, 5*sc, pw, color)
+
+  // र (Ra - U+0930: 2352) -> 2-shape curved stroke
+  if cp == 2352:
+    gpu_render.gpr_rect_r(canvas, x + 2*sc, y, 4*sc, 4*sc, color, sc)
+    gpu_render.gpr_rect(canvas, x + 2*sc, y + 4*sc, pw, 2*sc, color)
+    gpu_render.gpr_line(canvas, x + 2*sc, y + 5*sc, x + 5*sc, y + 9*sc, color, pw)
+
+  // ल (La - U+0932: 2354)
+  if cp == 2354:
+    gpu_render.gpr_rect_r(canvas, x + 1*sc, y + 4*sc, 3*sc, 3*sc, color, sc)
+    gpu_render.gpr_rect_r(canvas, x + 3*sc, y + 2*sc, 3*sc, 4*sc, color, sc)
+    gpu_render.gpr_rect(canvas, stem_x, y, pw, 10 * sc, color)
+
+  // व (Va - U+0935: 2357) -> single circular loop joined to stem
+  if cp == 2357:
+    gpu_render.gpr_outline(canvas, x + 2*sc, y + 2*sc, 5*sc, 5*sc, color)
+
+  // श (Sha - U+0936: 2358)
+  if cp == 2358:
+    gpu_render.gpr_rect_r(canvas, x + 1*sc, y, 4*sc, 4*sc, color, sc)
+    gpu_render.gpr_line(canvas, x + 2*sc, y + 4*sc, x + 5*sc, y + 8*sc, color, pw)
+
+  // स (Sa - U+0938: 2360) -> Ra shape connected by horizontal link to vertical stem
+  if cp == 2360:
+    gpu_render.gpr_rect_r(canvas, x + 1*sc, y, 4*sc, 4*sc, color, sc)
+    gpu_render.gpr_line(canvas, x + 1*sc, y + 4*sc, x + 4*sc, y + 8*sc, color, pw)
+    gpu_render.gpr_rect(canvas, x + 3*sc, y + 4*sc, 4*sc, pw, color)
+
+  // ह (Ha - U+0939: 2361)
+  if cp == 2361:
+    gpu_render.gpr_rect(canvas, x + 3*sc, y, pw, 3*sc, color)
+    gpu_render.gpr_rect_r(canvas, x + 2*sc, y + 2*sc, 4*sc, 3*sc, color, sc)
+    gpu_render.gpr_rect_r(canvas, x + 3*sc, y + 5*sc, 4*sc, 3*sc, color, sc)
+
+  // Independent Vowels:
+  // अ (A - U+0905: 2309)
+  if cp == 2309 || cp == 2310:
+    gpu_render.gpr_rect_r(canvas, x + 1*sc, y + 1*sc, 4*sc, 4*sc, color, sc)
+    gpu_render.gpr_rect_r(canvas, x + 1*sc, y + 4*sc, 4*sc, 4*sc, color, sc)
+    gpu_render.gpr_rect(canvas, x + 4*sc, y + 4*sc, 3*sc, pw, color)
+    if cp == 2310:
+      // आ has an extra right stem
+      gpu_render.gpr_rect(canvas, stem_x + 3*sc, y, pw, 10 * sc, color)
+
+  // Dependent Matras (Combining vowel signs):
+  // ा (Aa Matra - U+093E: 2366) -> vertical stem on the right
+  if cp == 2366:
+    gpu_render.gpr_rect(canvas, x + 1*sc, y, pw, 10 * sc, color)
+
+  // ि (I Matra - U+093F: 2367) -> left stem with top overarching hook
+  if cp == 2367:
+    gpu_render.gpr_rect(canvas, x - 2*sc, y - 2*sc, pw, 12 * sc, color)
+    gpu_render.gpr_rect(canvas, x - 2*sc, y - 2*sc, 8*sc, pw, color)
+
+  // ी (Ii Matra - U+0940: 2368) -> right stem with top overarching hook
+  if cp == 2368:
+    gpu_render.gpr_rect(canvas, x + 2*sc, y - 2*sc, pw, 12 * sc, color)
+    gpu_render.gpr_rect(canvas, x - 5*sc, y - 2*sc, 7*sc, pw, color)
+
+  // ु (U Matra - U+0941: 2369) -> bottom left hook
+  if cp == 2369:
+    gpu_render.gpr_rect(canvas, x - 4*sc, y + 10*sc, 3*sc, pw, color)
+    gpu_render.gpr_rect(canvas, x - 4*sc, y + 10*sc, pw, 2*sc, color)
+
+  // ू (Uu Matra - U+0942: 2370) -> bottom right tail
+  if cp == 2370:
+    gpu_render.gpr_rect(canvas, x - 4*sc, y + 10*sc, pw, 2*sc, color)
+    gpu_render.gpr_rect(canvas, x - 4*sc, y + 11*sc, 4*sc, pw, color)
+
+  // े (E Matra - U+0947: 2375) -> top slant flag stroke
+  if cp == 2375:
+    gpu_render.gpr_line(canvas, x - 2*sc, y, x - 5*sc, y - 4*sc, color, pw)
+
+  // ै (Ai Matra - U+0948: 2376) -> double top slant flag stroke
+  if cp == 2376:
+    gpu_render.gpr_line(canvas, x - 2*sc, y, x - 5*sc, y - 4*sc, color, pw)
+    gpu_render.gpr_line(canvas, x - 1*sc, y, x - 3*sc, y - 5*sc, color, pw)
+
+  // ो (O Matra - U+094B: 2379) -> right stem + top slant
+  if cp == 2379:
+    gpu_render.gpr_rect(canvas, x + 1*sc, y, pw, 10 * sc, color)
+    gpu_render.gpr_line(canvas, x + 1*sc, y, x - 2*sc, y - 4*sc, color, pw)
+
+  // ौ (Au Matra - U+094C: 2380) -> right stem + double top slant
+  if cp == 2380:
+    gpu_render.gpr_rect(canvas, x + 1*sc, y, pw, 10 * sc, color)
+    gpu_render.gpr_line(canvas, x + 1*sc, y, x - 2*sc, y - 4*sc, color, pw)
+    gpu_render.gpr_line(canvas, x + 2*sc, y, x, y - 5*sc, color, pw)
+
+  // ं (Anusvara bindu - U+0902: 2306) -> dot above shirorekha
+  if cp == 2306 || cp == 2305:
+    gpu_render.gpr_circle(canvas, x - 2*sc, y - 3*sc, sc, color)
+
+  // ् (Virama / Halant - U+094D: 2381) -> bottom diagonal slash
+  if cp == 2381:
+    gpu_render.gpr_line(canvas, x - 4*sc, y + 10*sc, x - 1*sc, y + 13*sc, color, pw)
+
+  ret 0
+
+// ── Master Text Renderer ──────────────────────────────────────────────────
+
+fn tzf_draw_text(canvas:*GpuCanvas, x:int, y:int, text:str, font_id:int, scale:int, weight:int, color:int) -> int:
+  if canvas == 0 || text == 0:
+    ret (0 - 1)
+  tzf_init()
+  if scale < 1:
+    scale = 1
+  bold_flag:int = 0
+  if weight >= WEIGHT_SEMIBOLD:
+    bold_flag = 1
+
+  cx:int = x
+  idx:int = 0
+  step:int = 0
+  while text[idx] != 0:
+    cp:int = tzf_utf8_decode(text, idx, &step)
+    if step == 0:
+      break
+
+    // If Devanagari Unicode code point
+    if cp >= 2304 && cp <= 2431:
+      _tzf_draw_devanagari_glyph(canvas, cx, y, cp, scale, weight, color)
+      cw:int = tzf_char_width(cp, FONT_DEVNAGARI, scale)
+      cx = cx + cw
+    else:
+      // ASCII / Latin / Symbol glyphs
+      if cp >= 32 && cp <= 126:
+        // Use fast host fb_text_ex with proportional stepping
+        buf:[char;2]
+        unsafe:
+          buf[0] = cp as char
+          buf[1] = 0 as char
+          gui_win.fb_text_ex(cx, y, &buf[0], color, scale, bold_flag)
+        cw:int = tzf_char_width(cp, font_id, scale)
+        cx = cx + cw
+      else:
+        cx = cx + 8 * scale
+
+    idx = idx + step
+  ret 0
+
+// Draw text with horizontal alignment (Left, Center, Right)
+fn tzf_draw_text_aligned(canvas:*GpuCanvas, x:int, y:int, w:int, text:str, font_id:int, scale:int, weight:int, color:int, align:int) -> int:
+  if canvas == 0 || text == 0:
+    ret (0 - 1)
+  tw:int = tzf_measure_w(text, font_id, scale)
+  tx:int = x
+  if align == ALIGN_CENTER:
+    tx = x + (w - tw) / 2
+  if align == ALIGN_RIGHT:
+    tx = x + w - tw
+  ret tzf_draw_text(canvas, tx, y, text, font_id, scale, weight, color)

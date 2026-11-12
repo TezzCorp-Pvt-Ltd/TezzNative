@@ -22,7 +22,7 @@ $active_locale = tn_get_locale();
   <title><?= htmlspecialchars($page_title) ?></title>
   <meta name="description" content="<?= htmlspecialchars($page_desc) ?>">
   <meta name="keywords" content="TezzNative, programming language, systems programming, AI, tensors, async await, coroutines, machine learning, compiler, fast, pythonic, C speed, GGUF, zero GC, LLM">
-  <meta name="author" content="Rohit Pathak, TezzCorp Pvt Ltd">
+  <meta name="author" content="Rohit Pathak, TEZZCORP PRIVATE LIMITED">
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
 
   <!-- Canonical URL -->
@@ -50,8 +50,12 @@ $active_locale = tn_get_locale();
   <meta name="twitter:image" content="https://tezznative.org/assets/logo.png">
 
   <!-- Favicons -->
-  <link rel="icon" type="image/x-icon" href="/favicon.ico">
-  <link rel="apple-touch-icon" href="/assets/logo.png">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico?v=1.0.0">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon/favicon-32x32.png?v=1.0.0">
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon/favicon-16x16.png?v=1.0.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon.png?v=1.0.0">
+  <link rel="icon" type="image/svg+xml" href="/favicon/icon.svg?v=1.0.0">
+  <link rel="manifest" href="/favicon/site.webmanifest">
 
   <!-- Google Fonts: Inter & JetBrains Mono -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -59,7 +63,7 @@ $active_locale = tn_get_locale();
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
 
   <!-- Core App Stylesheets -->
-  <link rel="stylesheet" href="/assets/app.css?v=2.2.7">
+  <link rel="stylesheet" href="/assets/app.css?v=1.0.0">
 
   <!-- JSON-LD Structured Data Schema -->
   <script type="application/ld+json">
@@ -73,7 +77,7 @@ $active_locale = tn_get_locale();
     "description": "Ultra-fast systems and AI programming language combining Pythonic syntax with bare-metal C performance, native 4D tensors, coroutines, and zero-GC standalone binaries.",
     "url": "https://tezznative.org",
     "downloadUrl": "https://tezznative.org/download/",
-    "softwareVersion": "2.2.1",
+    "softwareVersion": "1.0.0",
     "license": "https://opensource.org/licenses/MIT",
     "author": {
       "@type": "Person",
@@ -81,13 +85,13 @@ $active_locale = tn_get_locale();
       "jobTitle": "Creator & Lead Architect",
       "worksFor": {
         "@type": "Organization",
-        "name": "TezzCorp Pvt Ltd.",
+        "name": "TEZZCORP PRIVATE LIMITED",
         "url": "https://tezzcorp.com"
       }
     },
     "publisher": {
       "@type": "Organization",
-      "name": "TezzCorp Pvt Ltd.",
+      "name": "TEZZCORP PRIVATE LIMITED",
       "url": "https://tezzcorp.com",
       "logo": "https://tezznative.org/assets/logo.png"
     }

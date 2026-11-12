@@ -1,0 +1,339 @@
+// tween.tn — TezzNative Animation Easing Engine v1.0
+//
+// Provides smooth interpolation for animated UI elements.
+// All time values are in milliseconds (or frame ticks when dt=1).
+//
+// Usage:
+//   t:TzTween
+//   tween_init(&t, 0, 255, 300, TWEEN_EASE_OUT)
+//   // each frame:
+//   val:int = tween_tick(&t, 16)   // dt = ms since last frame
+//   // use val for opacity, position, scale, etc.
+
+import "gui_win"
+
+// ── Easing function IDs ───────────────────────────────────────────────────
+
+let TWEEN_LINEAR:int      = 0
+let TWEEN_EASE_IN:int     = 1
+let TWEEN_EASE_OUT:int    = 2
+let TWEEN_EASE_IN_OUT:int = 3
+let TWEEN_SPRING:int      = 4
+let TWEEN_BOUNCE:int      = 5
+let TWEEN_ELASTIC:int     = 6
+let TWEEN_BACK:int        = 7   // overshoot and come back
+
+// ── TzTween struct ─────────────────────────────────────────────────────────
+
+struct TzTween:
+  from_val:int      // start value (integer, scaled *1000 for precision)
+  to_val:int        // end value
+  dur:int           // total duration in ms
+  elapsed:int       // elapsed ms
+  easing:int        // TWEEN_* constant
+  loop:int          // 1 = repeat, 2 = ping-pong, 0 = once
+  done:int          // 1 when finished (no loop)
+
+// ── Internal math helpers ─────────────────────────────────────────────────
+
+// Integer square root (Newton's method)
+fn _tz_isqrt(n:int) -> int:
+  if n <= 0:
+    ret 0
+  x:int = n
+  y:int = (x + 1) / 2
+  while y < x:
+    x = y
+    y = (x + n / x) / 2
+  ret x
+
+// Absolute value
+fn _tz_abs(n:int) -> int:
+  if n < 0:
+    ret 0 - n
+  ret n
+
+// Integer sine approximation (t: 0-1000 → output: -1000..+1000)
+// Uses the polynomial: sin(x) ≈ 4x(π-x)/π² for x in [0,π]
+// Here t is mapped to [0,1000] representing 0..π
+fn _tz_sin1000(t:int) -> int:
+  // t: 0..1000 ≡ 0..π
+  // mirror for full cycle: 0..500 = rising, 500..1000 = falling
+  if t > 1000:
+    t = t % 1000
+  if t <= 500:
+    // 4*t*(1000-t) / 1000^2 * 1000
+    ret 4 * t * (1000 - t) / 1000
+  else:
+    t2:int = t - 500
+    ret 0 - (4 * t2 * (1000 - t2) / 1000)
+
+// ── Easing functions (input t: 0-1000, output: 0-1000) ───────────────────
+
+fn _ease_linear(t:int) -> int:
+  ret t
+
+fn _ease_in(t:int) -> int:
+  // t^2
+  ret t * t / 1000
+
+fn _ease_out(t:int) -> int:
+  // 1 - (1-t)^2
+  inv:int = 1000 - t
+  ret 1000 - (inv * inv / 1000)
+
+fn _ease_in_out(t:int) -> int:
+  if t < 500:
+    ret 2 * t * t / 1000
+  inv:int = 1000 - t
+  ret 1000 - 2 * inv * inv / 1000
+
+fn _ease_spring(t:int) -> int:
+  // Overshoot spring: ease_out + small overshoot
+  base:int = _ease_out(t)
+  if t > 700:
+    overshoot:int = (t - 700) * (1000 - t) * 2 / 300
+    ret base + overshoot
+  ret base
+
+fn _ease_bounce(t:int) -> int:
+  // Simulate ball bounce
+  inv:int = 1000 - t
+  if inv < 0:
+    inv = 0
+  if inv < 364:
+    ret 1000 - 121 * inv * inv / 13225
+  if inv < 636:
+    adj:int = inv - 500
+    ret 1000 - 121 * adj * adj / 13225 - 750
+  if inv < 818:
+    adj:int = inv - 727
+    return_val:int = 1000 - 121 * adj * adj / 13225 - 937
+    ret return_val
+  adj:int = inv - 909
+  return_val2:int = 1000 - 121 * adj * adj / 13225 - 984
+  ret return_val2
+
+fn _ease_elastic(t:int) -> int:
+  if t <= 0:
+    ret 0
+  if t >= 1000:
+    ret 1000
+  // Elastic: sin curve with decay envelope
+  phase:int = t * 3
+  sinv:int = _tz_sin1000(phase % 1000)
+  decay:int = _ease_out(t)
+  ret decay + sinv * (1000 - t) / 1000
+
+fn _ease_back(t:int) -> int:
+  // Slight overshoot before settling
+  c:int = 1701   // 1.701 * 1000 (overshoot constant)
+  return_val:int = t * t * ((c + 1000) * t / 1000 - c) / 1000
+  ret return_val
+
+fn _apply_easing(easing:int, t:int) -> int:
+  if easing == TWEEN_EASE_IN:
+    ret _ease_in(t)
+  if easing == TWEEN_EASE_OUT:
+    ret _ease_out(t)
+  if easing == TWEEN_EASE_IN_OUT:
+    ret _ease_in_out(t)
+  if easing == TWEEN_SPRING:
+    ret _ease_spring(t)
+  if easing == TWEEN_BOUNCE:
+    ret _ease_bounce(t)
+  if easing == TWEEN_ELASTIC:
+    ret _ease_elastic(t)
+  if easing == TWEEN_BACK:
+    ret _ease_back(t)
+  ret _ease_linear(t)
+
+// ── Public API ────────────────────────────────────────────────────────────
+
+// Initialize a tween.
+// from_val, to_val: integer values to interpolate between.
+// dur_ms: duration in milliseconds.
+// easing: TWEEN_* constant.
+fn tween_init(t:*TzTween, from_val:int, to_val:int, dur_ms:int, easing:int) -> int:
+  if t == 0:
+    ret (0 - 1)
+  t[0].from_val = from_val
+  t[0].to_val   = to_val
+  t[0].dur      = dur_ms
+  if t[0].dur < 1:
+    t[0].dur = 1
+  t[0].elapsed  = 0
+  t[0].easing   = easing
+  t[0].loop     = 0
+  t[0].done     = 0
+  ret 0
+
+// Same as tween_init but with loop mode (1=loop, 2=ping-pong)
+fn tween_init_loop(t:*TzTween, from_val:int, to_val:int, dur_ms:int, easing:int, loop_mode:int) -> int:
+  tween_init(t, from_val, to_val, dur_ms, easing)
+  if t == 0:
+    ret (0 - 1)
+  t[0].loop = loop_mode
+  ret 0
+
+// Reset a tween to the beginning without changing from/to/dur
+fn tween_reset(t:*TzTween) -> int:
+  if t == 0:
+    ret (0 - 1)
+  t[0].elapsed = 0
+  t[0].done    = 0
+  ret 0
+
+// Reverse a tween (swap from↔to, reset elapsed)
+fn tween_reverse(t:*TzTween) -> int:
+  if t == 0:
+    ret (0 - 1)
+  tmp:int    = t[0].from_val
+  t[0].from_val = t[0].to_val
+  t[0].to_val   = tmp
+  t[0].elapsed  = 0
+  t[0].done     = 0
+  ret 0
+
+// Advance the tween by dt milliseconds and return the current interpolated value.
+fn tween_tick(t:*TzTween, dt:int) -> int:
+  if t == 0:
+    ret 0
+  if t[0].done != 0 && t[0].loop == 0:
+    ret t[0].to_val
+  t[0].elapsed = t[0].elapsed + dt
+  if t[0].elapsed >= t[0].dur:
+    if t[0].loop == 0:
+      t[0].elapsed = t[0].dur
+      t[0].done    = 1
+      ret t[0].to_val
+    if t[0].loop == 2:
+      // ping-pong: swap direction
+      tmp:int = t[0].from_val
+      t[0].from_val = t[0].to_val
+      t[0].to_val   = tmp
+    t[0].elapsed = t[0].elapsed - t[0].dur
+  // compute progress 0-1000
+  progress:int = t[0].elapsed * 1000 / t[0].dur
+  if progress > 1000:
+    progress = 1000
+  easedp:int = _apply_easing(t[0].easing, progress)
+  rng:int = t[0].to_val - t[0].from_val
+  ret t[0].from_val + rng * easedp / 1000
+
+// Peek at the current value without advancing time
+fn tween_peek(t:*TzTween) -> int:
+  if t == 0:
+    ret 0
+  if t[0].done != 0:
+    ret t[0].to_val
+  if t[0].elapsed <= 0:
+    ret t[0].from_val
+  progress:int = t[0].elapsed * 1000 / t[0].dur
+  if progress > 1000:
+    progress = 1000
+  easedp:int = _apply_easing(t[0].easing, progress)
+  rng:int = t[0].to_val - t[0].from_val
+  ret t[0].from_val + rng * easedp / 1000
+
+// Returns 1 if the tween has finished (only meaningful for non-looping tweens)
+fn tween_done(t:*TzTween) -> int:
+  if t == 0:
+    ret 1
+  ret t[0].done
+
+// Returns progress 0-1000 (0% to 100%)
+fn tween_progress(t:*TzTween) -> int:
+  if t == 0:
+    ret 1000
+  if t[0].done != 0:
+    ret 1000
+  ret t[0].elapsed * 1000 / t[0].dur
+
+// ── Color tweening ─────────────────────────────────────────────────────────
+// (requires gpu_render for gpr_lerp_color — import separately if needed)
+// tween_color_tick: tween from one packed color to another.
+// Use alongside a TzTween that goes from 0 → 1000.
+
+// Helper: given a TzTween going 0→1000, return the interpolated color
+// between c0 and c1 at the current tween position.
+// import "gpu_render" first to use gpr_lerp_color.
+// (Defined here as inline for convenience)
+fn tween_color(from_c:int, to_c:int, t:int) -> int:
+  // t: 0-1000
+  if t <= 0:
+    ret from_c
+  if t >= 1000:
+    ret to_c
+  fr:int = (from_c / 65536) % 256
+  fg:int = (from_c / 256) % 256
+  fb:int = from_c % 256
+  tr:int = (to_c / 65536) % 256
+  tg:int = (to_c / 256) % 256
+  tb:int = to_c % 256
+  nr:int = fr + (tr - fr) * t / 1000
+  ng:int = fg + (tg - fg) * t / 1000
+  nb:int = fb + (tb - fb) * t / 1000
+  ret (nr * 65536) + (ng * 256) + nb
+
+// ── Spring Physics (Damped Harmonic Oscillator) ───────────────────────────
+
+struct TzSpring:
+  pos:int       // current position (scaled x1000)
+  target:int    // target position (scaled x1000)
+  vel:int       // velocity
+  tension:int   // spring stiffness (default 150)
+  damping:int   // friction/damping (default 15)
+  settled:int   // 1 if motion is finished
+
+fn spring_init(s:*TzSpring, start_val:int, tension:int, damping:int) -> int:
+  if s == 0:
+    ret (0 - 1)
+  s[0].pos     = start_val
+  s[0].target  = start_val
+  s[0].vel     = 0
+  if tension > 0:
+    s[0].tension = tension
+  else:
+    s[0].tension = 180
+  if damping > 0:
+    s[0].damping = damping
+  else:
+    s[0].damping = 25
+  s[0].settled = 1
+  ret 0
+
+fn spring_set_target(s:*TzSpring, target_val:int) -> int:
+  if s == 0:
+    ret (0 - 1)
+  s[0].target  = target_val
+  s[0].settled = 0
+  ret 0
+
+fn spring_tick(s:*TzSpring, dt_ms:int) -> int:
+  if s == 0:
+    ret 0
+  if s[0].settled != 0:
+    ret s[0].target
+  if dt_ms <= 0:
+    dt_ms = 16
+  if dt_ms > 100:
+    dt_ms = 100
+  s[0].pos = gui_win.fb_spring_step(s[0].pos, s[0].target, &s[0].vel, s[0].tension, s[0].damping, dt_ms)
+  diff:int = s[0].pos - s[0].target
+  if diff < 0:
+    diff = 0 - diff
+  vabs:int = s[0].vel
+  if vabs < 0:
+    vabs = 0 - vabs
+  if diff <= 4 && vabs <= 50:
+    s[0].pos = s[0].target
+    s[0].vel = 0
+    s[0].settled = 1
+  ret s[0].pos
+
+fn spring_settled(s:*TzSpring) -> int:
+  if s == 0:
+    ret 1
+  ret s[0].settled
+

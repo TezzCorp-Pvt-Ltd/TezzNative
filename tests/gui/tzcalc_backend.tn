@@ -1,0 +1,115 @@
+// CLI conformance checks for the TezzNative calculator arithmetic backend.
+import "str"
+import "tzcalc"
+
+fn expect_display(state:*TzCalcState, expected:str) -> int:
+  unsafe:
+    actual:str = tzcalc.tzcalc_format(state)
+    same:int = str.str_cmp(actual, expected) == 0
+    if same == 0:
+      say("calculator expected ", expected, ", got ", actual)
+      if str.str_cmp(actual, "Error") != 0:
+        free(actual)
+      ret 0 - 1
+    if str.str_cmp(actual, "Error") != 0:
+      free(actual)
+    ret 0
+
+fn main() -> int:
+  state:TzCalcState
+  unsafe:
+    tzcalc.tzcalc_init(&state)
+    tzcalc.tzcalc_digit(&state, 1)
+    tzcalc.tzcalc_digit(&state, 2)
+    tzcalc.tzcalc_decimal(&state)
+    tzcalc.tzcalc_digit(&state, 3)
+    tzcalc.tzcalc_digit(&state, 4)
+    tzcalc.tzcalc_operator(&state, 1)
+    tzcalc.tzcalc_digit(&state, 5)
+    tzcalc.tzcalc_equals(&state)
+    if expect_display(&state, "17.34") != 0:
+      ret 1
+
+    tzcalc.tzcalc_clear(&state)
+    tzcalc.tzcalc_digit(&state, 8)
+    tzcalc.tzcalc_operator(&state, 3)
+    tzcalc.tzcalc_digit(&state, 7)
+    tzcalc.tzcalc_equals(&state)
+    if expect_display(&state, "56") != 0:
+      ret 2
+
+    tzcalc.tzcalc_clear(&state)
+    tzcalc.tzcalc_digit(&state, 1)
+    tzcalc.tzcalc_operator(&state, 4)
+    tzcalc.tzcalc_digit(&state, 3)
+    tzcalc.tzcalc_equals(&state)
+    if expect_display(&state, "0.3333") != 0:
+      ret 3
+
+    tzcalc.tzcalc_clear(&state)
+    tzcalc.tzcalc_digit(&state, 9)
+    tzcalc.tzcalc_operator(&state, 4)
+    tzcalc.tzcalc_digit(&state, 0)
+    tzcalc.tzcalc_equals(&state)
+    if tzcalc.tzcalc_error(&state) == 0:
+      say("calculator division by zero was not rejected")
+      ret 4
+    if expect_display(&state, "Error") != 0:
+      ret 5
+
+    tzcalc.tzcalc_clear(&state)
+    tzcalc.tzcalc_digit(&state, 1)
+    tzcalc.tzcalc_digit(&state, 4)
+    tzcalc.tzcalc_digit(&state, 4)
+    tzcalc.tzcalc_sqrt(&state)
+    if expect_display(&state, "12") != 0:
+      ret 6
+    tzcalc.tzcalc_square(&state)
+    if expect_display(&state, "144") != 0:
+      ret 7
+
+    tzcalc.tzcalc_clear(&state)
+    tzcalc.tzcalc_digit(&state, 4)
+    tzcalc.tzcalc_reciprocal(&state)
+    if expect_display(&state, "0.25") != 0:
+      ret 8
+
+    tzcalc.tzcalc_clear(&state)
+    tzcalc.tzcalc_digit(&state, 0)
+    tzcalc.tzcalc_decimal(&state)
+    tzcalc.tzcalc_digit(&state, 2)
+    tzcalc.tzcalc_digit(&state, 5)
+    tzcalc.tzcalc_sqrt(&state)
+    if expect_display(&state, "0.5") != 0:
+      ret 9
+
+    tzcalc.tzcalc_clear(&state)
+    tzcalc.tzcalc_digit(&state, 2)
+    tzcalc.tzcalc_decimal(&state)
+    tzcalc.tzcalc_digit(&state, 2)
+    tzcalc.tzcalc_digit(&state, 5)
+    tzcalc.tzcalc_sqrt(&state)
+    if expect_display(&state, "1.5") != 0:
+      ret 10
+
+    tzcalc.tzcalc_clear(&state)
+    tzcalc.tzcalc_digit(&state, 2)
+    tzcalc.tzcalc_sqrt(&state)
+    if expect_display(&state, "1.4142") != 0:
+      ret 11
+
+    tzcalc.tzcalc_clear(&state)
+    tzcalc.tzcalc_digit(&state, 9)
+    tzcalc.tzcalc_memory_store(&state)
+    tzcalc.tzcalc_clear(&state)
+    tzcalc.tzcalc_memory_recall(&state)
+    if expect_display(&state, "9") != 0:
+      ret 12
+    tzcalc.tzcalc_digit(&state, 2)
+    tzcalc.tzcalc_memory_add(&state)
+    tzcalc.tzcalc_memory_recall(&state)
+    if expect_display(&state, "11") != 0:
+      ret 13
+
+  say("tzcalc backend checks passed")
+  ret 0

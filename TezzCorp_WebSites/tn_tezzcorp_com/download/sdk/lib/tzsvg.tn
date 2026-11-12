@@ -1,0 +1,969 @@
+// tzsvg: lightweight SVG icon loading and raster drawing for TezzNative UI.
+//
+// The loader compiles common downloaded SVG icons into line segments once.
+// Supported elements are path, line, polyline, polygon, rect, circle and
+// ellipse. Path data supports M/L/H/V/C/S/Q/T/A/Z in absolute and relative
+// forms. Root/group/element fill and stroke attributes are honored. Gradients,
+// filters, masks, text and CSS selectors are intentionally left to a browser
+// renderer; this module is for crisp app icons and small vector UI artwork.
+
+import "gpu_render"
+import "io"
+import "math"
+
+let TZSVG_PATH_MAX:int = 64
+let TZSVG_POINT_MAX:int = 2048
+let TZSVG_CURVE_STEPS:int = 10
+let TZSVG_OK:int = 0
+let TZSVG_ERR_INPUT:int = 0 - 1
+let TZSVG_ERR_FORMAT:int = 0 - 2
+let TZSVG_ERR_LIMIT:int = 0 - 3
+
+struct TzSvgPath:
+  first:int
+  count:int
+  fill:int
+  stroke:int
+  stroke_width:float
+  evenodd:int
+
+struct TzSvgAsset:
+  view_x:float
+  view_y:float
+  view_w:float
+  view_h:float
+  path_count:int
+  point_count:int
+  error:int
+  paths:[TzSvgPath;64]
+  point_x:[float;2048]
+  point_y:[float;2048]
+  point_move:[int;2048]
+
+fn _svg_ch(text:str, index:int) -> int:
+  if text == 0 || index < 0:
+    ret 0
+  ret text[index] as int
+
+fn _svg_space(ch:int) -> int:
+  if ch == 32 || ch == 9 || ch == 10 || ch == 13 || ch == 44:
+    ret 1
+  ret 0
+
+fn _svg_alpha(ch:int) -> int:
+  if ch >= 65 && ch <= 90:
+    ret 1
+  if ch >= 97 && ch <= 122:
+    ret 1
+  ret 0
+
+fn _svg_name_eq(text:str, first:int, last:int, expected:str) -> int:
+  n:int = last - first
+  if text == 0 || expected == 0 || n != len(expected):
+    ret 0
+  i:int = 0
+  while i < n:
+    if (_svg_ch(text, first + i) | 32) != (_svg_ch(expected, i) | 32):
+      ret 0
+    i = i + 1
+  ret 1
+
+fn _svg_skip_space(text:str, pos:*int, last:int) -> int:
+  if text == 0 || pos == 0:
+    ret 0 - 1
+  while pos[0] < last && _svg_space(_svg_ch(text, pos[0])) != 0:
+    pos[0] = pos[0] + 1
+  ret 0
+
+fn _svg_parse_number(text:str, pos:*int, last:int, out:*float) -> int:
+  if text == 0 || pos == 0 || out == 0:
+    ret 0
+  _svg_skip_space(text, pos, last)
+  if pos[0] >= last:
+    ret 0
+  sign:float = 1.0
+  ch:int = _svg_ch(text, pos[0])
+  if ch == 45:
+    sign = 0.0 - 1.0
+    pos[0] = pos[0] + 1
+  else:
+    if ch == 43:
+      pos[0] = pos[0] + 1
+  whole:float = 0.0
+  digits:int = 0
+  while pos[0] < last:
+    ch = _svg_ch(text, pos[0])
+    if ch < 48 || ch > 57:
+      break
+    whole = whole * 10.0 + ((ch - 48) as float)
+    digits = digits + 1
+    pos[0] = pos[0] + 1
+  frac:float = 0.0
+  place:float = 0.1
+  if pos[0] < last && _svg_ch(text, pos[0]) == 46:
+    pos[0] = pos[0] + 1
+    while pos[0] < last:
+      ch = _svg_ch(text, pos[0])
+      if ch < 48 || ch > 57:
+        break
+      frac = frac + ((ch - 48) as float) * place
+      place = place * 0.1
+      digits = digits + 1
+      pos[0] = pos[0] + 1
+  if digits == 0:
+    ret 0
+  value:float = sign * (whole + frac)
+  if pos[0] < last && (_svg_ch(text, pos[0]) == 69 || _svg_ch(text, pos[0]) == 101):
+    pos[0] = pos[0] + 1
+    exp_sign:int = 1
+    if pos[0] < last && _svg_ch(text, pos[0]) == 45:
+      exp_sign = 0 - 1
+      pos[0] = pos[0] + 1
+    else:
+      if pos[0] < last && _svg_ch(text, pos[0]) == 43:
+        pos[0] = pos[0] + 1
+    exponent:int = 0
+    while pos[0] < last:
+      ch = _svg_ch(text, pos[0])
+      if ch < 48 || ch > 57:
+        break
+      if exponent < 9:
+        exponent = exponent * 10 + ch - 48
+      pos[0] = pos[0] + 1
+    while exponent > 0:
+      if exp_sign > 0:
+        value = value * 10.0
+      else:
+        value = value / 10.0
+      exponent = exponent - 1
+  out[0] = value
+  ret 1
+
+fn _svg_attr(text:str, tag_first:int, tag_last:int, name:str, out_first:*int, out_last:*int) -> int:
+  if text == 0 || name == 0 || out_first == 0 || out_last == 0:
+    ret 0
+  p:int = tag_first
+  while p < tag_last && _svg_space(_svg_ch(text, p)) == 0 && _svg_ch(text, p) != 47:
+    p = p + 1
+  while p < tag_last:
+    while p < tag_last && (_svg_space(_svg_ch(text, p)) != 0 || _svg_ch(text, p) == 47):
+      p = p + 1
+    if p >= tag_last:
+      break
+    name_first:int = p
+    while p < tag_last:
+      ch:int = _svg_ch(text, p)
+      if _svg_space(ch) != 0 || ch == 61 || ch == 47:
+        break
+      p = p + 1
+    name_last:int = p
+    while p < tag_last && _svg_space(_svg_ch(text, p)) != 0:
+      p = p + 1
+    if p >= tag_last || _svg_ch(text, p) != 61:
+      while p < tag_last && _svg_space(_svg_ch(text, p)) == 0:
+        p = p + 1
+      continue
+    p = p + 1
+    while p < tag_last && _svg_space(_svg_ch(text, p)) != 0:
+      p = p + 1
+    if p >= tag_last:
+      break
+    quote:int = _svg_ch(text, p)
+    value_first:int = 0
+    value_last:int = 0
+    if quote == 34 || quote == 39:
+      p = p + 1
+      value_first = p
+      while p < tag_last && _svg_ch(text, p) != quote:
+        p = p + 1
+      value_last = p
+      if p < tag_last:
+        p = p + 1
+    else:
+      value_first = p
+      while p < tag_last && _svg_space(_svg_ch(text, p)) == 0 && _svg_ch(text, p) != 62:
+        p = p + 1
+      value_last = p
+    if _svg_name_eq(text, name_first, name_last, name) != 0:
+      out_first[0] = value_first
+      out_last[0] = value_last
+      ret 1
+  ret 0
+
+fn _svg_style_attr(text:str, first:int, last:int, name:str, out_first:*int, out_last:*int) -> int:
+  p:int = first
+  while p < last:
+    while p < last && (_svg_space(_svg_ch(text, p)) != 0 || _svg_ch(text, p) == 59):
+      p = p + 1
+    key_first:int = p
+    while p < last && _svg_ch(text, p) != 58 && _svg_ch(text, p) != 59:
+      p = p + 1
+    key_last:int = p
+    if p >= last || _svg_ch(text, p) != 58:
+      break
+    p = p + 1
+    while p < last && _svg_space(_svg_ch(text, p)) != 0:
+      p = p + 1
+    value_first:int = p
+    while p < last && _svg_ch(text, p) != 59:
+      p = p + 1
+    value_last:int = p
+    while value_last > value_first && _svg_space(_svg_ch(text, value_last - 1)) != 0:
+      value_last = value_last - 1
+    if _svg_name_eq(text, key_first, key_last, name) != 0:
+      out_first[0] = value_first
+      out_last[0] = value_last
+      ret 1
+  ret 0
+
+fn _svg_find_attr(text:str, tag_first:int, tag_last:int, name:str, out_first:*int, out_last:*int) -> int:
+  if _svg_attr(text, tag_first, tag_last, name, out_first, out_last) != 0:
+    ret 1
+  style_first:int = 0
+  style_last:int = 0
+  if _svg_attr(text, tag_first, tag_last, "style", &style_first, &style_last) != 0:
+    ret _svg_style_attr(text, style_first, style_last, name, out_first, out_last)
+  ret 0
+
+fn _svg_hex(ch:int) -> int:
+  if ch >= 48 && ch <= 57:
+    ret ch - 48
+  if ch >= 65 && ch <= 70:
+    ret ch - 55
+  if ch >= 97 && ch <= 102:
+    ret ch - 87
+  ret 0 - 1
+
+fn _svg_color(text:str, first:int, last:int, current:int) -> int:
+  if first >= last:
+    ret current
+  if _svg_name_eq(text, first, last, "none") != 0 || _svg_name_eq(text, first, last, "transparent") != 0:
+    ret 0 - 1
+  if _svg_name_eq(text, first, last, "currentColor") != 0:
+    ret current
+  if _svg_ch(text, first) != 35:
+    if _svg_name_eq(text, first, last, "white") != 0:
+      ret 0xFFFFFF
+    if _svg_name_eq(text, first, last, "red") != 0:
+      ret 0xFF0000
+    if _svg_name_eq(text, first, last, "green") != 0:
+      ret 0x008000
+    if _svg_name_eq(text, first, last, "blue") != 0:
+      ret 0x0000FF
+    if _svg_name_eq(text, first, last, "gray") != 0 || _svg_name_eq(text, first, last, "grey") != 0:
+      ret 0x808080
+    ret 0x000000
+  digits:int = last - first - 1
+  if digits == 3:
+    r:int = _svg_hex(_svg_ch(text, first + 1))
+    g:int = _svg_hex(_svg_ch(text, first + 2))
+    b:int = _svg_hex(_svg_ch(text, first + 3))
+    if r < 0 || g < 0 || b < 0:
+      ret 0x000000
+    ret r * 17 * 65536 + g * 17 * 256 + b * 17
+  if digits == 6:
+    result:int = 0
+    i:int = first + 1
+    while i < last:
+      h1:int = _svg_hex(_svg_ch(text, i))
+      h2:int = _svg_hex(_svg_ch(text, i + 1))
+      if h1 < 0 || h2 < 0:
+        ret 0x000000
+      result = result * 256 + h1 * 16 + h2
+      i = i + 2
+    ret result
+  ret 0x000000
+
+fn _svg_read_attr_number(text:str, tag_first:int, tag_last:int, name:str, fallback:float) -> float:
+  value_first:int = 0
+  value_last:int = 0
+  if _svg_find_attr(text, tag_first, tag_last, name, &value_first, &value_last) == 0:
+    ret fallback
+  p:int = value_first
+  value:float = fallback
+  if _svg_parse_number(text, &p, value_last, &value) == 0:
+    ret fallback
+  ret value
+
+fn _svg_read_style(text:str, tag_first:int, tag_last:int, base_fill:int, base_stroke:int, base_width:float, base_evenodd:int, current_color:int, fill:*int, stroke:*int, stroke_width:*float, evenodd:*int) -> int:
+  fill[0] = base_fill
+  stroke[0] = base_stroke
+  stroke_width[0] = base_width
+  evenodd[0] = base_evenodd
+  a:int = 0
+  b:int = 0
+  if _svg_find_attr(text, tag_first, tag_last, "color", &a, &b) != 0:
+    current_color = _svg_color(text, a, b, current_color)
+  if _svg_find_attr(text, tag_first, tag_last, "fill", &a, &b) != 0:
+    fill[0] = _svg_color(text, a, b, current_color)
+  if _svg_find_attr(text, tag_first, tag_last, "stroke", &a, &b) != 0:
+    stroke[0] = _svg_color(text, a, b, current_color)
+  if _svg_find_attr(text, tag_first, tag_last, "stroke-width", &a, &b) != 0:
+    p:int = a
+    _svg_parse_number(text, &p, b, &stroke_width[0])
+  if _svg_find_attr(text, tag_first, tag_last, "fill-rule", &a, &b) != 0:
+    if _svg_name_eq(text, a, b, "evenodd") != 0:
+      evenodd[0] = 1
+    else:
+      evenodd[0] = 0
+  ret current_color
+
+fn _svg_new_path(asset:*TzSvgAsset, fill:int, stroke:int, stroke_width:float, evenodd:int) -> int:
+  if asset == 0 || asset[0].path_count >= TZSVG_PATH_MAX:
+    ret 0 - 1
+  idx:int = asset[0].path_count
+  asset[0].paths[idx].first = asset[0].point_count
+  asset[0].paths[idx].count = 0
+  asset[0].paths[idx].fill = fill
+  asset[0].paths[idx].stroke = stroke
+  asset[0].paths[idx].stroke_width = stroke_width
+  asset[0].paths[idx].evenodd = evenodd
+  asset[0].path_count = idx + 1
+  ret idx
+
+fn _svg_add_point(asset:*TzSvgAsset, path:int, x:float, y:float, move:int) -> int:
+  if asset == 0 || path < 0 || path >= asset[0].path_count:
+    ret 0 - 1
+  idx:int = asset[0].point_count
+  if idx >= TZSVG_POINT_MAX:
+    asset[0].error = TZSVG_ERR_LIMIT
+    ret TZSVG_ERR_LIMIT
+  asset[0].point_x[idx] = x
+  asset[0].point_y[idx] = y
+  asset[0].point_move[idx] = move
+  asset[0].point_count = idx + 1
+  asset[0].paths[path].count = asset[0].paths[path].count + 1
+  ret 0
+
+fn _svg_num_or(text:str, pos:*int, last:int) -> float:
+  value:float = 0.0
+  if _svg_parse_number(text, pos, last, &value) == 0:
+    ret 0.0
+  ret value
+
+fn _svg_cubic(asset:*TzSvgAsset, path:int, x0:float, y0:float, x1:float, y1:float, x2:float, y2:float, x3:float, y3:float) -> int:
+  step:int = 1
+  while step <= TZSVG_CURVE_STEPS:
+    t:float = (step as float) / (TZSVG_CURVE_STEPS as float)
+    u:float = 1.0 - t
+    x:float = u*u*u*x0 + 3.0*u*u*t*x1 + 3.0*u*t*t*x2 + t*t*t*x3
+    y:float = u*u*u*y0 + 3.0*u*u*t*y1 + 3.0*u*t*t*y2 + t*t*t*y3
+    if _svg_add_point(asset, path, x, y, 0) != 0:
+      ret TZSVG_ERR_LIMIT
+    step = step + 1
+  ret 0
+
+fn _svg_quad(asset:*TzSvgAsset, path:int, x0:float, y0:float, x1:float, y1:float, x2:float, y2:float) -> int:
+  step:int = 1
+  while step <= TZSVG_CURVE_STEPS:
+    t:float = (step as float) / (TZSVG_CURVE_STEPS as float)
+    u:float = 1.0 - t
+    x:float = u*u*x0 + 2.0*u*t*x1 + t*t*x2
+    y:float = u*u*y0 + 2.0*u*t*y1 + t*t*y2
+    if _svg_add_point(asset, path, x, y, 0) != 0:
+      ret TZSVG_ERR_LIMIT
+    step = step + 1
+  ret 0
+
+fn _svg_arc(asset:*TzSvgAsset, path:int, x1:float, y1:float, rx_in:float, ry_in:float, rotation:float, large_arc:int, sweep:int, x2:float, y2:float) -> int:
+  rx:float = math.absf(rx_in)
+  ry:float = math.absf(ry_in)
+  if rx <= 0.0001 || ry <= 0.0001 || (x1 == x2 && y1 == y2):
+    ret _svg_add_point(asset, path, x2, y2, 0)
+  phi:float = rotation * math.PI() / 180.0
+  cp:float = math.cos(phi)
+  sp:float = math.sin(phi)
+  dx:float = (x1 - x2) / 2.0
+  dy:float = (y1 - y2) / 2.0
+  xp:float = cp * dx + sp * dy
+  yp:float = (0.0 - sp) * dx + cp * dy
+  rx2:float = rx * rx
+  ry2:float = ry * ry
+  xp2:float = xp * xp
+  yp2:float = yp * yp
+  arc_scale:float = xp2 / rx2 + yp2 / ry2
+  if arc_scale > 1.0:
+    factor:float = math.sqrt(arc_scale)
+    rx = rx * factor
+    ry = ry * factor
+    rx2 = rx * rx
+    ry2 = ry * ry
+  numerator:float = rx2*ry2 - rx2*yp2 - ry2*xp2
+  denominator:float = rx2*yp2 + ry2*xp2
+  if denominator < 0.000001:
+    ret _svg_add_point(asset, path, x2, y2, 0)
+  ratio:float = numerator / denominator
+  if ratio < 0.0:
+    ratio = 0.0
+  factor2:float = math.sqrt(ratio)
+  if large_arc == sweep:
+    factor2 = 0.0 - factor2
+  cxp:float = factor2 * rx * yp / ry
+  cyp:float = factor2 * (0.0 - ry) * xp / rx
+  cx:float = cp*cxp - sp*cyp + (x1+x2)/2.0
+  cy:float = sp*cxp + cp*cyp + (y1+y2)/2.0
+  ux:float = (xp-cxp)/rx
+  uy:float = (yp-cyp)/ry
+  vx:float = (0.0-xp-cxp)/rx
+  vy:float = (0.0-yp-cyp)/ry
+  theta:float = math.atan2(uy, ux)
+  delta:float = math.atan2(ux*vy-uy*vx, ux*vx+uy*vy)
+  if sweep == 0 && delta > 0.0:
+    delta = delta - math.PI()*2.0
+  if sweep != 0 && delta < 0.0:
+    delta = delta + math.PI()*2.0
+  radius:float = rx
+  if ry > radius:
+    radius = ry
+  steps:int = (math.absf(delta) * radius / 3.0) as int
+  if steps < 4:
+    steps = 4
+  if steps > 48:
+    steps = 48
+  i:int = 1
+  while i <= steps:
+    angle:float = theta + delta * (i as float) / (steps as float)
+    ex:float = rx * math.cos(angle)
+    ey:float = ry * math.sin(angle)
+    px:float = cp*ex - sp*ey + cx
+    py:float = sp*ex + cp*ey + cy
+    if i == steps:
+      px = x2
+      py = y2
+    if _svg_add_point(asset, path, px, py, 0) != 0:
+      ret TZSVG_ERR_LIMIT
+    i = i + 1
+  ret 0
+
+fn _svg_parse_path(text:str, first:int, last:int, asset:*TzSvgAsset, path:int) -> int:
+  p:int = first
+  cmd:int = 0
+  prev_cmd:int = 0
+  x:float = 0.0
+  y:float = 0.0
+  sub_x:float = 0.0
+  sub_y:float = 0.0
+  ctrl_x:float = 0.0
+  ctrl_y:float = 0.0
+  while p < last:
+    _svg_skip_space(text, &p, last)
+    if p >= last:
+      break
+    ch:int = _svg_ch(text, p)
+    if _svg_alpha(ch) != 0:
+      cmd = ch
+      p = p + 1
+    if cmd == 0:
+      ret TZSVG_ERR_FORMAT
+    rel:int = 0
+    upper:int = cmd
+    if cmd >= 97 && cmd <= 122:
+      rel = 1
+      upper = cmd - 32
+    if upper == 90:
+      if x != sub_x || y != sub_y:
+        _svg_add_point(asset, path, sub_x, sub_y, 0)
+      x = sub_x
+      y = sub_y
+      prev_cmd = cmd
+      cmd = 0
+      continue
+    if upper == 77 || upper == 76:
+      parsed:int = 0
+      while p < last:
+        save:int = p
+        tx:float = 0.0
+        ty:float = 0.0
+        gotx:int = _svg_parse_number(text, &p, last, &tx)
+        goty:int = _svg_parse_number(text, &p, last, &ty)
+        if gotx == 0 || goty == 0:
+          p = save
+          break
+        if rel != 0:
+          tx = tx + x
+          ty = ty + y
+        is_move:int = 0
+        if upper == 77 && parsed == 0:
+          is_move = 1
+          sub_x = tx
+          sub_y = ty
+        if _svg_add_point(asset, path, tx, ty, is_move) != 0:
+          ret TZSVG_ERR_LIMIT
+        x = tx
+        y = ty
+        parsed = parsed + 1
+        prev_cmd = cmd
+        if upper == 77:
+          cmd = 76
+          if rel != 0:
+            cmd = 108
+          upper = 76
+          rel = cmd == 108
+      if parsed == 0:
+        if p < last && _svg_alpha(_svg_ch(text, p)) == 0:
+          ret TZSVG_ERR_FORMAT
+      continue
+    if upper == 72 || upper == 86:
+      parsed2:int = 0
+      while p < last:
+        save2:int = p
+        value:float = 0.0
+        if _svg_parse_number(text, &p, last, &value) == 0:
+          p = save2
+          break
+        tx2:float = x
+        ty2:float = y
+        if upper == 72:
+          tx2 = value
+          if rel != 0:
+            tx2 = x + value
+        else:
+          ty2 = value
+          if rel != 0:
+            ty2 = y + value
+        _svg_add_point(asset, path, tx2, ty2, 0)
+        x = tx2
+        y = ty2
+        parsed2 = parsed2 + 1
+        prev_cmd = cmd
+      if parsed2 == 0 && p < last && _svg_alpha(_svg_ch(text,p)) == 0:
+        ret TZSVG_ERR_FORMAT
+      continue
+    if upper == 67 || upper == 83 || upper == 81 || upper == 84 || upper == 65:
+      parsed3:int = 0
+      while p < last:
+        save3:int = p
+        vals:[float;7]
+        needed:int = 0
+        if upper == 67:
+          needed = 6
+        if upper == 83:
+          needed = 4
+        if upper == 81:
+          needed = 4
+        if upper == 84:
+          needed = 2
+        if upper == 65:
+          needed = 7
+        q:int = 0
+        while q < needed:
+          if _svg_parse_number(text, &p, last, &vals[q]) == 0:
+            break
+          q = q + 1
+        if q < needed:
+          p = save3
+          break
+        if upper == 67:
+          x1:float = vals[0]
+          y1:float = vals[1]
+          x2:float = vals[2]
+          y2:float = vals[3]
+          ex:float = vals[4]
+          ey:float = vals[5]
+          if rel != 0:
+            x1 = x1 + x
+            y1 = y1 + y
+            x2 = x2 + x
+            y2 = y2 + y
+            ex = ex + x
+            ey = ey + y
+          _svg_cubic(asset,path,x,y,x1,y1,x2,y2,ex,ey)
+          x = ex
+          y = ey
+          ctrl_x = x2
+          ctrl_y = y2
+        if upper == 83:
+          x1s:float = x
+          y1s:float = y
+          if prev_cmd == 67 || prev_cmd == 99 || prev_cmd == 83 || prev_cmd == 115:
+            x1s = 2.0*x - ctrl_x
+            y1s = 2.0*y - ctrl_y
+          x2s:float = vals[0]
+          y2s:float = vals[1]
+          exs:float = vals[2]
+          eys:float = vals[3]
+          if rel != 0:
+            x2s = x2s + x
+            y2s = y2s + y
+            exs = exs + x
+            eys = eys + y
+          _svg_cubic(asset,path,x,y,x1s,y1s,x2s,y2s,exs,eys)
+          x = exs
+          y = eys
+          ctrl_x = x2s
+          ctrl_y = y2s
+        if upper == 81:
+          x1q:float = vals[0]
+          y1q:float = vals[1]
+          exq:float = vals[2]
+          eyq:float = vals[3]
+          if rel != 0:
+            x1q = x1q + x
+            y1q = y1q + y
+            exq = exq + x
+            eyq = eyq + y
+          _svg_quad(asset,path,x,y,x1q,y1q,exq,eyq)
+          x = exq
+          y = eyq
+          ctrl_x = x1q
+          ctrl_y = y1q
+        if upper == 84:
+          x1t:float = x
+          y1t:float = y
+          if prev_cmd == 81 || prev_cmd == 113 || prev_cmd == 84 || prev_cmd == 116:
+            x1t = 2.0*x-ctrl_x
+            y1t = 2.0*y-ctrl_y
+          ext:float=vals[0]
+          eyt:float=vals[1]
+          if rel != 0:
+            ext = ext + x
+            eyt = eyt + y
+          _svg_quad(asset,path,x,y,x1t,y1t,ext,eyt)
+          x = ext
+          y = eyt
+          ctrl_x = x1t
+          ctrl_y = y1t
+        if upper == 65:
+          exa:float=vals[5]
+          eya:float=vals[6]
+          if rel != 0:
+            exa = exa + x
+            eya = eya + y
+          _svg_arc(asset,path,x,y,vals[0],vals[1],vals[2],vals[3] as int,vals[4] as int,exa,eya)
+          x = exa
+          y = eya
+        parsed3 = parsed3 + 1
+        prev_cmd = cmd
+      if parsed3 == 0 && p < last && _svg_alpha(_svg_ch(text,p)) == 0:
+        ret TZSVG_ERR_FORMAT
+      continue
+    ret TZSVG_ERR_FORMAT
+  asset[0].paths[path].count = asset[0].point_count - asset[0].paths[path].first
+  ret 0
+
+fn _svg_append_numbers(text:str, first:int, last:int, asset:*TzSvgAsset, path:int, close:int) -> int:
+  p:int = first
+  n:int = 0
+  start_x:float = 0.0
+  start_y:float = 0.0
+  while p < last:
+    x:float = 0.0
+    y:float = 0.0
+    if _svg_parse_number(text,&p,last,&x) == 0:
+      break
+    if _svg_parse_number(text,&p,last,&y) == 0:
+      ret TZSVG_ERR_FORMAT
+    _svg_add_point(asset,path,x,y,n == 0)
+    if n == 0:
+      start_x = x
+      start_y = y
+    n=n+1
+  if close != 0 && n > 0:
+    _svg_add_point(asset,path,start_x,start_y,0)
+  asset[0].paths[path].count = asset[0].point_count - asset[0].paths[path].first
+  ret n
+
+fn _svg_make_shape(text:str, tag_first:int, tag_last:int, name_first:int, name_last:int, asset:*TzSvgAsset, fill:int, stroke:int, stroke_width:float, evenodd:int) -> int:
+  pidx:int = _svg_new_path(asset,fill,stroke,stroke_width,evenodd)
+  if pidx < 0:
+    ret TZSVG_ERR_LIMIT
+  if _svg_name_eq(text,name_first,name_last,"line") != 0:
+    x1:float=_svg_read_attr_number(text,tag_first,tag_last,"x1",0.0)
+    y1:float=_svg_read_attr_number(text,tag_first,tag_last,"y1",0.0)
+    x2:float=_svg_read_attr_number(text,tag_first,tag_last,"x2",0.0)
+    y2:float=_svg_read_attr_number(text,tag_first,tag_last,"y2",0.0)
+    _svg_add_point(asset,pidx,x1,y1,1)
+    _svg_add_point(asset,pidx,x2,y2,0)
+  else:
+    if _svg_name_eq(text,name_first,name_last,"rect") != 0:
+      rx:float=_svg_read_attr_number(text,tag_first,tag_last,"x",0.0)
+      ry:float=_svg_read_attr_number(text,tag_first,tag_last,"y",0.0)
+      rw:float=_svg_read_attr_number(text,tag_first,tag_last,"width",0.0)
+      rh:float=_svg_read_attr_number(text,tag_first,tag_last,"height",0.0)
+      if rw > 0.0 && rh > 0.0:
+        _svg_add_point(asset,pidx,rx,ry,1)
+        _svg_add_point(asset,pidx,rx+rw,ry,0)
+        _svg_add_point(asset,pidx,rx+rw,ry+rh,0)
+        _svg_add_point(asset,pidx,rx,ry+rh,0)
+        _svg_add_point(asset,pidx,rx,ry,0)
+    else:
+      if _svg_name_eq(text,name_first,name_last,"circle") != 0 || _svg_name_eq(text,name_first,name_last,"ellipse") != 0:
+        cx:float=_svg_read_attr_number(text,tag_first,tag_last,"cx",0.0)
+        cy:float=_svg_read_attr_number(text,tag_first,tag_last,"cy",0.0)
+        rx2:float=_svg_read_attr_number(text,tag_first,tag_last,"r",0.0)
+        ry2:float=rx2
+        if _svg_name_eq(text,name_first,name_last,"ellipse") != 0:
+          rx2=_svg_read_attr_number(text,tag_first,tag_last,"rx",0.0)
+          ry2=_svg_read_attr_number(text,tag_first,tag_last,"ry",0.0)
+        if rx2 > 0.0 && ry2 > 0.0:
+          i:int=0
+          while i <= 32:
+            angle:float=math.PI()*2.0*(i as float)/32.0
+            px:float=cx+rx2*math.cos(angle)
+            py:float=cy+ry2*math.sin(angle)
+            _svg_add_point(asset,pidx,px,py,i == 0)
+            i=i+1
+      else:
+        pts_first:int=0
+        pts_last:int=0
+        if _svg_find_attr(text,tag_first,tag_last,"points",&pts_first,&pts_last) != 0:
+          close:int=0
+          if _svg_name_eq(text,name_first,name_last,"polygon") != 0:
+            close=1
+          _svg_append_numbers(text,pts_first,pts_last,asset,pidx,close)
+  asset[0].paths[pidx].count=asset[0].point_count-asset[0].paths[pidx].first
+  ret 0
+
+fn svg_load_text(source:str) -> *TzSvgAsset:
+  if source == 0:
+    ret 0 as *TzSvgAsset
+  asset:*TzSvgAsset=(*TzSvgAsset)malloc(sizeof(TzSvgAsset))
+  if asset == 0:
+    ret 0 as *TzSvgAsset
+  asset[0].view_x=0.0
+  asset[0].view_y=0.0
+  asset[0].view_w=24.0
+  asset[0].view_h=24.0
+  asset[0].path_count=0
+  asset[0].point_count=0
+  asset[0].error=0
+  fill:int=0x000000
+  stroke:int=0-1
+  stroke_width:float=1.0
+  evenodd:int=0
+  current_color:int=0x000000
+  stack_fill:[int;8]
+  stack_stroke:[int;8]
+  stack_width:[float;8]
+  stack_evenodd:[int;8]
+  stack_color:[int;8]
+  depth:int=0
+  n:int=len(source)
+  pos:int=0
+  saw_svg:int=0
+  while pos<n:
+    if _svg_ch(source,pos)!=60:
+      pos=pos+1
+      continue
+    if pos+3<n && _svg_ch(source,pos+1)==33 && _svg_ch(source,pos+2)==45 && _svg_ch(source,pos+3)==45:
+      pos=pos+4
+      while pos+2<n && (_svg_ch(source,pos)!=45 || _svg_ch(source,pos+1)!=45 || _svg_ch(source,pos+2)!=62):
+        pos=pos+1
+      pos=pos+3
+      continue
+    tag_begin:int=pos+1
+    pos=pos+1
+    closing:int=0
+    if pos<n && _svg_ch(source,pos)==47:
+      closing=1
+      pos=pos+1
+    while pos<n && _svg_space(_svg_ch(source,pos))!=0:
+      pos=pos+1
+    name_first:int=pos
+    while pos<n && _svg_alpha(_svg_ch(source,pos))!=0:
+      pos=pos+1
+    name_last:int=pos
+    quote:int=0
+    while pos<n:
+      ch:int=_svg_ch(source,pos)
+      if quote!=0:
+        if ch==quote: quote=0
+      else:
+        if ch==34 || ch==39: quote=ch
+        else:
+          if ch==62: break
+      pos=pos+1
+    if pos>=n:
+      break
+    tag_last:int=pos
+    self_close:int=0
+    q:int=tag_last-1
+    while q>=tag_begin && _svg_space(_svg_ch(source,q))!=0:
+      q=q-1
+    if _svg_ch(source,q)==47: self_close=1
+    pos=pos+1
+    if closing!=0:
+      if _svg_name_eq(source,name_first,name_last,"g")!=0 && depth>0:
+        depth = depth - 1
+        fill = stack_fill[depth]
+        stroke = stack_stroke[depth]
+        stroke_width = stack_width[depth]
+        evenodd = stack_evenodd[depth]
+        current_color = stack_color[depth]
+      continue
+    if _svg_name_eq(source,name_first,name_last,"svg")!=0:
+      saw_svg=1
+      a:int=0
+      b:int=0
+      if _svg_find_attr(source,tag_begin,tag_last,"viewBox",&a,&b)!=0:
+        p:int=a
+        vx:float=0.0
+        vy:float=0.0
+        vw:float=0.0
+        vh:float=0.0
+        if _svg_parse_number(source,&p,b,&vx)!=0 && _svg_parse_number(source,&p,b,&vy)!=0 && _svg_parse_number(source,&p,b,&vw)!=0 && _svg_parse_number(source,&p,b,&vh)!=0 && vw>0.0 && vh>0.0:
+          asset[0].view_x=vx
+          asset[0].view_y=vy
+          asset[0].view_w=vw
+          asset[0].view_h=vh
+      else:
+        asset[0].view_w=_svg_read_attr_number(source,tag_begin,tag_last,"width",24.0)
+        asset[0].view_h=_svg_read_attr_number(source,tag_begin,tag_last,"height",24.0)
+      current_color=_svg_read_style(source,tag_begin,tag_last,fill,stroke,stroke_width,evenodd,current_color,&fill,&stroke,&stroke_width,&evenodd)
+    else:
+      if _svg_name_eq(source,name_first,name_last,"g")!=0:
+        if self_close==0 && depth<8:
+          stack_fill[depth]=fill
+          stack_stroke[depth]=stroke
+          stack_width[depth]=stroke_width
+          stack_evenodd[depth]=evenodd
+          stack_color[depth]=current_color
+          depth=depth+1
+        current_color=_svg_read_style(source,tag_begin,tag_last,fill,stroke,stroke_width,evenodd,current_color,&fill,&stroke,&stroke_width,&evenodd)
+      else:
+        if _svg_name_eq(source,name_first,name_last,"path")!=0:
+          a=0
+          b=0
+          element_fill:int=fill
+          element_stroke:int=stroke
+          element_width:float=stroke_width
+          element_evenodd:int=evenodd
+          _svg_read_style(source,tag_begin,tag_last,fill,stroke,stroke_width,evenodd,current_color,&element_fill,&element_stroke,&element_width,&element_evenodd)
+          if _svg_find_attr(source,tag_begin,tag_last,"d",&a,&b)!=0:
+            path:int=_svg_new_path(asset,element_fill,element_stroke,element_width,element_evenodd)
+            if path<0 || _svg_parse_path(source,a,b,asset,path)<0:
+              asset[0].error=TZSVG_ERR_FORMAT
+              break
+        else:
+          if _svg_name_eq(source,name_first,name_last,"line")==0 && _svg_name_eq(source,name_first,name_last,"polyline")==0 && _svg_name_eq(source,name_first,name_last,"polygon")==0 && _svg_name_eq(source,name_first,name_last,"rect")==0 && _svg_name_eq(source,name_first,name_last,"circle")==0 && _svg_name_eq(source,name_first,name_last,"ellipse")==0:
+            continue
+          ef:int=fill
+          es:int=stroke
+          ew:float=stroke_width
+          ee:int=evenodd
+          _svg_read_style(source,tag_begin,tag_last,fill,stroke,stroke_width,evenodd,current_color,&ef,&es,&ew,&ee)
+          _svg_make_shape(source,tag_begin,tag_last,name_first,name_last,asset,ef,es,ew,ee)
+  if asset[0].error!=0 || saw_svg==0 || asset[0].view_w<=0.0 || asset[0].view_h<=0.0:
+    free(asset as *char)
+    ret 0 as *TzSvgAsset
+  ret asset
+
+fn svg_load_file(path:str) -> *TzSvgAsset:
+  if path==0:
+    ret 0 as *TzSvgAsset
+  mf:*MmapFile=io.mmap_open(path)
+  if mf==0:
+    ret 0 as *TzSvgAsset
+  source:str=io.mmap_data(mf) as str
+  asset:*TzSvgAsset=svg_load_text(source)
+  io.mmap_close(mf)
+  ret asset
+
+fn svg_free(asset:*TzSvgAsset) -> int:
+  if asset==0:
+    ret 0
+  free(asset as *char)
+  ret 0
+
+fn _svg_map_x(asset:*TzSvgAsset, x:float, origin_x:int, scale:float, offset_x:float) -> int:
+  ret (origin_x as float + offset_x + (x-asset[0].view_x)*scale) as int
+
+fn _svg_map_y(asset:*TzSvgAsset, y:float, origin_y:int, scale:float, offset_y:float) -> int:
+  ret (origin_y as float + offset_y + (y-asset[0].view_y)*scale) as int
+
+fn _svg_fill_path(asset:*TzSvgAsset, canvas:*GpuCanvas, path:int, x:int, y:int, scale:float, ox:float, oy:float, color:int) -> int:
+  if asset==0 || canvas==0 || path<0 || path>=asset[0].path_count || color<0:
+    ret 0
+  first:int=asset[0].paths[path].first
+  count:int=asset[0].paths[path].count
+  if count<3:
+    ret 0
+  min_y:int=canvas[0].H
+  max_y:int=0
+  i:int=first
+  while i<first+count:
+    py:int=_svg_map_y(asset,asset[0].point_y[i],y,scale,oy)
+    if py<min_y: min_y=py
+    if py>max_y: max_y=py
+    i=i+1
+  if min_y<0: min_y=0
+  if max_y>=canvas[0].H: max_y=canvas[0].H-1
+  scan:int=min_y
+  while scan<=max_y:
+    intersections:[int;2048]
+    found:int=0
+    sub_first:int=first
+    k:int=first
+    while k<=first+count:
+      if k==first+count || (k>sub_first && asset[0].point_move[k]!=0):
+        sub_last:int=k
+        if sub_last-sub_first>=2:
+          edge:int=sub_first
+          while edge<sub_last:
+            next_edge:int=edge+1
+            if next_edge==sub_last: next_edge=sub_first
+            x0:int=_svg_map_x(asset,asset[0].point_x[edge],x,scale,ox)
+            y0:int=_svg_map_y(asset,asset[0].point_y[edge],y,scale,oy)
+            x1:int=_svg_map_x(asset,asset[0].point_x[next_edge],x,scale,ox)
+            y1:int=_svg_map_y(asset,asset[0].point_y[next_edge],y,scale,oy)
+            if (y0<=scan && y1>scan) || (y1<=scan && y0>scan):
+              if found<TZSVG_POINT_MAX:
+                intersections[found]=(x0 + (scan-y0)*(x1-x0)/(y1-y0))
+                found=found+1
+            edge=edge+1
+        sub_first=k
+      k=k+1
+    a:int=1
+    while a<found:
+      value:int=intersections[a]
+      b:int=a-1
+      while b>=0 && intersections[b]>value:
+        intersections[b+1]=intersections[b]
+        b=b-1
+      intersections[b+1]=value
+      a=a+1
+    j:int=0
+    while j+1<found:
+      left:int=intersections[j]
+      right:int=intersections[j+1]
+      if left<0: left=0
+      if right>=canvas[0].W: right=canvas[0].W-1
+      if right>=left:
+        gpu_render.gpr_line(canvas,left,scan,right,scan,color,1)
+      j=j+2
+    scan=scan+1
+  ret 0
+
+fn svg_draw(asset:*TzSvgAsset, canvas:*GpuCanvas, x:int, y:int, w:int, h:int, tint:int) -> int:
+  if asset==0 || canvas==0 || w<=0 || h<=0 || asset[0].view_w<=0.0 || asset[0].view_h<=0.0:
+    ret TZSVG_ERR_INPUT
+  scale_x:float = (w as float)/asset[0].view_w
+  scale_y:float = (h as float)/asset[0].view_h
+  scale:float=scale_x
+  if scale_y<scale: scale=scale_y
+  ox:float=((w as float)-asset[0].view_w*scale)/2.0
+  oy:float=((h as float)-asset[0].view_h*scale)/2.0
+  p:int=0
+  while p<asset[0].path_count:
+    path_first:int=asset[0].paths[p].first
+    path_count:int=asset[0].paths[p].count
+    fill_color:int=asset[0].paths[p].fill
+    stroke_color:int=asset[0].paths[p].stroke
+    if tint>=0:
+      fill_color=tint
+      stroke_color=tint
+    _svg_fill_path(asset,canvas,p,x,y,scale,ox,oy,fill_color)
+    if stroke_color>=0 && path_count>1:
+      thickness:int=(asset[0].paths[p].stroke_width*scale) as int
+      if thickness<1: thickness=1
+      i:int=path_first+1
+      while i<path_first+path_count:
+        if asset[0].point_move[i]==0:
+          x0:int=_svg_map_x(asset,asset[0].point_x[i-1],x,scale,ox)
+          y0:int=_svg_map_y(asset,asset[0].point_y[i-1],y,scale,oy)
+          x1:int=_svg_map_x(asset,asset[0].point_x[i],x,scale,ox)
+          y1:int=_svg_map_y(asset,asset[0].point_y[i],y,scale,oy)
+          gpu_render.gpr_line(canvas,x0,y0,x1,y1,stroke_color,thickness)
+        i=i+1
+    p=p+1
+  ret asset[0].path_count

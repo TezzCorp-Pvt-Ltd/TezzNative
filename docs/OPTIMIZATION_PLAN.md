@@ -789,7 +789,7 @@ Delivered:
   and proves tampered artifacts fail verification.
 - Hardened the Windows GitHub conformance download path to use bounded
   PowerShell HTTPS downloads and manifest/sidecar SHA-256 verification.
-- Hardened Windows and Linux install scripts on `tn.tezzcorp.com` so SDK
+- Hardened Windows and Linux install scripts on `tezznative.org` so SDK
   archives are checked against published `.sha256` files before extraction.
 - Published `download/release_manifest.json` and
   `download/release_manifest.json.sha256` beside the SDK archives.
@@ -976,7 +976,7 @@ A change is done when:
 8. Add a platform support matrix.
 9. Add a benchmark harness skeleton. Done: `benchmarks/run.ps1` with TezzNative,
    Python, and C starter fixtures.
-10. Publish the roadmap and stability pages on GitHub and tn.tezzcorp.com.
+10. Publish the roadmap and stability pages on GitHub and tezznative.org.
 
 ## Long-Term Release Gates
 

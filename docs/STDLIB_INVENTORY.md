@@ -39,7 +39,7 @@ trust in the stable core.
 | `llm_core` | Dtype-explicit CPU transformer primitives, quantized matmul, KV/decode helpers, and fail-closed backend gates | f32 API shape, f16/bf16 storage lanes, int8/uint8/q4 matmul, tensor/KV descriptors, tokenizer byte fixtures, tiny decoder rules, and benchmark source are gated; add true packed/accelerated backends, mmap model format, real tokenizer compatibility, and published performance data before claiming production LLM support. |
 | `mind`, `trainer` | TezzMind tiny on-device transformer and training prototype | Forward/generation/training/save-load, frozen checkpoint compatibility, and trained checkpoint evaluation are Windows-native gated; Linux native `mind` lowering remains a backend blocker. Add held-out quality metrics, tokenizer integration, Linux native parity, and performance reports before promotion. |
 | `gui`, `gui_win` | Host GUI APIs | Add Windows-only examples and platform notes. |
-| `tzgui`, `tzui`, `tnui`, `tezzui`, `wm` | UI stacks | Clarify supported host path and maturity. |
+| `tzgui`, `tzui`, `tnui`, `tezzui`, `wm` | UI stacks | Retained `tzgui` now has absolute/row/column flex layout, reusable box styles, z-ordering, pointer capture, hover and focus state, keyboard activation, and inherited disabled/hidden state; `tzcss` applies box/flex and hover styles. Add scrolling/clipping, accessibility, and platform input coverage. |
 | `mmap`, `sys`, `task`, `event`, `frame` | Systems/runtime helpers | Add platform matrix and failure behavior. |
 
 ## Experimental Modules

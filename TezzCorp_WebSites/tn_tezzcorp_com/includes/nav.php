@@ -35,12 +35,12 @@ function tn_boot(string $path = '/'): array {
     'config' => [
       'site_name' => 'TezzNative',
       'site_url' => 'https://tezznative.org',
-      'version' => '1.1.0'
+      'version' => '1.0.0'
     ],
     'version' => [
-      'version' => '1.1.0',
-      'build' => '2026.09',
-      'status' => 'Production Mature'
+      'version' => '1.0.0',
+      'build' => '2026.11',
+      'status' => 'Production Release'
     ],
     'pdo' => $pdo,
   ];
@@ -64,10 +64,10 @@ function tn_nav(string $active = 'home'): void {
 <!-- Top Announcement Ribbon -->
 <div class="announcement-banner">
   <div class="banner-container">
-    <span class="banner-badge"><?= __('banner_badge', 'NEW IN v1.1') ?></span>
+    <span class="banner-badge"><?= __('banner_badge', 'OFFICIAL RELEASE') ?></span>
     <span class="banner-text"><?= __('banner_text', 'High-Performance Systems & AI Language with Native Tensors, Coroutines & Zero-GC Execution!') ?></span>
     <a href="/download/" class="banner-link">
-      <?= __('banner_link', 'Get TezzNative v1.1.0') ?>
+      <?= __('banner_link', 'Get TezzNative v1.0.0') ?>
       <svg class="icon-inline" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
     </a>
   </div>
@@ -78,14 +78,14 @@ function tn_nav(string $active = 'home'): void {
   <div class="nav-container">
     <!-- Brand Logo -->
     <a href="/" class="brand-logo" aria-label="TezzNative Home">
-      <div class="logo-symbol" style="display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 8px; overflow: hidden; background: rgba(255, 103, 31, 0.1); border: 1px solid rgba(255, 153, 51, 0.3);">
-        <img src="/assets/logo.png" alt="TezzCorp Logo" style="width: 100%; height: 100%; object-fit: contain;" />
+      <div class="logo-symbol" style="display: flex; align-items: center; justify-content: center; width: 38px; height: 38px; border-radius: 10px; overflow: hidden; background: radial-gradient(circle at 30% 25%, #1e293b 0%, #0b1329 60%, #030712 100%); border: 1px solid rgba(56, 189, 248, 0.45); box-shadow: 0 4px 14px rgba(2, 6, 23, 0.28), inset 0 1px 1px rgba(255, 255, 255, 0.18); padding: 3px; flex-shrink: 0;">
+        <img src="/assets/logo.png" alt="TezzNative Official Logo" style="width: 100%; height: 100%; object-fit: contain;" />
       </div>
-      <div style="display: flex; flex-direction: column; line-height: 1.1;">
+      <div style="display: flex; flex-direction: column; line-height: 1.15;">
         <span class="brand-text">Tezz<span class="brand-accent">Native</span></span>
-        <span style="font-size: 0.65rem; color: #94a3b8; font-weight: 500;">TezzCorp Pvt Ltd</span>
+        <span style="font-size: 0.58rem; color: #94a3b8; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase;">TEZZCORP PRIVATE LIMITED</span>
       </div>
-      <span class="version-tag">v1.1.0</span>
+      <span class="version-tag">v1.0.0</span>
     </a>
 
     <!-- Desktop Navigation Links -->
@@ -93,6 +93,7 @@ function tn_nav(string $active = 'home'): void {
       <a href="/#features" class="nav-link <?= ($active === 'features') ? 'active' : '' ?>"><?= __('nav_features', 'Features') ?></a>
       <a href="/#benchmarks" class="nav-link <?= ($active === 'benchmarks') ? 'active' : '' ?>"><?= __('nav_benchmarks', 'Benchmarks') ?></a>
       <a href="/docs/" class="nav-link <?= ($active === 'docs') ? 'active' : '' ?>"><?= __('nav_docs', 'Docs') ?></a>
+      <a href="/packages" class="nav-link <?= ($active === 'packages') ? 'active' : '' ?>">Packages</a>
       <a href="/frameworks/" class="nav-link <?= ($active === 'frameworks') ? 'active' : '' ?>"><?= __('nav_frameworks', 'Frameworks') ?></a>
 
       <!-- Dropdown in navbar to prevent overflow -->
@@ -209,14 +210,14 @@ function tn_nav(string $active = 'home'): void {
 <aside class="mobile-sidebar" id="mobileSidebar" aria-label="Mobile Navigation" aria-hidden="true">
   <div class="sidebar-header">
     <a href="/" class="brand-logo" aria-label="TezzNative Home">
-      <div class="logo-symbol" style="display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 8px; overflow: hidden; background: rgba(255, 103, 31, 0.1); border: 1px solid rgba(255, 153, 51, 0.3);">
-        <img src="/assets/logo.png" alt="TezzCorp Logo" style="width: 100%; height: 100%; object-fit: contain;" />
+      <div class="logo-symbol" style="display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 9px; overflow: hidden; background: radial-gradient(circle at 30% 25%, #1e293b 0%, #0b1329 60%, #030712 100%); border: 1px solid rgba(56, 189, 248, 0.45); box-shadow: 0 4px 14px rgba(2, 6, 23, 0.28), inset 0 1px 1px rgba(255, 255, 255, 0.18); padding: 2px; flex-shrink: 0;">
+        <img src="/assets/logo.png" alt="TezzNative Official Logo" style="width: 100%; height: 100%; object-fit: contain;" />
       </div>
-      <div style="display: flex; flex-direction: column; line-height: 1.1;">
+      <div style="display: flex; flex-direction: column; line-height: 1.15;">
         <span class="brand-text" style="font-size: 1.15rem;">Tezz<span class="brand-accent">Native</span></span>
-        <span style="font-size: 0.62rem; color: #94a3b8; font-weight: 500;">TezzCorp Pvt Ltd</span>
+        <span style="font-size: 0.55rem; color: #94a3b8; font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase;">TEZZCORP PRIVATE LIMITED</span>
       </div>
-      <span class="version-tag">v1.1.0</span>
+      <span class="version-tag">v1.0.0</span>
     </a>
     <button class="sidebar-close-btn" id="sidebarClose" aria-label="Close Navigation Menu">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -282,7 +283,7 @@ function tn_nav(string $active = 'home'): void {
 
     <!-- Prominent Mobile CTA Box -->
     <div class="sidebar-cta-box">
-      <div class="sidebar-cta-title">Install TezzNative v1.1.0</div>
+      <div class="sidebar-cta-title">Install TezzNative v1.0.0</div>
       <p class="sidebar-cta-desc">Standalone C speed, native tensors & async runtime on your machine.</p>
       <a href="/download/" class="btn btn-primary sidebar-btn-install">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -292,6 +293,7 @@ function tn_nav(string $active = 'home'): void {
         <span><?= __('nav_install_cli', 'Install TezzNative (CLI)') ?></span>
       </a>
       <div class="sidebar-cta-links">
+        <a href="/packages" class="sidebar-sub-link">Package Registry &rarr;</a>
         <a href="/download/tezznative-sdk-linux.tar.gz" class="sidebar-sub-link">Linux SDK (.tar.gz) &rarr;</a>
         <a href="/download/" class="sidebar-sub-link">Manifest & SHA256 &rarr;</a>
       </div>
@@ -300,13 +302,13 @@ function tn_nav(string $active = 'home'): void {
 
   <div class="sidebar-footer">
     <div class="sidebar-footer-links">
-      <a href="https://github.com/TezzCorp/TezzNative" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/TezzCorp-Pvt-Ltd/TezzNative" target="_blank" rel="noopener">GitHub</a>
       <span>&bull;</span>
       <a href="/community/">Forum</a>
       <span>&bull;</span>
       <a href="/docs/">Docs</a>
     </div>
-    <div class="sidebar-copy">&copy; <?= date('Y') ?> TezzCorp Pvt Ltd &bull; Production Ready</div>
+    <div class="sidebar-copy">&copy; <?= date('Y') ?> TEZZCORP PRIVATE LIMITED &bull; Production Ready</div>
   </div>
 </aside>
 <?php

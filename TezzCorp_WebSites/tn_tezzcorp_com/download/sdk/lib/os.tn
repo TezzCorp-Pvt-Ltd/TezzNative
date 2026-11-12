@@ -22,7 +22,16 @@ extern fn fb_pitch() -> int
 extern fn fb_bpp() -> int
 extern fn boot_text() -> int
 extern fn fb_text(x:int, y:int, s:str, color:int) -> int
+extern fn fb_text_ex(x:int, y:int, s:str, color:int, scale:int, bold:int) -> int
+extern fn fb_text_style(x:int, y:int, s:str, color:int, pixel_size:int, weight:int, family:str) -> int
+extern fn fb_text_measure(s:str, pixel_size:int, weight:int, family:str) -> int
+extern fn fb_text_copy(dst:*char, src:str, capacity:int) -> int
 extern fn fb_present() -> int
+extern fn fb_sync_resize() -> int
+extern fn fb_present_rect(x:int, y:int, w:int, h:int) -> int
+extern fn fb_set_app_icon(kind:int, primary:int, accent:int) -> int
+extern fn fb_pump_events() -> int
+extern fn fb_wait_events() -> int
 extern fn fb_host_windowing() -> int
 extern fn fb_set_scale(scale:int) -> int
 extern fn fb_get_scale() -> int
@@ -37,6 +46,13 @@ extern fn fb_fill(color:int) -> int
 extern fn fb_fill_rect(x:int, y:int, w:int, h:int, color:int) -> int
 extern fn fb_blit(sx:int, sy:int, w:int, h:int, dx:int, dy:int) -> int
 extern fn fb_composite_rect(x:int, y:int, w:int, h:int, color:int, alpha:int) -> int
+extern fn fb_gradient_v(x:int, y:int, w:int, h:int, top:int, bottom:int) -> int
+extern fn fb_gradient_h(x:int, y:int, w:int, h:int, left:int, right:int) -> int
+extern fn fb_time_us() -> int
+extern fn fb_time_ms() -> int
+extern fn fb_frame_sync(target_fps:int) -> int
+extern fn fb_vsync() -> int
+extern fn fb_spring_step(current:int, target:int, vel:*int, tension:int, damping:int, dt_ms:int) -> int
 extern fn fb_get_pixel(x:int, y:int) -> int
 extern fn fb_put_pixel(x:int, y:int, color:int) -> int
 extern fn fb_cursor_soft_reset() -> int
@@ -125,6 +141,7 @@ extern fn kbd_has_event() -> int
 extern fn kbd_read_scancode() -> int
 extern fn kbd_read_scancode_raw() -> int
 extern fn kbd_read_char() -> int
+extern fn kbd_modifiers() -> int
 extern fn kbd_ime_active() -> int
 extern fn kbd_ime_cursor() -> int
 extern fn kbd_ime_length() -> int
@@ -137,6 +154,17 @@ extern fn mouse_dy() -> int
 extern fn mouse_buttons() -> int
 extern fn mouse_x() -> int
 extern fn mouse_y() -> int
+extern fn mouse_packet_x() -> int
+extern fn mouse_packet_y() -> int
+extern fn mouse_wheel_x() -> int
+extern fn mouse_wheel_y() -> int
+extern fn touch_has_event() -> int
+extern fn touch_read_event() -> int
+extern fn touch_id() -> int
+extern fn touch_phase() -> int
+extern fn touch_x() -> int
+extern fn touch_y() -> int
+extern fn touch_pressure() -> int
 extern fn ps2_force_mouse_path(profile:int) -> int
 extern fn apic_available() -> int
 extern fn apic_init() -> int
@@ -969,6 +997,9 @@ fn kbd_poll_scancode_raw() -> int:
 fn kbd_poll_char() -> int:
   ret kbd_read_char()
 
+fn kbd_poll_modifiers() -> int:
+  ret kbd_modifiers()
+
 fn kbd_poll_ime_active() -> int:
   ret kbd_ime_active()
 
@@ -998,6 +1029,39 @@ fn mouse_poll_dy() -> int:
 
 fn mouse_poll_buttons() -> int:
   ret mouse_buttons()
+
+fn mouse_poll_packet_x() -> int:
+  ret mouse_packet_x()
+
+fn mouse_poll_packet_y() -> int:
+  ret mouse_packet_y()
+
+fn mouse_poll_wheel_x() -> int:
+  ret mouse_wheel_x()
+
+fn mouse_poll_wheel_y() -> int:
+  ret mouse_wheel_y()
+
+fn touch_poll_has_event() -> int:
+  ret touch_has_event()
+
+fn touch_poll_event() -> int:
+  ret touch_read_event()
+
+fn touch_poll_id() -> int:
+  ret touch_id()
+
+fn touch_poll_phase() -> int:
+  ret touch_phase()
+
+fn touch_poll_x() -> int:
+  ret touch_x()
+
+fn touch_poll_y() -> int:
+  ret touch_y()
+
+fn touch_poll_pressure() -> int:
+  ret touch_pressure()
 
 fn console_read_char() -> int:
   // Prefer keyboard to avoid serial noise blocking input.

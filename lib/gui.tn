@@ -32,12 +32,18 @@ static let g_event_ready:int = 0
 static let g_mouse_x:int = 0
 static let g_mouse_y:int = 0
 static let g_mouse_buttons:int = 0
+static let g_keyboard_modifiers:int = 0
 static let g_ime_active:int = 0
 static let g_ime_cursor:int = 0
 static let g_ime_length:int = 0
 
 static let g_windows:[GuiWindow;16]
 static let g_win_count:int = 0
+static let g_clip_enabled:int = 0
+static let g_clip_x:int = 0
+static let g_clip_y:int = 0
+static let g_clip_w:int = 0
+static let g_clip_h:int = 0
 
 fn _gui_event_ensure_ready() -> int:
   if g_event_ready == 0:
@@ -71,12 +77,58 @@ fn gui_surface(out:*GuiSurface) -> int:
     out[0].bpp = os.fb_bpp()
   ret 0
 
+// Temporarily clip framebuffer primitives to one screen-space rectangle.
+// This state is intended for single-threaded render passes and must be reset.
+fn gui_clip_set(s:*GuiSurface, x:int, y:int, w:int, h:int) -> int:
+  if s == 0:
+    ret 0 - 1
+  if w <= 0 || h <= 0:
+    g_clip_x = 0
+    g_clip_y = 0
+    g_clip_w = 0
+    g_clip_h = 0
+    g_clip_enabled = 1
+    ret 0
+  x1:int = x
+  y1:int = y
+  x2:int = x + w
+  y2:int = y + h
+  if x1 < 0:
+    x1 = 0
+  if y1 < 0:
+    y1 = 0
+  if x2 > s[0].width:
+    x2 = s[0].width
+  if y2 > s[0].height:
+    y2 = s[0].height
+  if x2 <= x1 || y2 <= y1:
+    x1 = 0
+    y1 = 0
+    x2 = 0
+    y2 = 0
+  g_clip_x = x1
+  g_clip_y = y1
+  g_clip_w = x2 - x1
+  g_clip_h = y2 - y1
+  g_clip_enabled = 1
+  ret 0
+
+fn gui_clip_reset() -> int:
+  g_clip_enabled = 0
+  g_clip_x = 0
+  g_clip_y = 0
+  g_clip_w = 0
+  g_clip_h = 0
+  ret 0
+
 fn gui_putpixel(s:*GuiSurface, x:int, y:int, color:int) -> int:
   if s == 0:
     ret 0
   if s[0].addr == 0:
     ret 0
   if x < 0 || y < 0 || x >= s[0].width || y >= s[0].height:
+    ret 0
+  if g_clip_enabled != 0 && (x < g_clip_x || y < g_clip_y || x >= g_clip_x + g_clip_w || y >= g_clip_y + g_clip_h):
     ret 0
   if s[0].bpp < 24:
     ret 0
@@ -94,36 +146,418 @@ fn gui_putpixel(s:*GuiSurface, x:int, y:int, color:int) -> int:
   ret 0
 
 fn gui_clear(s:*GuiSurface, color:int) -> int:
-  if s == 0:
+  if s == 0 || s[0].addr == 0:
     ret 0
-  if s[0].addr == 0:
+  if s[0].bpp < 24 || s[0].pitch <= 0:
     ret 0
+  bytes_per_pixel:int = s[0].bpp / 8
+  if bytes_per_pixel < 3:
+    ret 0
+  b:int = color % 256
+  g:int = (color / 256) % 256
+  r:int = (color / 65536) % 256
   y:int = 0
   while y < s[0].height:
-    x:int = 0
-    while x < s[0].width:
-      gui_putpixel(s, x, y, color)
-      x = x + 1
+    off:int = y * s[0].pitch
+    unsafe:
+      p:*char = s[0].addr + off
+      x:int = 0
+      while x < s[0].width:
+        p[0] = b as char
+        p[1] = g as char
+        p[2] = r as char
+        if bytes_per_pixel >= 4:
+          p[3] = 0 as char
+        p = p + bytes_per_pixel
+        x = x + 1
     y = y + 1
   ret 0
 
 fn gui_rect(s:*GuiSurface, x:int, y:int, w:int, h:int, color:int) -> int:
-  if w <= 0 || h <= 0:
+  if s == 0 || s[0].addr == 0 || w <= 0 || h <= 0:
     ret 0
+  if s[0].bpp < 24 || s[0].pitch <= 0:
+    ret 0
+  x1:int = x
+  y1:int = y
+  x2:int = x + w
+  y2:int = y + h
+  if x1 < 0:
+    x1 = 0
+  if y1 < 0:
+    y1 = 0
+  if x2 > s[0].width:
+    x2 = s[0].width
+  if y2 > s[0].height:
+    y2 = s[0].height
+  if g_clip_enabled != 0:
+    if x1 < g_clip_x:
+      x1 = g_clip_x
+    if y1 < g_clip_y:
+      y1 = g_clip_y
+    if x2 > g_clip_x + g_clip_w:
+      x2 = g_clip_x + g_clip_w
+    if y2 > g_clip_y + g_clip_h:
+      y2 = g_clip_y + g_clip_h
+  if x2 <= x1 || y2 <= y1:
+    ret 0
+  bytes_per_pixel:int = s[0].bpp / 8
+  if bytes_per_pixel < 3:
+    ret 0
+  b:int = color % 256
+  g:int = (color / 256) % 256
+  r:int = (color / 65536) % 256
   yy:int = 0
-  while yy < h:
-    xx:int = 0
-    while xx < w:
-      gui_putpixel(s, x + xx, y + yy, color)
-      xx = xx + 1
+  while yy < (y2 - y1):
+    off:int = (y1 + yy) * s[0].pitch + x1 * bytes_per_pixel
+    unsafe:
+      p:*char = s[0].addr + off
+      xx:int = 0
+      while xx < (x2 - x1):
+        p[0] = b as char
+        p[1] = g as char
+        p[2] = r as char
+        if bytes_per_pixel >= 4:
+          p[3] = 0 as char
+        p = p + bytes_per_pixel
+        xx = xx + 1
     yy = yy + 1
+  ret 0
+
+fn _gui_min(a:int, b:int) -> int:
+  if a < b:
+    ret a
+  ret b
+
+fn _gui_line_outcode(x:int, y:int, left:int, top:int, right:int, bottom:int) -> int:
+  code:int = 0
+  if x < left:
+    code = code + 1
+  else:
+    if x > right:
+      code = code + 2
+  if y < top:
+    code = code + 4
+  else:
+    if y > bottom:
+      code = code + 8
+  ret code
+
+// Clipped integer line primitive for icons, rules, and charts. The endpoints
+// are clipped before rasterization, so even offscreen coordinates have a
+// bounded cost. Width is clamped to a small square brush.
+fn gui_line(s:*GuiSurface, x0_in:int, y0_in:int, x1_in:int, y1_in:int, color:int, width:int) -> int:
+  if s == 0 || s[0].addr == 0:
+    ret 0 - 1
+  if width < 1:
+    width = 1
+  if width > 32:
+    width = 32
+  left:int = 0
+  top:int = 0
+  right:int = s[0].width - 1
+  bottom:int = s[0].height - 1
+  if g_clip_enabled != 0:
+    left = g_clip_x
+    top = g_clip_y
+    right = g_clip_x + g_clip_w - 1
+    bottom = g_clip_y + g_clip_h - 1
+  if right < left || bottom < top:
+    ret 0
+  radius:int = width / 2
+  left = left - radius
+  top = top - radius
+  right = right + radius
+  bottom = bottom + radius
+  x0:int = x0_in
+  y0:int = y0_in
+  x1:int = x1_in
+  y1:int = y1_in
+  clipped:int = 0
+  while clipped < 16:
+    c0:int = _gui_line_outcode(x0, y0, left, top, right, bottom)
+    c1:int = _gui_line_outcode(x1, y1, left, top, right, bottom)
+    if (c0 | c1) == 0:
+      break
+    if (c0 & c1) != 0:
+      ret 0
+    outcode:int = c0
+    if outcode == 0:
+      outcode = c1
+    dx:int = x1 - x0
+    dy:int = y1 - y0
+    nx:int = 0
+    ny:int = 0
+    if (outcode & 4) != 0:
+      if dy == 0:
+        ret 0
+      nx = x0 + dx * (top - y0) / dy
+      ny = top
+    else:
+      if (outcode & 8) != 0:
+        if dy == 0:
+          ret 0
+        nx = x0 + dx * (bottom - y0) / dy
+        ny = bottom
+      else:
+        if (outcode & 2) != 0:
+          if dx == 0:
+            ret 0
+          ny = y0 + dy * (right - x0) / dx
+          nx = right
+        else:
+          if dx == 0:
+            ret 0
+          ny = y0 + dy * (left - x0) / dx
+          nx = left
+    if outcode == c0:
+      x0 = nx
+      y0 = ny
+    else:
+      x1 = nx
+      y1 = ny
+    clipped = clipped + 1
+  if clipped >= 16:
+    ret 0 - 2
+
+  dx_line:int = x1 - x0
+  if dx_line < 0:
+    dx_line = 0 - dx_line
+  sx:int = 1
+  if x0 > x1:
+    sx = 0 - 1
+  dy_line:int = y1 - y0
+  if dy_line < 0:
+    dy_line = 0 - dy_line
+  dy_line = 0 - dy_line
+  sy:int = 1
+  if y0 > y1:
+    sy = 0 - 1
+  err:int = dx_line + dy_line
+  x:int = x0
+  y:int = y0
+  steps:int = 0
+  max_steps:int = s[0].width + s[0].height + 2
+  while steps < max_steps:
+    gui_rect(s, x - radius, y - radius, width, width, color)
+    if x == x1 && y == y1:
+      break
+    twice:int = 2 * err
+    if twice >= dy_line:
+      err = err + dy_line
+      x = x + sx
+    if twice <= dx_line:
+      err = err + dx_line
+      y = y + sy
+    steps = steps + 1
+  ret 0
+
+fn gui_round_rect(s:*GuiSurface, x:int, y:int, w:int, h:int, color:int, radius:int) -> int:
+  if s == 0 || w <= 0 || h <= 0:
+    ret 0
+  if radius <= 0:
+    ret gui_rect(s, x, y, w, h, color)
+  max_radius:int = _gui_min(w / 2, h / 2)
+  if radius > max_radius:
+    radius = max_radius
+  yy:int = 0
+  yy_end:int = h
+  if y < 0:
+    yy = 0 - y
+  if y + yy_end > s[0].height:
+    yy_end = s[0].height - y
+  if g_clip_enabled != 0:
+    if y + yy_end > g_clip_y + g_clip_h:
+      yy_end = g_clip_y + g_clip_h - y
+    if y + yy < g_clip_y:
+      yy = g_clip_y - y
+  while yy < yy_end:
+    inset:int = 0
+    dy:int = 0
+    if yy < radius:
+      dy = radius - yy
+    else:
+      if yy >= h - radius:
+        dy = yy - (h - radius) + 1
+    if dy > 0:
+      dx:int = 0
+      while dx < radius && (dx * dx + dy * dy) <= (radius * radius):
+        dx = dx + 1
+      inset = radius - dx
+    gui_rect(s, x + inset, y + yy, w - 2 * inset, 1, color)
+    yy = yy + 1
+  ret 0
+
+fn gui_outline(s:*GuiSurface, x:int, y:int, w:int, h:int, color:int, thickness:int) -> int:
+  if s == 0 || w <= 0 || h <= 0 || thickness <= 0:
+    ret 0
+  if thickness * 2 >= w || thickness * 2 >= h:
+    ret gui_rect(s, x, y, w, h, color)
+  gui_rect(s, x, y, w, thickness, color)
+  gui_rect(s, x, y + h - thickness, w, thickness, color)
+  gui_rect(s, x, y + thickness, thickness, h - 2 * thickness, color)
+  gui_rect(s, x + w - thickness, y + thickness, thickness, h - 2 * thickness, color)
+  ret 0
+
+fn _gui_lerp_color(a:int, b:int, t:int) -> int:
+  if t <= 0:
+    ret a
+  if t >= 1000:
+    ret b
+  ar:int = (a / 65536) % 256
+  ag:int = (a / 256) % 256
+  ab:int = a % 256
+  br:int = (b / 65536) % 256
+  bg:int = (b / 256) % 256
+  bb:int = b % 256
+  r:int = ar + (br - ar) * t / 1000
+  g:int = ag + (bg - ag) * t / 1000
+  blue:int = ab + (bb - ab) * t / 1000
+  ret r * 65536 + g * 256 + blue
+
+fn gui_gradient_v(s:*GuiSurface, x:int, y:int, w:int, h:int, top:int, bottom:int) -> int:
+  if s == 0 || w <= 0 || h <= 0:
+    ret 0
+  if g_clip_enabled == 0 && os.fb_host_windowing() != 0 && x >= 0 && y >= 0 && (x + w) <= s[0].width && (y + h) <= s[0].height:
+    ret os.fb_gradient_v(x, y, w, h, top, bottom)
+  row:int = 0
+  row_end:int = h
+  if y < 0:
+    row = 0 - y
+  if y + row_end > s[0].height:
+    row_end = s[0].height - y
+  if g_clip_enabled != 0:
+    if y + row_end > g_clip_y + g_clip_h:
+      row_end = g_clip_y + g_clip_h - y
+    if y + row < g_clip_y:
+      row = g_clip_y - y
+  while row < row_end:
+    color:int = _gui_lerp_color(top, bottom, row * 1000 / h)
+    gui_rect(s, x, y + row, w, 1, color)
+    row = row + 1
+  ret 0
+
+fn gui_gradient_h(s:*GuiSurface, x:int, y:int, w:int, h:int, left:int, right:int) -> int:
+  if s == 0 || w <= 0 || h <= 0:
+    ret 0
+  if g_clip_enabled == 0 && os.fb_host_windowing() != 0 && x >= 0 && y >= 0 && (x + w) <= s[0].width && (y + h) <= s[0].height:
+    ret os.fb_gradient_h(x, y, w, h, left, right)
+  col:int = 0
+  col_end:int = w
+  if x < 0:
+    col = 0 - x
+  if x + col_end > s[0].width:
+    col_end = s[0].width - x
+  if g_clip_enabled != 0:
+    if x + col_end > g_clip_x + g_clip_w:
+      col_end = g_clip_x + g_clip_w - x
+    if x + col < g_clip_x:
+      col = g_clip_x - x
+  while col < col_end:
+    color:int = _gui_lerp_color(left, right, col * 1000 / w)
+    gui_rect(s, x + col, y, 1, h, color)
+    col = col + 1
+  ret 0
+
+fn gui_round_gradient_v(s:*GuiSurface, x:int, y:int, w:int, h:int, top:int, bottom:int, radius:int) -> int:
+  if s == 0 || w <= 0 || h <= 0:
+    ret 0
+  if radius < 0:
+    radius = 0
+  max_radius:int = _gui_min(w / 2, h / 2)
+  if radius > max_radius:
+    radius = max_radius
+  row:int = 0
+  row_end:int = h
+  if y < 0:
+    row = 0 - y
+  if y + row_end > s[0].height:
+    row_end = s[0].height - y
+  if g_clip_enabled != 0:
+    if y + row_end > g_clip_y + g_clip_h:
+      row_end = g_clip_y + g_clip_h - y
+    if y + row < g_clip_y:
+      row = g_clip_y - y
+  while row < row_end:
+    inset:int = 0
+    dy:int = 0
+    if row < radius:
+      dy = radius - row
+    else:
+      if row >= h - radius:
+        dy = row - (h - radius) + 1
+    if dy > 0:
+      dx:int = 0
+      while dx < radius && (dx * dx + dy * dy) <= (radius * radius):
+        dx = dx + 1
+      inset = radius - dx
+    color:int = _gui_lerp_color(top, bottom, row * 1000 / h)
+    gui_rect(s, x + inset, y + row, w - 2 * inset, 1, color)
+    row = row + 1
+  ret 0
+
+fn gui_round_gradient_h(s:*GuiSurface, x:int, y:int, w:int, h:int, left:int, right:int, radius:int) -> int:
+  if s == 0 || w <= 0 || h <= 0:
+    ret 0
+  if radius < 0:
+    radius = 0
+  max_radius:int = _gui_min(w / 2, h / 2)
+  if radius > max_radius:
+    radius = max_radius
+  col:int = 0
+  col_end:int = w
+  if x < 0:
+    col = 0 - x
+  if x + col_end > s[0].width:
+    col_end = s[0].width - x
+  if g_clip_enabled != 0:
+    if x + col_end > g_clip_x + g_clip_w:
+      col_end = g_clip_x + g_clip_w - x
+    if x + col < g_clip_x:
+      col = g_clip_x - x
+  while col < col_end:
+    inset:int = 0
+    dx:int = 0
+    if col < radius:
+      dx = radius - col
+    else:
+      if col >= w - radius:
+        dx = col - (w - radius) + 1
+    if dx > 0:
+      dy:int = 0
+      while dy < radius && (dx * dx + dy * dy) <= (radius * radius):
+        dy = dy + 1
+      inset = radius - dy
+    color:int = _gui_lerp_color(left, right, col * 1000 / w)
+    gui_rect(s, x + col, y + inset, 1, h - 2 * inset, color)
+    col = col + 1
   ret 0
 
 fn gui_text(s:*GuiSurface, x:int, y:int, text:str, color:int) -> int:
   if text == 0:
     ret 0
   // Delegate to OS framebuffer text renderer when available.
-  ret os.fb_text(x, y, text, color)
+  ret os.fb_text_ex(x, y, text, color, 1, 0)
+
+// Draw scalable, bold-aware text through the active host or framebuffer backend.
+// Scale 1 is compact UI text; larger values work well for headings and values.
+fn gui_text_ex(s:*GuiSurface, x:int, y:int, text:str, color:int, scale:int, bold:int) -> int:
+  if text == 0:
+    ret 0
+  ret os.fb_text_ex(x, y, text, color, scale, bold)
+
+// Draw UTF-8 text with a cached host font face, pixel size, and CSS-like weight.
+// Family names are resolved by the platform font matcher; missing faces fall
+// back to Segoe UI on Windows and the framebuffer bitmap font elsewhere.
+fn gui_text_style(s:*GuiSurface, x:int, y:int, text:str, color:int, pixel_size:int, weight:int, family:str) -> int:
+  if text == 0:
+    ret 0
+  ret os.fb_text_style(x, y, text, color, pixel_size, weight, family)
+
+fn gui_text_measure(text:str, pixel_size:int, weight:int, family:str) -> int:
+  if text == 0:
+    ret 0
+  ret os.fb_text_measure(text, pixel_size, weight, family)
 
 fn gui_button(s:*GuiSurface, x:int, y:int, w:int, h:int, label:str) -> int:
   // Simple boxed button (no input handling yet).
@@ -156,6 +590,38 @@ fn gui_end(s:*GuiSurface) -> int:
   // Host backends present on frame end; freestanding targets treat this as no-op.
   ret os.fb_present()
 
+fn gui_present_region(x:int, y:int, w:int, h:int) -> int:
+  // Host windows map and repaint only this framebuffer-space damage rectangle.
+  // Non-window targets use their normal whole-frame present operation.
+  if os.fb_host_windowing() != 0:
+    ret os.fb_present_rect(x, y, w, h)
+  ret os.fb_present()
+
+fn gui_time_ms() -> int:
+  ret os.fb_time_ms()
+
+fn gui_frame_sync(target_fps:int) -> int:
+  if os.fb_host_windowing() != 0:
+    ret os.fb_frame_sync(target_fps)
+  fps:int = 60
+  if target_fps > 0:
+    fps = target_fps
+  ret 1000 / fps
+
+fn gui_alpha_rect(s:*GuiSurface, x:int, y:int, w:int, h:int, color:int, alpha:int) -> int:
+  if s == 0 || w <= 0 || h <= 0:
+    ret 0
+  if os.fb_host_windowing() != 0:
+    ret os.fb_composite_rect(x, y, w, h, color, alpha)
+  ret gui_rect(s, x, y, w, h, color)
+
+fn gui_blit(s:*GuiSurface, sx:int, sy:int, w:int, h:int, dx:int, dy:int) -> int:
+  if s == 0 || w <= 0 || h <= 0:
+    ret 0
+  if os.fb_host_windowing() != 0:
+    ret os.fb_blit(sx, sy, w, h, dx, dy)
+  ret 0
+
 fn gui_event_push_key(key:int) -> int:
   _gui_event_ensure_ready()
   ret event.tz_event_push_key(&g_event_q, key)
@@ -178,32 +644,60 @@ fn gui_event_next(ev:*GuiEvent) -> int:
 
 fn gui_pump_input() -> int:
   _gui_event_ensure_ready()
-  // Pull keyboard chars into the GUI event queue.
-  c:int = os.kbd_poll_char()
-  if c > 0:
-    gui_event_push_key(c)
-  if os.mouse_poll_has_packet() != 0:
+  // Dispatch native window messages before draining the platform input queues.
+  os.fb_pump_events()
+  // Drain both physical key events and translated Unicode text input.
+  while os.kbd_poll_has_event() != 0:
+    key:int = os.kbd_poll_scancode()
+    c:int = os.kbd_poll_char()
+    g_keyboard_modifiers = os.kbd_poll_modifiers()
+    if key > 0:
+      event.tz_event_push(&g_event_q, 1, key, g_mouse_x, g_mouse_y, g_mouse_buttons, g_keyboard_modifiers, 0)
+    else:
+      if key < 0:
+        event.tz_event_push(&g_event_q, 10, 0 - key, g_mouse_x, g_mouse_y, g_mouse_buttons, g_keyboard_modifiers, 0)
+    if c > 0:
+      event.tz_event_push(&g_event_q, 9, c, g_mouse_x, g_mouse_y, g_mouse_buttons, g_keyboard_modifiers, 0)
+
+  // Preserve packet ordering so a quick down/up pair cannot disappear before
+  // the UI consumes it. Windows precision touchpads report scroll via wheel.
+  while os.mouse_poll_has_packet() != 0:
     os.mouse_poll_packet()
     dx:int = os.mouse_poll_dx()
     dy:int = os.mouse_poll_dy()
     buttons:int = os.mouse_poll_buttons()
-    if dx != 0 || dy != 0:
-      g_mouse_x = g_mouse_x + dx
-      g_mouse_y = g_mouse_y + dy
-      w:int = os.fb_width()
-      h:int = os.fb_height()
-      if g_mouse_x < 0:
-        g_mouse_x = 0
-      if g_mouse_y < 0:
-        g_mouse_y = 0
-      if w > 0 && g_mouse_x >= w:
-        g_mouse_x = w - 1
-      if h > 0 && g_mouse_y >= h:
-        g_mouse_y = h - 1
+    g_mouse_x = os.mouse_poll_packet_x()
+    g_mouse_y = os.mouse_poll_packet_y()
+    w:int = os.fb_width()
+    h:int = os.fb_height()
+    if g_mouse_x < 0:
+      g_mouse_x = 0
+    if g_mouse_y < 0:
+      g_mouse_y = 0
+    if w > 0 && g_mouse_x >= w:
+      g_mouse_x = w - 1
+    if h > 0 && g_mouse_y >= h:
+      g_mouse_y = h - 1
+    if dx != 0 || dy != 0 || buttons != g_mouse_buttons:
       event.tz_event_push_pointer(&g_event_q, g_mouse_x, g_mouse_y, buttons, 0)
     if buttons != g_mouse_buttons:
       event.tz_event_push_button(&g_event_q, g_mouse_x, g_mouse_y, buttons, 0)
       g_mouse_buttons = buttons
+    wheel_x:int = os.mouse_poll_wheel_x()
+    wheel_y:int = os.mouse_poll_wheel_y()
+    if wheel_x != 0 || wheel_y != 0:
+      event.tz_event_push(&g_event_q, 7, 0, g_mouse_x, g_mouse_y, buttons, wheel_x, wheel_y)
+
+  // WM_TOUCH provides contact IDs, phase, client position, and pressure. Apps
+  // may consume all contacts; retained widgets capture the first active one.
+  while os.touch_poll_has_event() != 0:
+    os.touch_poll_event()
+    touch_id:int = os.touch_poll_id()
+    touch_phase:int = os.touch_poll_phase()
+    touch_x:int = os.touch_poll_x()
+    touch_y:int = os.touch_poll_y()
+    pressure:int = os.touch_poll_pressure()
+    event.tz_event_push(&g_event_q, 8, touch_id, touch_x, touch_y, touch_phase, pressure, 0)
   ime_active:int = os.kbd_poll_ime_active()
   ime_cursor:int = os.kbd_poll_ime_cursor()
   ime_length:int = os.kbd_poll_ime_length()
@@ -220,6 +714,13 @@ fn gui_pump_input() -> int:
     g_ime_cursor = ime_cursor
     g_ime_length = ime_length
     event.tz_event_push(&g_event_q, 5, g_ime_active, g_mouse_x, g_mouse_y, g_mouse_buttons, g_ime_cursor, g_ime_length)
+  ret 0
+
+// Sleep until the host window receives input, resize, paint, or close activity.
+// A no-op on framebuffer targets without a windowing host.
+fn gui_wait_input() -> int:
+  if os.fb_host_windowing() != 0:
+    ret os.fb_wait_events()
   ret 0
 
 fn gui_mouse_x() -> int:

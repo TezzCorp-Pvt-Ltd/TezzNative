@@ -1,0 +1,27 @@
+import "tzgui"
+import "str"
+
+fn main() -> int:
+  tree:TzWidgetTree
+  spec:TzWidgetSpec
+  unsafe:
+    if tzgui.tree_init(&tree, 340, 560) != 0:
+      ret 1
+    spec.parent = 0
+    spec.kind = 2
+    spec.x = 0
+    spec.y = 0
+    spec.w = 120
+    spec.h = 40
+    spec.z = 0
+    spec.visible = 1
+    spec.bg = 0
+    spec.fg = 0xFFFFFF
+    spec.text = 0 as str
+    id:int = tzgui.widget_add_text(&tree, &spec, "0")
+    text:str = str.int_to_str(7)
+    tzgui.widget_set_text_copy(&tree, id, text)
+    say("widget text length ", len(tree.widgets[0].text), " content ", tree.widgets[0].text)
+    free(text as *char)
+    tzgui.tree_deinit(&tree)
+  ret 0

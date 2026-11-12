@@ -55,7 +55,7 @@ def hash8_source_file(path):
     return f"{h:08X}"
 
 def hash8_text(text):
-    data = text.encode("ascii")
+    data = text.encode("utf-8")
     h = 5381
     for b in data:
         h = (((h << 5) + h + b) & 0x7FFFFFFF)
@@ -71,7 +71,7 @@ def sha256_file(path):
 def get_declared_dependencies():
     deps = {}
     if os.path.exists(MOD_PATH):
-        with open(MOD_PATH, "r", encoding="ascii") as f:
+        with open(MOD_PATH, "r", encoding="utf-8", errors="replace") as f:
             for line in f:
                 line = line.strip()
                 if line.startswith("dep."):
@@ -119,9 +119,9 @@ def resolve_lock_and_registry():
     reg_header = f"# registry-meta v1 lines={len(registry_entries)} payload={reg_hash} key=none sig=none\n"
 
     # Write root tezz.lock and registry.tnx
-    with open(LOCK_PATH, "w", encoding="ascii") as f:
+    with open(LOCK_PATH, "w", encoding="utf-8", newline="\n") as f:
         f.write(lock_header + lock_payload)
-    with open(REGISTRY_PATH, "w", encoding="ascii") as f:
+    with open(REGISTRY_PATH, "w", encoding="utf-8", newline="\n") as f:
         f.write(reg_header + reg_payload)
 
     print(f"  tezz.lock:    lines={len(lock_entries)} payload={lock_hash}")
@@ -129,9 +129,9 @@ def resolve_lock_and_registry():
 
     # Mirror to website
     os.makedirs(SITE_ROOT, exist_ok=True)
-    with open(os.path.join(SITE_ROOT, "tezz.lock"), "w", encoding="ascii") as f:
+    with open(os.path.join(SITE_ROOT, "tezz.lock"), "w", encoding="utf-8", newline="\n") as f:
         f.write(lock_header + lock_payload)
-    with open(os.path.join(SITE_ROOT, "registry.tnx"), "w", encoding="ascii") as f:
+    with open(os.path.join(SITE_ROOT, "registry.tnx"), "w", encoding="utf-8", newline="\n") as f:
         f.write(reg_header + reg_payload)
 
     # Sync lib files to website
@@ -200,6 +200,8 @@ def sync_compiler_binaries():
 
     # Find and sync ARM64 compiler if present
     arm64_candidates = [
+        os.path.join(REPO_ROOT, "TezzNative-language", "bin", "tezzc.exe"),
+        os.path.join(REPO_ROOT, "tezzc-windows-arm64.exe"),
         os.path.join(REPO_ROOT, "bin", "tezzc-windows-arm64.exe"),
         os.path.join(SITE_BIN_DIR, "tezzc-windows-arm64.exe"),
         os.path.join(SITE_ROOT, "download", "tezzc-windows-arm64.exe"),

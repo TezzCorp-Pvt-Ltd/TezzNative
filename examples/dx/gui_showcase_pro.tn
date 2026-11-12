@@ -1,0 +1,582 @@
+// gui_showcase_pro.tn — TezzNative Production GUI & Multi-Media Showcase v2.0
+//
+// Complete Production GUI Architecture:
+//  - Multi-Font Engine: Poppins, Devanagari Unicode, Inter, Monospace
+//  - Declarative CSS Layout with Full Gravity System (9-way container anchoring)
+//  - Responsive Top Navbar with Dynamic Tab Management (add, switch, close tabs with 'x')
+//  - Collapsible Sidebar Navigation Rail (expanded with labels or compact icon dock)
+//  - App Icon Launcher (glossy squircle app tiles: VLC, Studio, Typography, CSS, Files, Browser, Terminal)
+//  - Notification Badges & System Modal Dialogs (Alert & Confirm with backdrop dimming)
+//  - VLC-Grade Video Rendering: 16:9 cinema viewport, procedural 60 FPS synthwave landscape,
+//    audio spectrum waveform, dual subtitle overlay (Poppins & Devanagari), and full playback controller
+//  - Full Keyboard & Mouse Interaction (Space=Play/Pause, 1..5=Tabs, S=Sidebar, M=Mute, F=Fullscreen, Esc=Modal)
+
+import "tzgpu_ui"
+import "tzgpu_wm"
+import "tzfont"
+import "tzcss"
+import "tzicon"
+import "tzvideo"
+import "tzrouter"
+import "tzwindow"
+import "gpu_render"
+import "particle"
+import "tween"
+import "gui_win"
+
+// ── App State ─────────────────────────────────────────────────────────────
+
+struct ProAppState:
+  ctx:TzGpuCtx
+  router:TzRouter
+  tabbar:TzTabBar
+  sidebar:TzSidebar
+  video:TzVideoPlayer
+  modal:TzModalDialog
+  wm:TzGpuWM
+  win_video:int
+  win_metrics:int
+
+  // Typography demo state
+  font_size_scale:int
+  font_weight_sel:int
+  font_align_sel:int
+
+  // CSS Studio demo state
+  css_toggle1:int
+  css_toggle2:int
+  css_slider_val:int
+  css_gravity_sel:int
+
+  // Notification & language state
+  unread_count:int
+  lang_devanagari:int
+
+// Module-level globals for large compound state (avoids LOAD:unsupported size)
+let g_btn_css_test:TzGpuBtn
+let g_ambient:TzGpuAmbient
+let g_toast:TzGpuToast
+
+fn main() -> int:
+  app:ProAppState
+  cur_page:int = 0
+  mx:int = 0
+  my:int = 0
+  mb:int = 0
+  pmb:int = 0
+  lmb_click:int = 0
+  fps:int = 0
+  cx1:int = 0
+  cy1:int = 0
+  cw1:int = 0
+  cx2:int = 0
+  cy2:int = 0
+  cw2:int = 0
+  style_card:TzCssStyle
+  style_btn:TzCssStyle
+  style_badge:TzCssStyle
+  unsafe:
+    // ── Init context (1280x720 @ 60fps) ───────────────────────────────────
+    tzgpu_ui.gu_create(&app.ctx, "TezzNative GUI & VLC Studio Pro", 1280, 720, 60)
+    app.ctx.theme_accent = 0x6366F1
+
+    // Subsystems
+    tzfont.tzf_init()
+    tzrouter.router_init(&app.router, tzrouter.page_vlc_studio())
+    tzrouter.tabbar_init(&app.tabbar)
+    tzrouter.sidebar_init(&app.sidebar)
+    tzvideo.video_init(&app.video, 180000) // 3 minutes video
+    tzwindow.modal_init(&app.modal)
+    tzgpu_ui.gu_ambient_init(&g_ambient, app.ctx.W, app.ctx.H, 1)
+
+    // Window Manager for Page 4
+    tzgpu_wm.wm_init(&app.wm)
+    app.win_video   = tzgpu_wm.wm_open(&app.wm, "VLC Mini Viewport",   40, 80,  480, 320, 0xF97316)
+    app.win_metrics = tzgpu_wm.wm_open(&app.wm, "Hardware Telemetry", 550, 80,  500, 320, 0x06B6D4)
+
+    // Typography state defaults
+    app.font_size_scale  = 2
+    app.font_weight_sel  = tzfont.weight_semibold()
+    app.font_align_sel   = tzfont.align_left()
+
+    // CSS Studio defaults
+    app.css_toggle1      = 1
+    app.css_toggle2      = 1
+    app.css_slider_val   = 75
+    app.css_gravity_sel  = tzcss.gravity_center()
+    tzgpu_ui.gu_btn_init(&g_btn_css_test)
+
+    // Notifications & Language
+    app.unread_count     = 3
+    app.lang_devanagari  = 0
+
+    // CSS style presets
+    tzcss.css_class_card(&style_card, 0x111A2B, 0x223048, 8)
+    tzcss.css_class_btn(&style_btn, 0x6366F1, 1)
+    tzcss.css_class_badge(&style_badge, 0x10B981)
+
+    // ── Main Event & Render Loop ──────────────────────────────────────────
+    while tzgpu_ui.gu_alive(&app.ctx):
+      tzgpu_ui.gu_begin(&app.ctx)
+
+      mx = app.ctx.mx
+      my = app.ctx.my
+      mb = app.ctx.mb
+      pmb = app.ctx.pmb
+      lmb_click = (mb & 1) != 0 && (pmb & 1) == 0
+
+      // Keyboard hotkeys
+      key:int = app.ctx.key
+      if key != 0:
+        // Space (32): Toggle Play/Pause
+        if key == 32:
+          tzvideo.video_toggle_play(&app.video)
+        // '1'..'5': Switch pages
+        if key == 49:
+          tzrouter.tabbar_select(&app.tabbar, 0, &app.router)
+        if key == 50:
+          tzrouter.tabbar_select(&app.tabbar, 1, &app.router)
+        if key == 51:
+          tzrouter.tabbar_select(&app.tabbar, 2, &app.router)
+        if key == 52:
+          tzrouter.tabbar_select(&app.tabbar, 3, &app.router)
+        if key == 53:
+          tzrouter.tabbar_select(&app.tabbar, 4, &app.router)
+        // 's' or 'S' (115, 83): Toggle sidebar
+        if key == 115 || key == 83:
+          tzrouter.sidebar_toggle(&app.sidebar)
+        // 'm' or 'M' (109, 77): Toggle mute
+        if key == 109 || key == 77:
+          if app.video.volume > 0:
+            app.video.volume = 0
+          else:
+            app.video.volume = 75
+        // 'f' or 'F' (102, 70): Toggle fullscreen
+        if key == 102 || key == 70:
+          app.video.fullscreen = 1 - app.video.fullscreen
+        // Escape (27): Close modal if open
+        if key == 27:
+          if app.modal.active != 0:
+            tzwindow.modal_close(&app.modal)
+            app.ctx.key = 0 // consume key so window doesn't quit
+
+      // Update video playback timer (16ms per frame @ 60fps)
+      tzvideo.video_tick(&app.video, 16)
+
+      // ── Background ────────────────────────────────────────────────────
+      tzgpu_ui.gu_anim_bg(&app.ctx, 12, 45, 12, 6)
+      tzgpu_ui.gu_ambient_tick(&g_ambient, &app.ctx.canvas)
+
+      // Layout geometry: Sidebar width & content rect
+      sb_w:int = app.sidebar.width
+
+      // ── Left Collapsible Sidebar Navigation Rail ──────────────────────
+      tzrouter.sidebar_render(&app.ctx.canvas, 0, 0, app.ctx.H, &app.sidebar, &app.router, &app.tabbar, mx, my, mb, pmb)
+
+      // ── Top Responsive Header Bar with Tab Management ─────────────────
+      header_x:int = sb_w
+      header_w:int = app.ctx.W - sb_w
+      gpu_render.gpr_rect_r(&app.ctx.canvas, header_x, 0, header_w, 46, 0x0B111E, 0)
+      gpu_render.gpr_rect_r(&app.ctx.canvas, header_x, 46, header_w, 1, 0x223048, 0)
+      gpu_render.gpr_sheen(&app.ctx.canvas, header_x, 0, header_w, 0x2B3D5C)
+
+      // Dynamic Tab Bar inside header
+      tb_w:int = header_w - 440
+      if tb_w < 180: tb_w = 180
+      tzrouter.tabbar_render(&app.ctx.canvas, header_x + 8, 7, tb_w, 32, &app.tabbar, &app.router, mx, my, mb, pmb)
+      cur_page = tzrouter.router_current(&app.router)
+
+      // Language Switcher Button (English / Devanagari Hindi)
+      lang_w:int = 110
+      lang_x:int = header_x + header_w - 430
+      is_lang_hot:int = (mx >= lang_x && mx <= lang_x + lang_w && my >= 7 && my <= 39)
+      lang_bg:int = 0x141E30
+      if is_lang_hot != 0:
+        lang_bg = 0x1F2C45
+        if lmb_click != 0:
+          app.lang_devanagari = 1 - app.lang_devanagari
+          if app.lang_devanagari != 0:
+            tzgpu_ui.gu_toast_show(&g_toast, "भाषा बदली: देवनागरी (हिंदी)", 0x10B981, 180)
+          else:
+            tzgpu_ui.gu_toast_show(&g_toast, "Language: English (Poppins)", 0x6366F1, 180)
+      gpu_render.gpr_rect_r(&app.ctx.canvas, lang_x, 7, lang_w, 32, lang_bg, 6)
+      gpu_render.gpr_outline(&app.ctx.canvas, lang_x, 7, lang_w, 32, 0x24324D)
+      if app.lang_devanagari != 0:
+        tzfont.tzf_draw_text(&app.ctx.canvas, lang_x + 8, 14, "भाषा: हिंदी", tzfont.font_devnagari(), 1, tzfont.weight_bold(), 0x10B981)
+      else:
+        tzfont.tzf_draw_text(&app.ctx.canvas, lang_x + 8, 14, "Lang: English", tzfont.font_poppins(), 1, tzfont.weight_semibold(), 0x6366F1)
+
+      // Notification Bell Icon with Badge Counter
+      bell_x:int = lang_x + lang_w + 10
+      is_bell_hot:int = (mx >= bell_x && mx <= bell_x + 32 && my >= 7 && my <= 39)
+      if is_bell_hot != 0 && lmb_click != 0:
+        tzwindow.modal_show_alert(&app.modal, "Notifications (3)", "You have 3 system updates and 1 completed video render pass.")
+        app.unread_count = 0
+      tzicon.tzi_draw_icon(&app.ctx.canvas, bell_x + 6, 13, 20, tzicon.icon_bell(), 0xF8FAFC)
+      if app.unread_count > 0:
+        tzicon.tzi_draw_notification_badge(&app.ctx.canvas, bell_x + 16, 4, app.unread_count, 0xF43F5E)
+
+      // System Tray & Status (Wifi, Battery)
+      tray_x:int = bell_x + 38
+      tzicon.tzi_draw_tray_icon(&app.ctx.canvas, tray_x, 13, tzicon.icon_wifi(), 0x10B981, 1)
+      tzicon.tzi_draw_tray_icon(&app.ctx.canvas, tray_x + 28, 13, tzicon.icon_battery(), 0x10B981, 0)
+
+      // Badges
+      badge_x:int = tray_x + 60
+      fps = tzgpu_ui.gu_fps(&app.ctx)
+      tzgpu_ui.gu_badge(&app.ctx, badge_x, 13, "60 FPS", 0x10B981)
+      tzgpu_ui.gu_badge(&app.ctx, badge_x + 76, 13, "D3D12", 0x4F46E5)
+
+      // ──────────────────────────────────────────────────────────────────
+      // PAGE CONTENT ROUTING (Bounded inside content area, no overflowing)
+      // ──────────────────────────────────────────────────────────────────
+      cont_x:int = sb_w + 14
+      cont_y:int = 56
+      cont_w:int = app.ctx.W - sb_w - 28
+      cont_h:int = app.ctx.H - 68
+
+      // ── PAGE 1: VLC MEDIA STUDIO ──────────────────────────────────────
+      if cur_page == tzrouter.page_vlc_studio():
+        vid_w:int = cont_w * 68 / 100
+        vid_h:int = cont_h - 76
+        tzvideo.video_render_viewport(&app.ctx.canvas, cont_x, cont_y, vid_w, vid_h, &app.video)
+
+        // VLC Controller Deck Bar (directly beneath viewport)
+        ctrl_y:int = cont_y + vid_h + 8
+        ctrl_h:int = 64
+        tzvideo.video_render_controller(&app.ctx.canvas, cont_x, ctrl_y, vid_w, ctrl_h, &app.video, mx, my, mb, pmb)
+
+        // Right Media Playlist & Audio Equalizer Drawer
+        dw_x:int = cont_x + vid_w + 14
+        dw_w:int = cont_w - vid_w - 14
+        dw_h:int = cont_h - 4
+        tzcss.css_render_box(&app.ctx.canvas, dw_x, cont_y, dw_w, dw_h, &style_card)
+
+        // Playlist Header
+        tzicon.tzi_draw_icon(&app.ctx.canvas, dw_x + 14, cont_y + 12, 18, tzicon.icon_video(), 0xF97316)
+        tzfont.tzf_draw_text(&app.ctx.canvas, dw_x + 38, cont_y + 13, "Media Playlist (3)", tzfont.font_poppins(), 1, tzfont.weight_semibold(), 0xF8FAFC)
+        gpu_render.gpr_rect(&app.ctx.canvas, dw_x + 14, cont_y + 36, dw_w - 28, 1, 0x223048)
+
+        // Playlist Items
+        pl_i:int = 0
+        while pl_i < 3:
+          item_y:int = cont_y + 44 + pl_i * 68
+          is_item_hot:int = (mx >= dw_x + 10 && mx <= dw_x + dw_w - 10 && my >= item_y && my <= item_y + 60)
+          item_bg:int = 0x141E30
+          if is_item_hot != 0:
+            item_bg = 0x1C2B44
+            if lmb_click != 0:
+              tzvideo.video_seek(&app.video, 0)
+              tzgpu_ui.gu_toast_show(&g_toast, "Loaded video track", 0x6366F1, 100)
+
+          gpu_render.gpr_rect_r(&app.ctx.canvas, dw_x + 10, item_y, dw_w - 20, 60, item_bg, 6)
+          gpu_render.gpr_outline(&app.ctx.canvas, dw_x + 10, item_y, dw_w - 20, 60, 0x223048)
+
+          // Play item thumbnail
+          gpu_render.gpr_rect_r(&app.ctx.canvas, dw_x + 16, item_y + 8, 44, 44, 0x090E18, 4)
+          tzicon.tzi_draw_icon(&app.ctx.canvas, dw_x + 28, item_y + 20, 18, tzicon.icon_play(), 0xF97316)
+
+          if pl_i == 0:
+            tzfont.tzf_draw_text(&app.ctx.canvas, dw_x + 68, item_y + 10, "Synthwave 4K 60fps", tzfont.font_poppins(), 1, tzfont.weight_semibold(), 0xF8FAFC)
+            tzfont.tzf_draw_text(&app.ctx.canvas, dw_x + 68, item_y + 26, "HEVC * 03:00 * 2.4 GB", tzfont.font_poppins(), 1, tzfont.weight_regular(), 0x94A3B8)
+            tzfont.tzf_draw_text(&app.ctx.canvas, dw_x + 68, item_y + 40, "Sub: Poppins & Hindi", tzfont.font_poppins(), 1, tzfont.weight_regular(), 0x10B981)
+          if pl_i == 1:
+            tzfont.tzf_draw_text(&app.ctx.canvas, dw_x + 68, item_y + 10, "Cyberpunk City Drive", tzfont.font_poppins(), 1, tzfont.weight_semibold(), 0xF8FAFC)
+            tzfont.tzf_draw_text(&app.ctx.canvas, dw_x + 68, item_y + 28, "AV1 * 12:40 * 4.1 GB", tzfont.font_poppins(), 1, tzfont.weight_regular(), 0x94A3B8)
+          if pl_i == 2:
+            tzfont.tzf_draw_text(&app.ctx.canvas, dw_x + 68, item_y + 10, "Nature HDR 4K", tzfont.font_poppins(), 1, tzfont.weight_semibold(), 0xF8FAFC)
+            tzfont.tzf_draw_text(&app.ctx.canvas, dw_x + 68, item_y + 28, "ProRes * 45:10 * 18 GB", tzfont.font_poppins(), 1, tzfont.weight_regular(), 0x94A3B8)
+
+          pl_i = pl_i + 1
+
+        // Bottom Equalizer
+        eq_y:int = cont_y + 260
+        gpu_render.gpr_rect(&app.ctx.canvas, dw_x + 14, eq_y, dw_w - 28, 1, 0x223048)
+        tzfont.tzf_draw_text(&app.ctx.canvas, dw_x + 14, eq_y + 8, "Hardware Equalizer", tzfont.font_poppins(), 1, tzfont.weight_semibold(), 0xF8FAFC)
+
+        tzfont.tzf_draw_text(&app.ctx.canvas, dw_x + 14, eq_y + 28, "Brightness", tzfont.font_poppins(), 1, tzfont.weight_regular(), 0x94A3B8)
+        tzgpu_ui.gu_progress_static(&app.ctx, dw_x + 14, eq_y + 44, dw_w - 28, 8, 65, 0xF97316)
+
+        tzfont.tzf_draw_text(&app.ctx.canvas, dw_x + 14, eq_y + 58, "Contrast", tzfont.font_poppins(), 1, tzfont.weight_regular(), 0x94A3B8)
+        tzgpu_ui.gu_progress_static(&app.ctx, dw_x + 14, eq_y + 74, dw_w - 28, 8, 78, 0x06B6D4)
+
+        tzfont.tzf_draw_text(&app.ctx.canvas, dw_x + 14, eq_y + 88, "Saturation", tzfont.font_poppins(), 1, tzfont.weight_regular(), 0x94A3B8)
+        tzgpu_ui.gu_progress_static(&app.ctx, dw_x + 14, eq_y + 104, dw_w - 28, 8, 82, 0xEC4899)
+
+        if tzgpu_ui.gu_btn_simple(&app.ctx, dw_x + 14, eq_y + 120, dw_w - 28, 30, "Reset Color Profile") != 0:
+          tzgpu_ui.gu_toast_show(&g_toast, "Color profile calibrated", 0x10B981, 150)
+
+      // ── PAGE 2: TYPOGRAPHY & DEVANAGARI STUDIO ────────────────────────
+      if cur_page == tzrouter.page_typography():
+        card_half_w:int = (cont_w - 16) / 2
+        card_half_h:int = (cont_h - 16) / 2
+
+        // Card 1: Poppins Typography
+        tzcss.css_render_box(&app.ctx.canvas, cont_x, cont_y, card_half_w, card_half_h, &style_card)
+        tzicon.tzi_draw_app_icon(&app.ctx.canvas, cont_x + 16, cont_y + 14, 28, tzicon.app_typography())
+        tzfont.tzf_draw_text(&app.ctx.canvas, cont_x + 52, cont_y + 18, "Poppins Geometric Typography", tzfont.font_poppins(), 1, tzfont.weight_bold(), 0xF8FAFC)
+        gpu_render.gpr_rect(&app.ctx.canvas, cont_x + 16, cont_y + 46, card_half_w - 32, 1, 0x223048)
+
+        tzfont.tzf_draw_text(&app.ctx.canvas, cont_x + 20, cont_y + 60, "The quick brown fox jumps over the lazy dog.", tzfont.font_poppins(), 1, tzfont.weight_regular(), 0xF8FAFC)
+        tzfont.tzf_draw_text(&app.ctx.canvas, cont_x + 20, cont_y + 86, "Scalable GUI Projects with Native Type Rendering", tzfont.font_poppins(), 2, tzfont.weight_semibold(), 0x6366F1)
+        tzfont.tzf_draw_text(&app.ctx.canvas, cont_x + 20, cont_y + 124, "HIGH RESOLUTION PROPORTIONAL METRICS", tzfont.font_poppins(), 1, tzfont.weight_bold(), 0x06B6D4)
+        tzfont.tzf_draw_text(&app.ctx.canvas, cont_x + 20, cont_y + 148, "0 1 2 3 4 5 6 7 8 9  ! @ # $ % ^ & * ( ) _ +", tzfont.font_poppins(), 1, tzfont.weight_regular(), 0x94A3B8)
+        tzfont.tzf_draw_text(&app.ctx.canvas, cont_x + 20, cont_y + 172, "Clean anti-aliased glyph contours at any display DPI.", tzfont.font_poppins(), 1, tzfont.weight_regular(), 0x64748B)
+
+        // Card 2: Devanagari Unicode Script Typography
+        c2_x:int = cont_x + card_half_w + 16
+        tzcss.css_render_box(&app.ctx.canvas, c2_x, cont_y, card_half_w, card_half_h, &style_card)
+        tzicon.tzi_draw_icon(&app.ctx.canvas, c2_x + 16, cont_y + 16, 24, tzicon.icon_check(), 0x10B981)
+        tzfont.tzf_draw_text(&app.ctx.canvas, c2_x + 48, cont_y + 18, "देवनागरी लिपि (Devanagari Unicode Script)", tzfont.font_devnagari(), 1, tzfont.weight_bold(), 0xF8FAFC)
+        gpu_render.gpr_rect(&app.ctx.canvas, c2_x + 16, cont_y + 46, card_half_w - 32, 1, 0x223048)
+
+        tzfont.tzf_draw_text(&app.ctx.canvas, c2_x + 20, cont_y + 60, "नमस्ते दुनिया! तेजनेटिव प्रोग्रामिंग भाषा में आपका स्वागत है।", tzfont.font_devnagari(), 1, tzfont.weight_bold(), 0xF8FAFC)
+        tzfont.tzf_draw_text(&app.ctx.canvas, c2_x + 20, cont_y + 90, "सत्यमेव जयते नानृतं सत्येन पन्था विततो देवयानः।", tzfont.font_devnagari(), 1, tzfont.weight_semibold(), 0xFBBF24)
+        tzfont.tzf_draw_text(&app.ctx.canvas, c2_x + 20, cont_y + 120, "स्वर: अ आ इ ई उ ऊ ऋ ए ऐ ओ औ", tzfont.font_devnagari(), 1, tzfont.weight_bold(), 0x10B981)
+        tzfont.tzf_draw_text(&app.ctx.canvas, c2_x + 20, cont_y + 148, "व्यंजन: क ख ग घ च छ ज त थ द ध न प फ ब भ म य र ल व श ष स ह", tzfont.font_devnagari(), 1, tzfont.weight_regular(), 0x94A3B8)
+        tzfont.tzf_draw_text(&app.ctx.canvas, c2_x + 20, cont_y + 180, "मात्राएँ: ा ि ी ु ू ृ े ै ो ौ ं ः ्", tzfont.font_devnagari(), 1, tzfont.weight_semibold(), 0xEC4899)
+
+        // Card 3: Interactive Font Inspector & Sizing Playground
+        c3_y:int = cont_y + card_half_h + 16
+        tzcss.css_render_box(&app.ctx.canvas, cont_x, c3_y, cont_w, card_half_h, &style_card)
+        tzfont.tzf_draw_text(&app.ctx.canvas, cont_x + 20, c3_y + 16, "Interactive Font Inspector & Live Sizing Playground", tzfont.font_poppins(), 1, tzfont.weight_bold(), 0xF8FAFC)
+        gpu_render.gpr_rect(&app.ctx.canvas, cont_x + 16, c3_y + 40, cont_w - 32, 1, 0x223048)
+
+        // Controls
+        tzfont.tzf_draw_text(&app.ctx.canvas, cont_x + 20, c3_y + 54, "Scale / Font Size", tzfont.font_poppins(), 1, tzfont.weight_regular(), 0x94A3B8)
+        app.font_size_scale = tzgpu_ui.gu_slider(&app.ctx, cont_x + 20, c3_y + 70, 260, 1, 4, app.font_size_scale, 0x6366F1)
+
+        tzfont.tzf_draw_text(&app.ctx.canvas, cont_x + 20, c3_y + 104, "Font Weight", tzfont.font_poppins(), 1, tzfont.weight_regular(), 0x94A3B8)
+        if tzgpu_ui.gu_btn_simple(&app.ctx, cont_x + 20, c3_y + 120, 80, 30, "Regular") != 0:
+          app.font_weight_sel = tzfont.weight_regular()
+        if tzgpu_ui.gu_btn_simple(&app.ctx, cont_x + 106, c3_y + 120, 84, 30, "SemiBold") != 0:
+          app.font_weight_sel = tzfont.weight_semibold()
+        if tzgpu_ui.gu_btn_simple(&app.ctx, cont_x + 196, c3_y + 120, 80, 30, "Bold") != 0:
+          app.font_weight_sel = tzfont.weight_bold()
+
+        // Live Preview Canvas
+        pv_x:int = cont_x + 300
+        pv_y:int = c3_y + 54
+        pv_w:int = cont_w - 320
+        pv_h:int = card_half_h - 70
+        gpu_render.gpr_rect_r(&app.ctx.canvas, pv_x, pv_y, pv_w, pv_h, 0x090E18, 6)
+        gpu_render.gpr_outline(&app.ctx.canvas, pv_x, pv_y, pv_w, pv_h, 0x223048)
+
+        tzfont.tzf_draw_text(&app.ctx.canvas, pv_x + 16, pv_y + 16, "TezzNative High-Precision Text Rendering", tzfont.font_poppins(), app.font_size_scale, app.font_weight_sel, 0xF8FAFC)
+        tzfont.tzf_draw_text(&app.ctx.canvas, pv_x + 16, pv_y + 60, "तेजनेटिव ग्राफिक्स: भारत की सबसे तेज़ जीयूआई", tzfont.font_devnagari(), app.font_size_scale, app.font_weight_sel, 0xFBBF24)
+        tzfont.tzf_draw_text(&app.ctx.canvas, pv_x + 16, pv_y + 104, "Scalable typography designed for production desktop applications.", tzfont.font_inter(), 1, tzfont.weight_regular(), 0x94A3B8)
+
+      // ── PAGE 3: CSS & GRAVITY STUDIO ──────────────────────────────────
+      if cur_page == tzrouter.page_css_studio():
+        top_h:int = 280
+
+        // Card 1: 9-Way Gravity Interactive Matrix
+        g_card_w:int = (cont_w - 16) / 2
+        tzcss.css_render_box(&app.ctx.canvas, cont_x, cont_y, g_card_w, top_h, &style_card)
+        tzicon.tzi_draw_icon(&app.ctx.canvas, cont_x + 16, cont_y + 14, 20, tzicon.icon_settings(), 0x6366F1)
+        tzfont.tzf_draw_text(&app.ctx.canvas, cont_x + 44, cont_y + 15, "CSS Gravity System (9-Way Container Alignment)", tzfont.font_poppins(), 1, tzfont.weight_bold(), 0xF8FAFC)
+        gpu_render.gpr_rect(&app.ctx.canvas, cont_x + 16, cont_y + 40, g_card_w - 32, 1, 0x223048)
+
+        // 3x3 Gravity Selection Buttons
+        btn_w:int = 86
+        btn_h:int = 28
+        gx_base:int = cont_x + 20
+        gy_base:int = cont_y + 54
+
+        // Row 1: Top-Left, Top-Center, Top-Right
+        if tzgpu_ui.gu_btn_simple(&app.ctx, gx_base, gy_base, btn_w, btn_h, "Top-Left") != 0:
+          app.css_gravity_sel = tzcss.gravity_top_left()
+        if tzgpu_ui.gu_btn_simple(&app.ctx, gx_base + btn_w + 6, gy_base, btn_w, btn_h, "Top-Center") != 0:
+          app.css_gravity_sel = tzcss.gravity_top_center()
+        if tzgpu_ui.gu_btn_simple(&app.ctx, gx_base + (btn_w + 6)*2, gy_base, btn_w, btn_h, "Top-Right") != 0:
+          app.css_gravity_sel = tzcss.gravity_top_right()
+
+        // Row 2: Center-Left, Center, Center-Right
+        if tzgpu_ui.gu_btn_simple(&app.ctx, gx_base, gy_base + 34, btn_w, btn_h, "Mid-Left") != 0:
+          app.css_gravity_sel = tzcss.gravity_center_left()
+        if tzgpu_ui.gu_btn_simple(&app.ctx, gx_base + btn_w + 6, gy_base + 34, btn_w, btn_h, "Center") != 0:
+          app.css_gravity_sel = tzcss.gravity_center()
+        if tzgpu_ui.gu_btn_simple(&app.ctx, gx_base + (btn_w + 6)*2, gy_base + 34, btn_w, btn_h, "Mid-Right") != 0:
+          app.css_gravity_sel = tzcss.gravity_center_right()
+
+        // Row 3: Bottom-Left, Bottom-Center, Bottom-Right
+        if tzgpu_ui.gu_btn_simple(&app.ctx, gx_base, gy_base + 68, btn_w, btn_h, "Bot-Left") != 0:
+          app.css_gravity_sel = tzcss.gravity_bottom_left()
+        if tzgpu_ui.gu_btn_simple(&app.ctx, gx_base + btn_w + 6, gy_base + 68, btn_w, btn_h, "Bot-Center") != 0:
+          app.css_gravity_sel = tzcss.gravity_bottom_center()
+        if tzgpu_ui.gu_btn_simple(&app.ctx, gx_base + (btn_w + 6)*2, gy_base + 68, btn_w, btn_h, "Bot-Right") != 0:
+          app.css_gravity_sel = tzcss.gravity_bottom_right()
+
+        // Live Gravity Preview Box
+        pv_box_x:int = gx_base + (btn_w + 6)*3 + 10
+        pv_box_y:int = gy_base
+        pv_box_w:int = g_card_w - ((btn_w + 6)*3 + 40)
+        pv_box_h:int = top_h - 70
+        gpu_render.gpr_rect_r(&app.ctx.canvas, pv_box_x, pv_box_y, pv_box_w, pv_box_h, 0x090E18, 6)
+        gpu_render.gpr_outline(&app.ctx.canvas, pv_box_x, pv_box_y, pv_box_w, pv_box_h, 0x6366F1)
+
+        // Draw Card inside container using selected Gravity!
+        item_cw:int = 90
+        item_ch:int = 40
+        tzcss.css_render_box_gravity(&app.ctx.canvas, pv_box_x + 8, pv_box_y + 8, pv_box_w - 16, pv_box_h - 16, item_cw, item_ch, app.css_gravity_sel, &style_card)
+        tzcss.css_render_text_gravity(&app.ctx.canvas, pv_box_x + 8, pv_box_y + 8, pv_box_w - 16, pv_box_h - 16, "Gravity", tzfont.font_poppins(), 1, tzfont.weight_bold(), 0x10B981, app.css_gravity_sel)
+
+        // Bottom Code snippet explaining gravity
+        tzfont.tzf_draw_text(&app.ctx.canvas, gx_base, gy_base + 115, "API: tzcss.css_render_box_gravity(canvas, px, py, pw, ph, w, h, gravity, &style)", tzfont.font_mono(), 1, tzfont.weight_regular(), 0x64748B)
+
+        // Card 2: Interactive Controls & Modals
+        c2_x:int = cont_x + g_card_w + 16
+        tzcss.css_render_box(&app.ctx.canvas, c2_x, cont_y, g_card_w, top_h, &style_card)
+        tzicon.tzi_draw_icon(&app.ctx.canvas, c2_x + 16, cont_y + 14, 20, tzicon.icon_check(), 0x10B981)
+        tzfont.tzf_draw_text(&app.ctx.canvas, c2_x + 44, cont_y + 15, "Interactive Controls & Modals", tzfont.font_poppins(), 1, tzfont.weight_bold(), 0xF8FAFC)
+        gpu_render.gpr_rect(&app.ctx.canvas, c2_x + 16, cont_y + 40, g_card_w - 32, 1, 0x223048)
+
+        app.css_toggle1 = tzgpu_ui.gu_toggle(&app.ctx, c2_x + 20, cont_y + 54, "Hardware Ray Tracing (DXR 1.1)", app.css_toggle1, 0x10B981)
+        app.css_toggle2 = tzgpu_ui.gu_toggle(&app.ctx, c2_x + 20, cont_y + 90, "Auto-Save Workspace State", app.css_toggle2, 0x06B6D4)
+        tzgpu_ui.gu_input(&app.ctx, c2_x + 20, cont_y + 130, g_card_w - 40, 32, "input.form-control: ready", 0x6366F1)
+
+        if tzgpu_ui.gu_btn(&app.ctx, &g_btn_css_test, c2_x + 20, cont_y + 174, g_card_w - 40, 36, "Open System Confirm Dialog", 0x6366F1) != 0:
+          tzwindow.modal_show_confirm(&app.modal, "Save Project Changes?", "Do you want to write your updated shader pipelines to disk before exiting?")
+
+        // Bottom Card: Component Badges & Variants
+        bot_y:int = cont_y + top_h + 14
+        bot_h:int = cont_h - top_h - 18
+        tzcss.css_render_box(&app.ctx.canvas, cont_x, bot_y, cont_w, bot_h, &style_card)
+        tzfont.tzf_draw_text(&app.ctx.canvas, cont_x + 20, bot_y + 14, "Scalable CSS Component Architecture for Developers", tzfont.font_poppins(), 1, tzfont.weight_bold(), 0xF8FAFC)
+        gpu_render.gpr_rect(&app.ctx.canvas, cont_x + 16, bot_y + 38, cont_w - 32, 1, 0x223048)
+
+        tzfont.tzf_draw_text(&app.ctx.canvas, cont_x + 20, bot_y + 50, "Component Badges:", tzfont.font_poppins(), 1, tzfont.weight_semibold(), 0x94A3B8)
+        tzgpu_ui.gu_badge(&app.ctx, cont_x + 180, bot_y + 48, "● Production Ready", 0x10B981)
+        tzgpu_ui.gu_badge(&app.ctx, cont_x + 360, bot_y + 48, "● Multi-Threaded", 0x06B6D4)
+        tzgpu_ui.gu_badge(&app.ctx, cont_x + 520, bot_y + 48, "● Hardware Accelerated", 0x6366F1)
+        tzgpu_ui.gu_badge(&app.ctx, cont_x + 720, bot_y + 48, "● Multi-Script UTF-8", 0xEC4899)
+
+        tzfont.tzf_draw_text(&app.ctx.canvas, cont_x + 20, bot_y + 86, "Progress & Sliders:", tzfont.font_poppins(), 1, tzfont.weight_semibold(), 0x94A3B8)
+        tzgpu_ui.gu_progress_static(&app.ctx, cont_x + 180, bot_y + 88, 380, 10, 72, 0x6366F1)
+        app.css_slider_val = tzgpu_ui.gu_slider(&app.ctx, cont_x + 580, bot_y + 84, 380, 0, 100, app.css_slider_val, 0x10B981)
+
+        tzfont.tzf_draw_text(&app.ctx.canvas, cont_x + 20, bot_y + 120, "CSS Buttons:", tzfont.font_poppins(), 1, tzfont.weight_semibold(), 0x94A3B8)
+        if tzgpu_ui.gu_btn_simple(&app.ctx, cont_x + 180, bot_y + 116, 150, 32, ".btn-primary") != 0:
+          tzgpu_ui.gu_toast_show(&g_toast, ".btn-primary clicked", 0x6366F1, 120)
+        if tzgpu_ui.gu_btn_simple(&app.ctx, cont_x + 346, bot_y + 116, 150, 32, ".btn-secondary") != 0:
+          tzgpu_ui.gu_toast_show(&g_toast, ".btn-secondary clicked", 0x06B6D4, 120)
+        if tzgpu_ui.gu_btn_simple(&app.ctx, cont_x + 512, bot_y + 116, 150, 32, ".btn-danger") != 0:
+          tzgpu_ui.gu_toast_show(&g_toast, ".btn-danger clicked", 0xF43F5E, 120)
+
+      // ── PAGE 4: MULTI-WINDOW DESKTOP OS ───────────────────────────────
+      if cur_page == tzrouter.page_desktop_wm():
+        tzgpu_wm.wm_process(&app.wm, &app.ctx)
+        tzgpu_wm.wm_draw(&app.wm, &app.ctx)
+
+        // Draw live mini video player inside Window 1
+        if tzgpu_wm.wm_window_count(&app.wm) > 0:
+          cx1 = tzgpu_wm.wm_client_x(&app.wm, app.win_video)
+          cy1 = tzgpu_wm.wm_client_y(&app.wm, app.win_video)
+          cw1 = tzgpu_wm.wm_client_w(&app.wm, app.win_video)
+          tzvideo.video_render_viewport(&app.ctx.canvas, cx1, cy1, cw1, 200, &app.video)
+          tzvideo.video_render_controller(&app.ctx.canvas, cx1, cy1 + 204, cw1, 56, &app.video, mx, my, mb, pmb)
+
+        // Draw live hardware telemetry inside Window 2
+        if tzgpu_wm.wm_window_count(&app.wm) > 1:
+          cx2 = tzgpu_wm.wm_client_x(&app.wm, app.win_metrics)
+          cy2 = tzgpu_wm.wm_client_y(&app.wm, app.win_metrics)
+          cw2 = tzgpu_wm.wm_client_w(&app.wm, app.win_metrics)
+          tzfont.tzf_draw_text(&app.ctx.canvas, cx2 + 12, cy2 + 12, "GPU Core Clock : 2,520 MHz  [88%]", tzfont.font_poppins(), 1, tzfont.weight_semibold(), 0xF8FAFC)
+          gpu_render.gpr_rect_r(&app.ctx.canvas, cx2 + 12, cy2 + 28, cw2 - 24, 6, 0x090E18, 3)
+          gpu_render.gpr_gradient_h(&app.ctx.canvas, cx2 + 12, cy2 + 28, (cw2 - 24)*88/100, 6, 0x10B981, 0x34D399)
+
+          tzfont.tzf_draw_text(&app.ctx.canvas, cx2 + 12, cy2 + 46, "Memory Clock   : 1,312 MHz  [95%]", tzfont.font_poppins(), 1, tzfont.weight_semibold(), 0xF8FAFC)
+          gpu_render.gpr_rect_r(&app.ctx.canvas, cx2 + 12, cy2 + 62, cw2 - 24, 6, 0x090E18, 3)
+          gpu_render.gpr_gradient_h(&app.ctx.canvas, cx2 + 12, cy2 + 62, (cw2 - 24)*95/100, 6, 0x06B6D4, 0x38BDF8)
+
+          tzfont.tzf_draw_text(&app.ctx.canvas, cx2 + 12, cy2 + 82, "Core Temp      : 64 C  ● Optimal", tzfont.font_poppins(), 1, tzfont.weight_regular(), 0x10B981)
+          tzfont.tzf_draw_text(&app.ctx.canvas, cx2 + 12, cy2 + 104, "VRAM Bandwidth : 982 GB/s Peak", tzfont.font_poppins(), 1, tzfont.weight_regular(), 0x6366F1)
+          tzgpu_ui.gu_loader_bar(&app.ctx, cx2 + 12, cy2 + 130, cw2 - 24, 8, 0x6366F1)
+
+      // ── PAGE 5: APP LAUNCHER & DOCK (Real App Icons Grid) ─────────────
+      if cur_page == tzrouter.page_app_launcher():
+        // Card container for App Launcher Grid
+        tzcss.css_render_box(&app.ctx.canvas, cont_x, cont_y, cont_w, cont_h - 4, &style_card)
+        tzicon.tzi_draw_icon(&app.ctx.canvas, cont_x + 20, cont_y + 16, 22, tzicon.icon_folder(), 0xF59E0B)
+        tzfont.tzf_draw_text(&app.ctx.canvas, cont_x + 50, cont_y + 18, "TezzNative Application Launcher (Production App Tiles)", tzfont.font_poppins(), 1, tzfont.weight_bold(), 0xF8FAFC)
+        gpu_render.gpr_rect(&app.ctx.canvas, cont_x + 16, cont_y + 44, cont_w - 32, 1, 0x223048)
+
+        // 3x3 Grid of Interactive Glossy Squircle App Icons
+        grid_x:int = cont_x + 60
+        grid_y:int = cont_y + 70
+        tile_sz:int = 64
+        col_gap:int = 140
+        row_gap:int = 130
+
+        // App 1: VLC Media Player
+        is_h0:int = (mx >= grid_x && mx <= grid_x + tile_sz && my >= grid_y && my <= grid_y + tile_sz + 30)
+        if is_h0 != 0 && lmb_click != 0:
+          tzrouter.tabbar_select(&app.tabbar, 0, &app.router)
+        tzicon.tzi_draw_app_tile(&app.ctx.canvas, grid_x, grid_y, tile_sz, tzicon.app_vlc(), "VLC Player", is_h0, 1)
+
+        // App 2: Studio IDE
+        is_h1:int = (mx >= grid_x + col_gap && mx <= grid_x + col_gap + tile_sz && my >= grid_y && my <= grid_y + tile_sz + 30)
+        if is_h1 != 0 && lmb_click != 0:
+          tzgpu_ui.gu_toast_show(&g_toast, "Launched Tezz Studio IDE", 0x6366F1, 150)
+        tzicon.tzi_draw_app_tile(&app.ctx.canvas, grid_x + col_gap, grid_y, tile_sz, tzicon.app_studio(), "Tezz Studio", is_h1, 0)
+
+        // App 3: Typography & Fonts
+        is_h2:int = (mx >= grid_x + col_gap*2 && mx <= grid_x + col_gap*2 + tile_sz && my >= grid_y && my <= grid_y + tile_sz + 30)
+        if is_h2 != 0 && lmb_click != 0:
+          tzrouter.tabbar_select(&app.tabbar, 1, &app.router)
+        tzicon.tzi_draw_app_tile(&app.ctx.canvas, grid_x + col_gap*2, grid_y, tile_sz, tzicon.app_typography(), "Typography", is_h2, 1)
+
+        // App 4: CSS & Gravity Studio
+        is_h3:int = (mx >= grid_x + col_gap*3 && mx <= grid_x + col_gap*3 + tile_sz && my >= grid_y && my <= grid_y + tile_sz + 30)
+        if is_h3 != 0 && lmb_click != 0:
+          tzrouter.tabbar_select(&app.tabbar, 2, &app.router)
+        tzicon.tzi_draw_app_tile(&app.ctx.canvas, grid_x + col_gap*3, grid_y, tile_sz, tzicon.app_code(), "CSS & Gravity", is_h3, 1)
+
+        // App 5: Desktop WM
+        is_h4:int = (mx >= grid_x + col_gap*4 && mx <= grid_x + col_gap*4 + tile_sz && my >= grid_y && my <= grid_y + tile_sz + 30)
+        if is_h4 != 0 && lmb_click != 0:
+          tzrouter.tabbar_select(&app.tabbar, 3, &app.router)
+        tzicon.tzi_draw_app_tile(&app.ctx.canvas, grid_x + col_gap*4, grid_y, tile_sz, tzicon.app_settings(), "Desktop OS", is_h4, 1)
+
+        // Row 2: Browser, Terminal, Files, Media Library, System Settings
+        grid_y2:int = grid_y + row_gap
+
+        // App 6: Browser
+        is_h5:int = (mx >= grid_x && mx <= grid_x + tile_sz && my >= grid_y2 && my <= grid_y2 + tile_sz + 30)
+        if is_h5 != 0 && lmb_click != 0:
+          tzgpu_ui.gu_toast_show(&g_toast, "Launched Web Browser", 0x0284C7, 150)
+        tzicon.tzi_draw_app_tile(&app.ctx.canvas, grid_x, grid_y2, tile_sz, tzicon.app_browser(), "Web Browser", is_h5, 0)
+
+        // App 7: Terminal
+        is_h6:int = (mx >= grid_x + col_gap && mx <= grid_x + col_gap + tile_sz && my >= grid_y2 && my <= grid_y2 + tile_sz + 30)
+        if is_h6 != 0 && lmb_click != 0:
+          tzgpu_ui.gu_toast_show(&g_toast, "Launched Terminal Console", 0x10B981, 150)
+        tzicon.tzi_draw_app_tile(&app.ctx.canvas, grid_x + col_gap, grid_y2, tile_sz, tzicon.app_terminal(), "Terminal", is_h6, 0)
+
+        // App 8: Files
+        is_h7:int = (mx >= grid_x + col_gap*2 && mx <= grid_x + col_gap*2 + tile_sz && my >= grid_y2 && my <= grid_y2 + tile_sz + 30)
+        if is_h7 != 0 && lmb_click != 0:
+          tzgpu_ui.gu_toast_show(&g_toast, "Launched File Explorer", 0xF59E0B, 150)
+        tzicon.tzi_draw_app_tile(&app.ctx.canvas, grid_x + col_gap*2, grid_y2, tile_sz, tzicon.app_files(), "Files", is_h7, 0)
+
+        // App 9: Media Library
+        is_h8:int = (mx >= grid_x + col_gap*3 && mx <= grid_x + col_gap*3 + tile_sz && my >= grid_y2 && my <= grid_y2 + tile_sz + 30)
+        if is_h8 != 0 && lmb_click != 0:
+          tzgpu_ui.gu_toast_show(&g_toast, "Loaded Media Library", 0x8B5CF6, 150)
+        tzicon.tzi_draw_app_tile(&app.ctx.canvas, grid_x + col_gap*3, grid_y2, tile_sz, tzicon.app_media(), "Media Library", is_h8, 0)
+
+        // App 10: Settings
+        is_h9:int = (mx >= grid_x + col_gap*4 && mx <= grid_x + col_gap*4 + tile_sz && my >= grid_y2 && my <= grid_y2 + tile_sz + 30)
+        if is_h9 != 0 && lmb_click != 0:
+          tzgpu_ui.gu_toast_show(&g_toast, "Opened System Settings", 0x64748B, 150)
+        tzicon.tzi_draw_app_tile(&app.ctx.canvas, grid_x + col_gap*4, grid_y2, tile_sz, tzicon.app_settings(), "Settings", is_h9, 0)
+
+      // ── System Modal Dialog Overlay ───────────────────────────────────
+      tzwindow.modal_render(&app.ctx.canvas, &app.modal, app.ctx.W, app.ctx.H, mx, my, mb, pmb)
+
+      // ── Floating Toast Notifications ──────────────────────────────────
+      tzgpu_ui.gu_toast(&app.ctx, &g_toast)
+
+      tzgpu_ui.gu_end(&app.ctx)
+
+  ret 0

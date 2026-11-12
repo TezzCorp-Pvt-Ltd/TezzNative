@@ -1264,12 +1264,12 @@ fn print_usage_release_policy_check() -> int:
   ret 0
 
 fn cmd_version() -> int:
-  say "tezz 1.1.0"
+  say "tezz 1.0.0"
   ret 0
 
 fn cmd_status() -> int:
   say "TezzNative runtime status: healthy"
-  say "Version: 1.1.0"
+  say "Version: 1.0.0"
   say "Compiler: OK"
   say "Bytecode VM: OK"
   ret 0

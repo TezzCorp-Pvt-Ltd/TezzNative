@@ -10,9 +10,9 @@ require_once __DIR__ . '/../includes/nav.php';
   <title>TezzNative Language Reference — Complete Documentation v1.0</title>
   <meta name="description" content="Complete TezzNative language reference. Verified working syntax for say, functions, imports, types, control flow, math, str, gui, and more.">
   <meta name="robots" content="index, follow">
-  <link rel="canonical" href="https://tn.tezzcorp.com/docs/">
+  <link rel="canonical" href="https://tezznative.org/docs/">
   <meta property="og:title" content="TezzNative Documentation">
-  <meta property="og:image" content="https://tn.tezzcorp.com/assets/tezz-corp-logo.png">
+  <meta property="og:image" content="https://tezznative.org/assets/logo.png">
   <style>
   .docs-layout{display:flex;min-height:calc(100vh - 64px)}
   .sidebar{width:250px;flex-shrink:0;border-right:1px solid var(--border);padding:24px 0;position:sticky;top:64px;height:calc(100vh - 64px);overflow-y:auto;background:var(--bg4)}

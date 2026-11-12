@@ -22,7 +22,7 @@ struct TzGuiTheme:
 
 struct TzGuiEngine:
   surf:GuiSurface
-  damage:TzDamage
+  damage:*TzDamage
   theme:TzGuiTheme
   ready:int
 
@@ -104,6 +104,16 @@ fn theme_light(out:*TzGuiTheme) -> int:
 fn engine_init(out:*TzGuiEngine) -> int:
   if out == 0:
     ret 0 - 1
+  damage:*TzDamage = (*TzDamage)malloc(sizeof(TzDamage))
+  if damage == 0:
+    ret 0 - 2
+  damage[0].rects = 0 as *TzRect
+  damage[0].n = 0
+  damage[0].overflow = 0
+  if out[0].damage != 0:
+    frame.tz_damage_deinit(out[0].damage)
+    free(out[0].damage)
+  out[0].damage = damage
   theme_dark(&out[0].theme)
   // Trigger lazy Win32 window creation (host_gui_backend lazy-inits on first present)
   os.fb_present()
@@ -111,9 +121,20 @@ fn engine_init(out:*TzGuiEngine) -> int:
   if out[0].surf.addr == 0:
     out[0].ready = 0
     ret 0 - 2
-  frame.tz_damage_reset(&out[0].damage)
-  frame.tz_damage_add_clipped(&out[0].damage, 0, 0, out[0].surf.width, out[0].surf.height, out[0].surf.width, out[0].surf.height)
+  if frame.tz_damage_reset(out[0].damage) != 0:
+    ret 0 - 3
+  frame.tz_damage_add_clipped(out[0].damage, 0, 0, out[0].surf.width, out[0].surf.height, out[0].surf.width, out[0].surf.height)
   out[0].ready = 1
+  ret 0
+
+fn engine_deinit(e:*TzGuiEngine) -> int:
+  if e == 0:
+    ret 0 - 1
+  if e[0].damage != 0:
+    frame.tz_damage_deinit(e[0].damage)
+    free(e[0].damage)
+    e[0].damage = 0 as *TzDamage
+  e[0].ready = 0
   ret 0
 
 fn engine_set_theme(e:*TzGuiEngine, theme:*TzGuiTheme) -> int:
@@ -127,7 +148,7 @@ fn engine_set_theme(e:*TzGuiEngine, theme:*TzGuiTheme) -> int:
   e[0].theme.button_inset = theme[0].button_inset
   e[0].theme.accent = theme[0].accent
   if e[0].ready != 0:
-    frame.tz_damage_add_clipped(&e[0].damage, 0, 0, e[0].surf.width, e[0].surf.height, e[0].surf.width, e[0].surf.height)
+    frame.tz_damage_add_clipped(e[0].damage, 0, 0, e[0].surf.width, e[0].surf.height, e[0].surf.width, e[0].surf.height)
   ret 0
 
 fn engine_ready(e:*TzGuiEngine) -> int:
@@ -178,29 +199,29 @@ fn engine_begin_frame(e:*TzGuiEngine) -> int:
 fn engine_mark_dirty(e:*TzGuiEngine, x:int, y:int, w:int, h:int) -> int:
   if e == 0 || e[0].ready == 0:
     ret 0 - 1
-  ret frame.tz_damage_add_clipped(&e[0].damage, x, y, w, h, e[0].surf.width, e[0].surf.height)
+  ret frame.tz_damage_add_clipped(e[0].damage, x, y, w, h, e[0].surf.width, e[0].surf.height)
 
 fn engine_repaint_all(e:*TzGuiEngine) -> int:
   if e == 0 || e[0].ready == 0:
     ret 0 - 1
-  ret frame.tz_damage_add_clipped(&e[0].damage, 0, 0, e[0].surf.width, e[0].surf.height, e[0].surf.width, e[0].surf.height)
+  ret frame.tz_damage_add_clipped(e[0].damage, 0, 0, e[0].surf.width, e[0].surf.height, e[0].surf.width, e[0].surf.height)
 
 fn engine_dirty_count(e:*TzGuiEngine) -> int:
   if e == 0 || e[0].ready == 0:
     ret 0
-  ret frame.tz_damage_count(&e[0].damage)
+  ret frame.tz_damage_count(e[0].damage)
 
 fn engine_clear_dirty(e:*TzGuiEngine) -> int:
   if e == 0 || e[0].ready == 0:
     ret 0 - 1
-  n:int = frame.tz_damage_count(&e[0].damage)
+  n:int = frame.tz_damage_count(e[0].damage)
   i:int = 0
   while i < n:
     r:TzRect
-    if frame.tz_damage_take(&e[0].damage, i, &r) != 0:
+    if frame.tz_damage_take(e[0].damage, i, &r) != 0:
       gui.gui_rect(&e[0].surf, r.x, r.y, r.w, r.h, e[0].theme.bg)
     i = i + 1
-  frame.tz_damage_reset(&e[0].damage)
+  frame.tz_damage_reset(e[0].damage)
   gui.gui_end(&e[0].surf)
   ret 0
 
@@ -260,6 +281,137 @@ let TZ_WIDGET_PANEL:int = 1
 let TZ_WIDGET_LABEL:int = 2
 let TZ_WIDGET_BUTTON:int = 3
 
+let TZ_UI_ICON_MENU:int = 1
+let TZ_UI_ICON_HISTORY:int = 2
+let TZ_UI_ICON_MODE:int = 3
+let TZ_UI_ICON_BACKSPACE:int = 4
+let TZ_UI_ICON_CALCULATOR:int = 5
+let TZ_UI_ICON_CLOSE:int = 6
+let TZ_UI_ICON_SETTINGS:int = 7
+
+let TZ_LAYOUT_ABSOLUTE:int = 0
+let TZ_LAYOUT_ROW:int = 1
+let TZ_LAYOUT_COLUMN:int = 2
+
+let TZ_JUSTIFY_START:int = 0
+let TZ_JUSTIFY_CENTER:int = 1
+let TZ_JUSTIFY_END:int = 2
+let TZ_JUSTIFY_BETWEEN:int = 3
+
+let TZ_ALIGN_START:int = 0
+let TZ_ALIGN_CENTER:int = 1
+let TZ_ALIGN_END:int = 2
+let TZ_ALIGN_STRETCH:int = 3
+
+let TZ_GRADIENT_NONE:int = 0
+let TZ_GRADIENT_VERTICAL:int = 1
+let TZ_GRADIENT_HORIZONTAL:int = 2
+
+let TZ_GUI_KEY_TAB:int = 9
+let TZ_GUI_KEY_ENTER:int = 13
+let TZ_GUI_KEY_SPACE:int = 32
+let TZ_GUI_KEY_ESCAPE:int = 27
+let TZ_GUI_MOD_SHIFT:int = 1
+let TZ_GUI_POINTER_PRIMARY:int = 1
+let TZ_GUI_EVENT_KEY:int = 1
+let TZ_GUI_EVENT_POINTER:int = 2
+let TZ_GUI_EVENT_BUTTON:int = 3
+let TZ_GUI_EVENT_SCROLL:int = 7
+let TZ_GUI_EVENT_TOUCH:int = 8
+let TZ_GUI_EVENT_TEXT:int = 9
+let TZ_GUI_EVENT_KEY_UP:int = 10
+let TZ_GUI_KEY_LEFT:int = 37
+let TZ_GUI_KEY_UP:int = 38
+let TZ_GUI_KEY_RIGHT:int = 39
+let TZ_GUI_KEY_DOWN:int = 40
+
+struct TzWidgetStyle:
+  bg:int
+  fg:int
+  border_color:int
+  border_width:int
+  radius:int
+  gradient_color:int
+  gradient_axis:int
+  shadow_color:int
+  shadow_size:int
+  text_align:int
+  hover_bg:int
+  pressed_bg:int
+  disabled_bg:int
+  focus_color:int
+  hover_border:int
+  text_scale:int
+  text_bold:int
+  font_size:int
+  font_weight:int
+  font_family:str
+
+struct TzWidgetLayout:
+  mode:int
+  gap:int
+  justify:int
+  align:int
+  pad_top:int
+  pad_right:int
+  pad_bottom:int
+  pad_left:int
+
+fn _tree_color_scale(color:int, pct:int) -> int:
+  r:int = (color / 65536) % 256
+  g:int = (color / 256) % 256
+  b:int = color % 256
+  r = r * pct / 100
+  g = g * pct / 100
+  b = b * pct / 100
+  if r > 255:
+    r = 255
+  if g > 255:
+    g = 255
+  if b > 255:
+    b = 255
+  ret r * 65536 + g * 256 + b
+
+fn widget_style_init(out:*TzWidgetStyle, bg:int, fg:int) -> int:
+  if out == 0:
+    ret 0 - 1
+  out[0].bg = bg
+  out[0].fg = fg
+  out[0].border_color = 0x334155
+  out[0].border_width = 1
+  out[0].radius = 6
+  out[0].gradient_color = bg
+  out[0].gradient_axis = TZ_GRADIENT_NONE
+  out[0].shadow_color = 0x03060C
+  out[0].shadow_size = 0
+  out[0].text_align = 0
+  out[0].hover_bg = _tree_color_scale(bg, 112)
+  out[0].pressed_bg = _tree_color_scale(bg, 82)
+  out[0].disabled_bg = _tree_color_scale(bg, 70)
+  out[0].focus_color = 0x818CF8
+  out[0].hover_border = 0 - 1
+  out[0].text_scale = 1
+  out[0].text_bold = 0
+  out[0].font_size = 0
+  out[0].font_weight = 0
+  out[0].font_family = "Segoe UI"
+  ret 0
+
+fn widget_layout_init(out:*TzWidgetLayout, mode:int) -> int:
+  if out == 0:
+    ret 0 - 1
+  if mode < TZ_LAYOUT_ABSOLUTE || mode > TZ_LAYOUT_COLUMN:
+    ret 0 - 2
+  out[0].mode = mode
+  out[0].gap = 8
+  out[0].justify = TZ_JUSTIFY_START
+  out[0].align = TZ_ALIGN_STRETCH
+  out[0].pad_top = 0
+  out[0].pad_right = 0
+  out[0].pad_bottom = 0
+  out[0].pad_left = 0
+  ret 0
+
 let TZ_FULL_REDRAW_NONE:int = 0
 let TZ_FULL_REDRAW_MODE_RESET:int = 1
 let TZ_FULL_REDRAW_THEME_RESET:int = 2
@@ -281,7 +433,81 @@ struct TzWidget:
   dirty:int
   bg:int
   fg:int
-  text:[char;96]
+  design_x:int
+  design_y:int
+  design_w:int
+  design_h:int
+  requested_x:int
+  requested_y:int
+  requested_w:int
+  requested_h:int
+  grow:int
+  shrink:int
+  align_self:int
+  margin_top:int
+  margin_right:int
+  margin_bottom:int
+  margin_left:int
+  design_margin_top:int
+  design_margin_right:int
+  design_margin_bottom:int
+  design_margin_left:int
+  layout_mode:int
+  layout_gap:int
+  layout_justify:int
+  layout_align:int
+  pad_top:int
+  pad_right:int
+  pad_bottom:int
+  pad_left:int
+  design_pad_top:int
+  design_pad_right:int
+  design_pad_bottom:int
+  design_pad_left:int
+  design_layout_gap:int
+  border_color:int
+  border_width:int
+  radius:int
+  design_border_width:int
+  design_radius:int
+  gradient_color:int
+  gradient_axis:int
+  shadow_color:int
+  shadow_size:int
+  design_shadow_size:int
+  text_align:int
+  hover_bg:int
+  pressed_bg:int
+  disabled_bg:int
+  focus_color:int
+  hover_border:int
+  text_scale:int
+  text_bold:int
+  font_size:int
+  design_font_size:int
+  font_weight:int
+  font_family:*char
+  icon_id:int
+  icon_size:int
+  design_icon_size:int
+  icon_color:int
+  hit_testable:int
+  enabled:int
+  focusable:int
+  tab_index:int
+  text:*char
+  anim_active:int
+  anim_start_x:int
+  anim_start_y:int
+  anim_start_w:int
+  anim_start_h:int
+  anim_target_x:int
+  anim_target_y:int
+  anim_target_w:int
+  anim_target_h:int
+  anim_dur:int
+  anim_elapsed:int
+  anim_easing:int
 
 struct TzWidgetSpec:
   parent:int
@@ -294,18 +520,34 @@ struct TzWidgetSpec:
   visible:int
   bg:int
   fg:int
+  // Borrowed NUL-terminated text; prefer widget_add_text for explicit lifetime.
   text:str
 
 struct TzWidgetTree:
   width:int
   height:int
+  design_width:int
+  design_height:int
   clear_color:int
   next_id:int
   next_order:int
   widget_count:int
   full_redraw_reason:int
-  widgets:[TzWidget;256]
-  damage:TzDamage
+  hovered_id:int
+  pressed_id:int
+  focus_id:int
+  pointer_buttons:int
+  pointer_x:int
+  pointer_y:int
+  active_touch_id:int
+  active_touch:int
+  present_x:int
+  present_y:int
+  present_w:int
+  present_h:int
+  widgets:*TzWidget
+  text_storage:*char
+  damage:*TzDamage
 
 fn _tree_clear_text(out:*char) -> int:
   if out == 0:
@@ -316,20 +558,18 @@ fn _tree_clear_text(out:*char) -> int:
     i = i + 1
   ret 0
 
-fn _tree_copy_text(out:*char, src:str) -> int:
-  if out == 0:
-    ret 0 - 1
-  _tree_clear_text(out)
-  if src == 0:
+fn _tree_text_length(text:*char) -> int:
+  if text == 0:
     ret 0
-  n:int = len(src)
-  if n > (TZ_WIDGET_TEXT_MAX - 1):
-    n = TZ_WIDGET_TEXT_MAX - 1
-  if n > 0:
+  n:int = 0
+  while n < TZ_WIDGET_TEXT_MAX:
+    ch:int = 0
     unsafe:
-      memcpy(out, src as *char, n)
-  out[n] = 0 as char
-  ret 0
+      ch = text[n] as int
+    if ch == 0:
+      break
+    n = n + 1
+  ret n
 
 fn _tree_widget_slot_by_id(tree:*TzWidgetTree, widget_id:int) -> int:
   if tree == 0 || widget_id <= 0:
@@ -344,7 +584,7 @@ fn _tree_widget_slot_by_id(tree:*TzWidgetTree, widget_id:int) -> int:
 fn _tree_add_rect(tree:*TzWidgetTree, x:int, y:int, w:int, h:int) -> int:
   if tree == 0:
     ret 0 - 1
-  ret frame.tz_damage_add_clipped(&tree[0].damage, x, y, w, h, tree[0].width, tree[0].height)
+  ret frame.tz_damage_add_clipped(tree[0].damage, x, y, w, h, tree[0].width, tree[0].height)
 
 fn _tree_widget_mark_rect(tree:*TzWidgetTree, slot:int) -> int:
   if tree == 0:
@@ -353,25 +593,84 @@ fn _tree_widget_mark_rect(tree:*TzWidgetTree, slot:int) -> int:
     ret 0 - 1
   if tree[0].widgets[slot].alive == 0:
     ret 0
-  ret _tree_add_rect(tree, tree[0].widgets[slot].x, tree[0].widgets[slot].y, tree[0].widgets[slot].w, tree[0].widgets[slot].h)
+  shadow:int = tree[0].widgets[slot].shadow_size
+  focus_pad:int = 0
+  if tree[0].widgets[slot].focusable != 0:
+    focus_pad = 2
+  extent:int = shadow + focus_pad
+  x:int = tree[0].widgets[slot].x - extent
+  y:int = tree[0].widgets[slot].y - extent
+  w:int = tree[0].widgets[slot].w
+  h:int = tree[0].widgets[slot].h
+  if extent > 0:
+    w = w + extent * 2
+    h = h + extent * 2
+  ret _tree_add_rect(tree, x, y, w, h)
 
 fn tree_init(out:*TzWidgetTree, width:int, height:int) -> int:
   if out == 0:
     ret 0 - 1
+  widgets:*TzWidget = (*TzWidget)malloc(sizeof(TzWidget) * TZ_WIDGET_MAX)
+  if widgets == 0:
+    ret 0 - 2
+  text_storage:*char = malloc(TZ_WIDGET_TEXT_MAX * TZ_WIDGET_MAX)
+  if text_storage == 0:
+    free(widgets)
+    ret 0 - 2
+  damage:*TzDamage = (*TzDamage)malloc(sizeof(TzDamage))
+  if damage == 0:
+    free(widgets)
+    free(text_storage)
+    ret 0 - 2
+  damage[0].rects = 0 as *TzRect
+  damage[0].n = 0
+  damage[0].overflow = 0
+  if out[0].widgets != 0:
+    free(out[0].widgets)
+  if out[0].text_storage != 0:
+    free(out[0].text_storage)
+  if out[0].damage != 0:
+    frame.tz_damage_deinit(out[0].damage)
+    free(out[0].damage)
+  out[0].widgets = widgets
+  out[0].text_storage = text_storage
+  out[0].damage = damage
   if width <= 0:
     width = 1024
   if height <= 0:
     height = 768
   out[0].width = width
   out[0].height = height
+  out[0].design_width = width
+  out[0].design_height = height
   out[0].clear_color = 1052946
   out[0].next_id = 1
   out[0].next_order = 1
   out[0].widget_count = 0
   out[0].full_redraw_reason = TZ_FULL_REDRAW_TREE_RESET
-  frame.tz_damage_reset(&out[0].damage)
+  out[0].hovered_id = 0
+  out[0].pressed_id = 0
+  out[0].focus_id = 0
+  out[0].pointer_buttons = 0
+  out[0].pointer_x = 0
+  out[0].pointer_y = 0
+  out[0].active_touch_id = 0
+  out[0].active_touch = 0
+  out[0].present_x = 0
+  out[0].present_y = 0
+  out[0].present_w = 0
+  out[0].present_h = 0
+  if frame.tz_damage_reset(out[0].damage) != 0:
+    free(out[0].widgets)
+    free(out[0].text_storage)
+    free(out[0].damage)
+    out[0].widgets = 0 as *TzWidget
+    out[0].text_storage = 0 as *char
+    out[0].damage = 0 as *TzDamage
+    ret 0 - 3
   i:int = 0
   while i < TZ_WIDGET_MAX:
+    out[0].widgets[i].text = out[0].text_storage + i * TZ_WIDGET_TEXT_MAX
     out[0].widgets[i].id = 0
     out[0].widgets[i].parent = 0
     out[0].widgets[i].kind = TZ_WIDGET_PANEL
@@ -386,15 +685,175 @@ fn tree_init(out:*TzWidgetTree, width:int, height:int) -> int:
     out[0].widgets[i].dirty = 0
     out[0].widgets[i].bg = 2105376
     out[0].widgets[i].fg = 16777215
-    _tree_clear_text(&out[0].widgets[i].text[0])
+    out[0].widgets[i].design_x = 0
+    out[0].widgets[i].design_y = 0
+    out[0].widgets[i].design_w = 0
+    out[0].widgets[i].design_h = 0
+    out[0].widgets[i].requested_x = 0
+    out[0].widgets[i].requested_y = 0
+    out[0].widgets[i].requested_w = 0
+    out[0].widgets[i].requested_h = 0
+    out[0].widgets[i].grow = 0
+    out[0].widgets[i].shrink = 1
+    out[0].widgets[i].align_self = 0 - 1
+    out[0].widgets[i].margin_top = 0
+    out[0].widgets[i].margin_right = 0
+    out[0].widgets[i].margin_bottom = 0
+    out[0].widgets[i].margin_left = 0
+    out[0].widgets[i].design_margin_top = 0
+    out[0].widgets[i].design_margin_right = 0
+    out[0].widgets[i].design_margin_bottom = 0
+    out[0].widgets[i].design_margin_left = 0
+    out[0].widgets[i].layout_mode = TZ_LAYOUT_ABSOLUTE
+    out[0].widgets[i].layout_gap = 0
+    out[0].widgets[i].layout_justify = TZ_JUSTIFY_START
+    out[0].widgets[i].layout_align = TZ_ALIGN_START
+    out[0].widgets[i].pad_top = 0
+    out[0].widgets[i].pad_right = 0
+    out[0].widgets[i].pad_bottom = 0
+    out[0].widgets[i].pad_left = 0
+    out[0].widgets[i].design_pad_top = 0
+    out[0].widgets[i].design_pad_right = 0
+    out[0].widgets[i].design_pad_bottom = 0
+    out[0].widgets[i].design_pad_left = 0
+    out[0].widgets[i].design_layout_gap = 0
+    out[0].widgets[i].border_color = 0x334155
+    out[0].widgets[i].border_width = 0
+    out[0].widgets[i].radius = 0
+    out[0].widgets[i].design_border_width = 0
+    out[0].widgets[i].design_radius = 0
+    out[0].widgets[i].gradient_color = 0
+    out[0].widgets[i].gradient_axis = TZ_GRADIENT_NONE
+    out[0].widgets[i].shadow_color = 0x03060C
+    out[0].widgets[i].shadow_size = 0
+    out[0].widgets[i].design_shadow_size = 0
+    out[0].widgets[i].text_align = 0
+    out[0].widgets[i].hover_bg = 0
+    out[0].widgets[i].pressed_bg = 0
+    out[0].widgets[i].disabled_bg = 0
+    out[0].widgets[i].focus_color = 0x818CF8
+    out[0].widgets[i].hover_border = 0 - 1
+    out[0].widgets[i].text_scale = 1
+    out[0].widgets[i].text_bold = 0
+    out[0].widgets[i].font_size = 0
+    out[0].widgets[i].design_font_size = 0
+    out[0].widgets[i].font_weight = 0
+    out[0].widgets[i].font_family = "Segoe UI"
+    out[0].widgets[i].icon_id = 0
+    out[0].widgets[i].icon_size = 0
+    out[0].widgets[i].design_icon_size = 0
+    out[0].widgets[i].icon_color = 0x334155
+    out[0].widgets[i].hit_testable = 0
+    out[0].widgets[i].enabled = 1
+    out[0].widgets[i].focusable = 0
+    out[0].widgets[i].tab_index = 0
+    _tree_clear_text(out[0].widgets[i].text)
     i = i + 1
-  frame.tz_damage_add_clipped(&out[0].damage, 0, 0, width, height, width, height)
+  frame.tz_damage_add_clipped(out[0].damage, 0, 0, width, height, width, height)
+  ret 0
+
+// Resize the retained tree with its framebuffer. Geometry is scaled in the
+// parent-local coordinate system, so nested absolute and flex layouts keep
+// their relationships. Font and decoration sizes use the smaller axis to
+// stay legible without becoming distorted on unusually shaped windows.
+fn tree_resize(tree:*TzWidgetTree, width:int, height:int) -> int:
+  if tree == 0 || tree[0].widgets == 0 || tree[0].damage == 0:
+    ret 0 - 1
+  if width < 1 || height < 1:
+    ret 0 - 2
+  design_width:int = tree[0].design_width
+  design_height:int = tree[0].design_height
+  if design_width <= 0 || design_height <= 0:
+    ret 0 - 3
+  if width == tree[0].width && height == tree[0].height:
+    ret 0
+  font_num:int = width
+  font_den:int = design_width
+  if height * font_den < font_num * design_height:
+    font_num = height
+    font_den = design_height
+  i:int = 0
+  while i < TZ_WIDGET_MAX:
+    if tree[0].widgets[i].alive != 0:
+      w:*TzWidget = &tree[0].widgets[i]
+      if w[0].parent <= 0:
+        w[0].requested_x = w[0].design_x * width / design_width
+        w[0].requested_y = w[0].design_y * height / design_height
+        w[0].requested_w = w[0].design_w * width / design_width
+        w[0].requested_h = w[0].design_h * height / design_height
+        if w[0].requested_w < 1:
+          w[0].requested_w = 1
+        if w[0].requested_h < 1:
+          w[0].requested_h = 1
+        w[0].x = w[0].requested_x
+        w[0].y = w[0].requested_y
+        w[0].w = w[0].requested_w
+        w[0].h = w[0].requested_h
+      else:
+        w[0].requested_x = w[0].design_x * width / design_width
+        w[0].requested_y = w[0].design_y * height / design_height
+        w[0].requested_w = w[0].design_w * width / design_width
+        w[0].requested_h = w[0].design_h * height / design_height
+        if w[0].requested_w < 1:
+          w[0].requested_w = 1
+        if w[0].requested_h < 1:
+          w[0].requested_h = 1
+      w[0].margin_top = w[0].design_margin_top * height / design_height
+      w[0].margin_bottom = w[0].design_margin_bottom * height / design_height
+      w[0].margin_left = w[0].design_margin_left * width / design_width
+      w[0].margin_right = w[0].design_margin_right * width / design_width
+      w[0].pad_top = w[0].design_pad_top * height / design_height
+      w[0].pad_bottom = w[0].design_pad_bottom * height / design_height
+      w[0].pad_left = w[0].design_pad_left * width / design_width
+      w[0].pad_right = w[0].design_pad_right * width / design_width
+      w[0].layout_gap = w[0].design_layout_gap * font_num / font_den
+      w[0].border_width = w[0].design_border_width * font_num / font_den
+      w[0].radius = w[0].design_radius * font_num / font_den
+      w[0].shadow_size = w[0].design_shadow_size * font_num / font_den
+      w[0].icon_size = w[0].design_icon_size * font_num / font_den
+      if w[0].design_font_size > 0:
+        w[0].font_size = w[0].design_font_size * font_num / font_den
+      w[0].dirty = 1
+    i = i + 1
+  tree[0].width = width
+  tree[0].height = height
+  tree[0].hovered_id = 0
+  tree[0].pressed_id = 0
+  tree[0].pointer_buttons = 0
+  tree[0].active_touch = 0
+  tree[0].active_touch_id = 0
+  frame.tz_damage_reset(tree[0].damage)
+  tree_request_full_redraw(tree, TZ_FULL_REDRAW_LAYOUT_RESET)
+  tree_layout(tree)
+  ret 1
+
+fn tree_deinit(tree:*TzWidgetTree) -> int:
+  if tree == 0:
+    ret 0 - 1
+  if tree[0].widgets != 0:
+    free(tree[0].widgets)
+    tree[0].widgets = 0 as *TzWidget
+  if tree[0].text_storage != 0:
+    free(tree[0].text_storage)
+    tree[0].text_storage = 0 as *char
+  if tree[0].damage != 0:
+    frame.tz_damage_deinit(tree[0].damage)
+    free(tree[0].damage)
+    tree[0].damage = 0 as *TzDamage
+  tree[0].widget_count = 0
+  tree[0].hovered_id = 0
+  tree[0].pressed_id = 0
+  tree[0].focus_id = 0
+  tree[0].active_touch_id = 0
+  tree[0].active_touch = 0
   ret 0
 
 fn tree_set_clear_color(tree:*TzWidgetTree, color:int) -> int:
   if tree == 0:
     ret 0 - 1
   tree[0].clear_color = color
+  tree[0].full_redraw_reason = TZ_FULL_REDRAW_THEME_RESET
+  frame.tz_damage_add_clipped(tree[0].damage, 0, 0, tree[0].width, tree[0].height, tree[0].width, tree[0].height)
   ret 0
 
 fn tree_request_full_redraw(tree:*TzWidgetTree, reason:int) -> int:
@@ -403,7 +862,7 @@ fn tree_request_full_redraw(tree:*TzWidgetTree, reason:int) -> int:
   if reason <= TZ_FULL_REDRAW_NONE:
     reason = TZ_FULL_REDRAW_TREE_RESET
   tree[0].full_redraw_reason = reason
-  ret frame.tz_damage_add_clipped(&tree[0].damage, 0, 0, tree[0].width, tree[0].height, tree[0].width, tree[0].height)
+  ret frame.tz_damage_add_clipped(tree[0].damage, 0, 0, tree[0].width, tree[0].height, tree[0].width, tree[0].height)
 
 fn tree_full_redraw_reason(tree:*TzWidgetTree) -> int:
   if tree == 0:
@@ -418,6 +877,8 @@ fn tree_widget_count(tree:*TzWidgetTree) -> int:
 fn widget_add(tree:*TzWidgetTree, spec:*TzWidgetSpec) -> int:
   if tree == 0 || spec == 0:
     ret 0 - 1
+  if spec[0].parent > 0 && _tree_widget_slot_by_id(tree, spec[0].parent) < 0:
+    ret 0 - 3
   slot:int = 0 - 1
   i:int = 0
   while i < TZ_WIDGET_MAX:
@@ -456,13 +917,368 @@ fn widget_add(tree:*TzWidgetTree, spec:*TzWidgetSpec) -> int:
   tree[0].widgets[slot].dirty = 1
   tree[0].widgets[slot].bg = spec[0].bg
   tree[0].widgets[slot].fg = spec[0].fg
+  tree[0].widgets[slot].design_x = spec[0].x * tree[0].design_width / tree[0].width
+  tree[0].widgets[slot].design_y = spec[0].y * tree[0].design_height / tree[0].height
+  tree[0].widgets[slot].design_w = ww * tree[0].design_width / tree[0].width
+  tree[0].widgets[slot].design_h = hh * tree[0].design_height / tree[0].height
+  tree[0].widgets[slot].requested_x = spec[0].x
+  tree[0].widgets[slot].requested_y = spec[0].y
+  tree[0].widgets[slot].requested_w = ww
+  tree[0].widgets[slot].requested_h = hh
+  tree[0].widgets[slot].grow = 0
+  tree[0].widgets[slot].shrink = 1
+  tree[0].widgets[slot].align_self = 0 - 1
+  tree[0].widgets[slot].margin_top = 0
+  tree[0].widgets[slot].margin_right = 0
+  tree[0].widgets[slot].margin_bottom = 0
+  tree[0].widgets[slot].margin_left = 0
+  tree[0].widgets[slot].design_margin_top = 0
+  tree[0].widgets[slot].design_margin_right = 0
+  tree[0].widgets[slot].design_margin_bottom = 0
+  tree[0].widgets[slot].design_margin_left = 0
+  tree[0].widgets[slot].layout_mode = TZ_LAYOUT_ABSOLUTE
+  tree[0].widgets[slot].layout_gap = 0
+  tree[0].widgets[slot].layout_justify = TZ_JUSTIFY_START
+  tree[0].widgets[slot].layout_align = TZ_ALIGN_START
+  tree[0].widgets[slot].pad_top = 0
+  tree[0].widgets[slot].pad_right = 0
+  tree[0].widgets[slot].pad_bottom = 0
+  tree[0].widgets[slot].pad_left = 0
+  tree[0].widgets[slot].design_pad_top = 0
+  tree[0].widgets[slot].design_pad_right = 0
+  tree[0].widgets[slot].design_pad_bottom = 0
+  tree[0].widgets[slot].design_pad_left = 0
+  tree[0].widgets[slot].design_layout_gap = 0
+  tree[0].widgets[slot].border_color = 0x334155
+  tree[0].widgets[slot].border_width = 0
+  tree[0].widgets[slot].radius = 0
+  tree[0].widgets[slot].design_border_width = 0
+  tree[0].widgets[slot].design_radius = 0
+  tree[0].widgets[slot].gradient_color = 0
+  tree[0].widgets[slot].gradient_axis = TZ_GRADIENT_NONE
+  tree[0].widgets[slot].shadow_color = 0x03060C
+  tree[0].widgets[slot].shadow_size = 0
+  tree[0].widgets[slot].design_shadow_size = 0
+  tree[0].widgets[slot].text_align = 0
+  tree[0].widgets[slot].hover_bg = _tree_color_scale(spec[0].bg, 112)
+  tree[0].widgets[slot].pressed_bg = _tree_color_scale(spec[0].bg, 82)
+  tree[0].widgets[slot].disabled_bg = _tree_color_scale(spec[0].bg, 70)
+  tree[0].widgets[slot].focus_color = 0x818CF8
+  tree[0].widgets[slot].hover_border = 0 - 1
+  tree[0].widgets[slot].text_scale = 1
+  tree[0].widgets[slot].text_bold = 0
+  tree[0].widgets[slot].font_size = 0
+  tree[0].widgets[slot].design_font_size = 0
+  tree[0].widgets[slot].font_weight = 0
+  tree[0].widgets[slot].font_family = "Segoe UI"
+  tree[0].widgets[slot].icon_id = 0
+  tree[0].widgets[slot].icon_size = 0
+  tree[0].widgets[slot].design_icon_size = 0
+  tree[0].widgets[slot].icon_color = 0x334155
+  tree[0].widgets[slot].hit_testable = 0
+  tree[0].widgets[slot].enabled = 1
+  tree[0].widgets[slot].focusable = 0
+  tree[0].widgets[slot].tab_index = tree[0].widgets[slot].order
+  if kind == TZ_WIDGET_PANEL:
+    tree[0].widgets[slot].radius = 8
+    tree[0].widgets[slot].design_radius = 8
+    tree[0].widgets[slot].border_width = 1
+    tree[0].widgets[slot].design_border_width = 1
+  if kind == TZ_WIDGET_BUTTON:
+    tree[0].widgets[slot].radius = 6
+    tree[0].widgets[slot].design_radius = 6
+    tree[0].widgets[slot].border_width = 1
+    tree[0].widgets[slot].design_border_width = 1
+    tree[0].widgets[slot].hit_testable = 1
+    tree[0].widgets[slot].focusable = 1
+  scale_num:int = tree[0].design_width
+  scale_den:int = tree[0].width
+  if tree[0].design_height * scale_den < scale_num * tree[0].height:
+    scale_num = tree[0].design_height
+    scale_den = tree[0].height
+  if scale_num > 0:
+    tree[0].widgets[slot].design_border_width = tree[0].widgets[slot].border_width * scale_den / scale_num
+    tree[0].widgets[slot].design_radius = tree[0].widgets[slot].radius * scale_den / scale_num
   if tree[0].widgets[slot].fg == 0:
     tree[0].widgets[slot].fg = 16777215
-  _tree_copy_text(&tree[0].widgets[slot].text[0], spec[0].text)
+  tree[0].widgets[slot].text = tree[0].text_storage + slot * TZ_WIDGET_TEXT_MAX
+  if spec[0].text != 0:
+    tree[0].widgets[slot].text = spec[0].text as *char
   tree[0].widget_count = tree[0].widget_count + 1
   if vis != 0:
     _tree_widget_mark_rect(tree, slot)
   ret wid
+
+// Add a widget with borrowed text. The string must remain valid until replaced
+// or the widget tree is deinitialized; string literals satisfy this lifetime.
+fn widget_add_text(tree:*TzWidgetTree, spec:*TzWidgetSpec, text:str) -> int:
+  wid:int = widget_add(tree, spec)
+  if wid <= 0:
+    ret wid
+  status:int = widget_set_text(tree, wid, text)
+  if status != 0:
+    ret status
+  ret wid
+
+fn widget_add_icon(tree:*TzWidgetTree, spec:*TzWidgetSpec, icon_id:int, size:int, color:int) -> int:
+  wid:int = widget_add(tree, spec)
+  if wid <= 0:
+    ret wid
+  status:int = widget_set_icon(tree, wid, icon_id, size, color)
+  if status != 0:
+    ret status
+  ret wid
+
+fn widget_set_icon(tree:*TzWidgetTree, widget_id:int, icon_id:int, size:int, color:int) -> int:
+  if tree == 0 || icon_id < 0 || icon_id > TZ_UI_ICON_SETTINGS:
+    ret 0 - 1
+  slot:int = _tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  if size < 0:
+    ret 0 - 2
+  if size > 128:
+    size = 128
+  if tree[0].widgets[slot].visible != 0:
+    _tree_widget_mark_rect(tree, slot)
+  tree[0].widgets[slot].icon_id = icon_id
+  tree[0].widgets[slot].icon_size = size
+  scale_num:int = tree[0].design_width
+  scale_den:int = tree[0].width
+  if tree[0].design_height * scale_den < scale_num * tree[0].height:
+    scale_num = tree[0].design_height
+    scale_den = tree[0].height
+  if scale_num > 0:
+    tree[0].widgets[slot].design_icon_size = size * scale_den / scale_num
+  tree[0].widgets[slot].icon_color = color
+  tree[0].widgets[slot].dirty = 1
+  if tree[0].widgets[slot].visible != 0:
+    _tree_widget_mark_rect(tree, slot)
+  ret 0
+
+fn widget_set_style(tree:*TzWidgetTree, widget_id:int, style:*TzWidgetStyle) -> int:
+  if tree == 0 || style == 0:
+    ret 0 - 1
+  slot:int = _tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  if tree[0].widgets[slot].visible != 0:
+    _tree_widget_mark_rect(tree, slot)
+  tree[0].widgets[slot].bg = style[0].bg
+  tree[0].widgets[slot].fg = style[0].fg
+  tree[0].widgets[slot].border_color = style[0].border_color
+  tree[0].widgets[slot].border_width = style[0].border_width
+  tree[0].widgets[slot].radius = style[0].radius
+  tree[0].widgets[slot].gradient_color = style[0].gradient_color
+  tree[0].widgets[slot].gradient_axis = style[0].gradient_axis
+  tree[0].widgets[slot].shadow_color = style[0].shadow_color
+  tree[0].widgets[slot].shadow_size = style[0].shadow_size
+  tree[0].widgets[slot].text_align = style[0].text_align
+  tree[0].widgets[slot].hover_bg = style[0].hover_bg
+  tree[0].widgets[slot].pressed_bg = style[0].pressed_bg
+  tree[0].widgets[slot].disabled_bg = style[0].disabled_bg
+  tree[0].widgets[slot].focus_color = style[0].focus_color
+  tree[0].widgets[slot].hover_border = style[0].hover_border
+  tree[0].widgets[slot].text_scale = style[0].text_scale
+  if tree[0].widgets[slot].text_scale < 1:
+    tree[0].widgets[slot].text_scale = 1
+  if tree[0].widgets[slot].text_scale > 6:
+    tree[0].widgets[slot].text_scale = 6
+  tree[0].widgets[slot].text_bold = style[0].text_bold
+  tree[0].widgets[slot].font_size = style[0].font_size
+  if tree[0].widgets[slot].font_size < 0:
+    tree[0].widgets[slot].font_size = 0
+  if tree[0].widgets[slot].font_size > 192:
+    tree[0].widgets[slot].font_size = 192
+  tree[0].widgets[slot].font_weight = style[0].font_weight
+  if tree[0].widgets[slot].font_weight < 0:
+    tree[0].widgets[slot].font_weight = 100
+  if tree[0].widgets[slot].font_weight > 900:
+    tree[0].widgets[slot].font_weight = 900
+  tree[0].widgets[slot].font_family = style[0].font_family
+  if tree[0].widgets[slot].font_family == 0:
+    tree[0].widgets[slot].font_family = "Segoe UI"
+  if tree[0].widgets[slot].border_width < 0:
+    tree[0].widgets[slot].border_width = 0
+  if tree[0].widgets[slot].border_width > 256:
+    tree[0].widgets[slot].border_width = 256
+  if tree[0].widgets[slot].radius < 0:
+    tree[0].widgets[slot].radius = 0
+  if tree[0].widgets[slot].radius > 4096:
+    tree[0].widgets[slot].radius = 4096
+  if tree[0].widgets[slot].shadow_size < 0:
+    tree[0].widgets[slot].shadow_size = 0
+  if tree[0].widgets[slot].shadow_size > 256:
+    tree[0].widgets[slot].shadow_size = 256
+  if tree[0].widgets[slot].gradient_axis < TZ_GRADIENT_NONE || tree[0].widgets[slot].gradient_axis > TZ_GRADIENT_HORIZONTAL:
+    tree[0].widgets[slot].gradient_axis = TZ_GRADIENT_NONE
+  scale_num:int = tree[0].design_width
+  scale_den:int = tree[0].width
+  if tree[0].design_height * scale_den < scale_num * tree[0].height:
+    scale_num = tree[0].design_height
+    scale_den = tree[0].height
+  if scale_num > 0:
+    tree[0].widgets[slot].design_border_width = tree[0].widgets[slot].border_width * scale_den / scale_num
+    tree[0].widgets[slot].design_radius = tree[0].widgets[slot].radius * scale_den / scale_num
+    tree[0].widgets[slot].design_shadow_size = tree[0].widgets[slot].shadow_size * scale_den / scale_num
+    tree[0].widgets[slot].design_font_size = tree[0].widgets[slot].font_size * scale_den / scale_num
+  tree[0].widgets[slot].dirty = 1
+  if tree[0].widgets[slot].visible != 0:
+    _tree_widget_mark_rect(tree, slot)
+  ret 0
+
+fn widget_set_layout(tree:*TzWidgetTree, widget_id:int, layout:*TzWidgetLayout) -> int:
+  if tree == 0 || layout == 0:
+    ret 0 - 1
+  slot:int = _tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  if layout[0].mode < TZ_LAYOUT_ABSOLUTE || layout[0].mode > TZ_LAYOUT_COLUMN:
+    ret 0 - 2
+  if layout[0].justify < TZ_JUSTIFY_START || layout[0].justify > TZ_JUSTIFY_BETWEEN:
+    ret 0 - 2
+  if layout[0].align < TZ_ALIGN_START || layout[0].align > TZ_ALIGN_STRETCH:
+    ret 0 - 2
+  tree[0].widgets[slot].layout_mode = layout[0].mode
+  tree[0].widgets[slot].layout_gap = layout[0].gap
+  if tree[0].widgets[slot].layout_gap < 0:
+    tree[0].widgets[slot].layout_gap = 0
+  scale_num:int = tree[0].design_width
+  scale_den:int = tree[0].width
+  if tree[0].design_height * scale_den < scale_num * tree[0].height:
+    scale_num = tree[0].design_height
+    scale_den = tree[0].height
+  if scale_num > 0:
+    tree[0].widgets[slot].design_layout_gap = tree[0].widgets[slot].layout_gap * scale_den / scale_num
+  tree[0].widgets[slot].layout_justify = layout[0].justify
+  tree[0].widgets[slot].layout_align = layout[0].align
+  tree[0].widgets[slot].pad_top = layout[0].pad_top
+  tree[0].widgets[slot].pad_right = layout[0].pad_right
+  tree[0].widgets[slot].pad_bottom = layout[0].pad_bottom
+  tree[0].widgets[slot].pad_left = layout[0].pad_left
+  if tree[0].widgets[slot].pad_top < 0:
+    tree[0].widgets[slot].pad_top = 0
+  if tree[0].widgets[slot].pad_right < 0:
+    tree[0].widgets[slot].pad_right = 0
+  if tree[0].widgets[slot].pad_bottom < 0:
+    tree[0].widgets[slot].pad_bottom = 0
+  if tree[0].widgets[slot].pad_left < 0:
+    tree[0].widgets[slot].pad_left = 0
+  if tree[0].height > 0:
+    tree[0].widgets[slot].design_pad_top = tree[0].widgets[slot].pad_top * tree[0].design_height / tree[0].height
+    tree[0].widgets[slot].design_pad_bottom = tree[0].widgets[slot].pad_bottom * tree[0].design_height / tree[0].height
+  if tree[0].width > 0:
+    tree[0].widgets[slot].design_pad_left = tree[0].widgets[slot].pad_left * tree[0].design_width / tree[0].width
+    tree[0].widgets[slot].design_pad_right = tree[0].widgets[slot].pad_right * tree[0].design_width / tree[0].width
+  ret tree_request_full_redraw(tree, TZ_FULL_REDRAW_LAYOUT_RESET)
+
+fn widget_set_flex(tree:*TzWidgetTree, widget_id:int, grow:int, shrink:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  slot:int = _tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  if grow < 0:
+    grow = 0
+  if shrink < 0:
+    shrink = 0
+  tree[0].widgets[slot].grow = grow
+  tree[0].widgets[slot].shrink = shrink
+  ret 0
+
+fn widget_set_align_self(tree:*TzWidgetTree, widget_id:int, align:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  if align < 0 - 1 || align > TZ_ALIGN_STRETCH:
+    ret 0 - 2
+  slot:int = _tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  tree[0].widgets[slot].align_self = align
+  ret 0
+
+fn widget_set_margin(tree:*TzWidgetTree, widget_id:int, top:int, right:int, bottom:int, left:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  slot:int = _tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  if top < 0:
+    top = 0
+  if right < 0:
+    right = 0
+  if bottom < 0:
+    bottom = 0
+  if left < 0:
+    left = 0
+  tree[0].widgets[slot].margin_top = top
+  tree[0].widgets[slot].margin_right = right
+  tree[0].widgets[slot].margin_bottom = bottom
+  tree[0].widgets[slot].margin_left = left
+  if tree[0].height > 0:
+    tree[0].widgets[slot].design_margin_top = top * tree[0].design_height / tree[0].height
+    tree[0].widgets[slot].design_margin_bottom = bottom * tree[0].design_height / tree[0].height
+  if tree[0].width > 0:
+    tree[0].widgets[slot].design_margin_left = left * tree[0].design_width / tree[0].width
+    tree[0].widgets[slot].design_margin_right = right * tree[0].design_width / tree[0].width
+  ret 0
+
+fn widget_set_padding(tree:*TzWidgetTree, widget_id:int, top:int, right:int, bottom:int, left:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  slot:int = _tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  if top < 0:
+    top = 0
+  if right < 0:
+    right = 0
+  if bottom < 0:
+    bottom = 0
+  if left < 0:
+    left = 0
+  tree[0].widgets[slot].pad_top = top
+  tree[0].widgets[slot].pad_right = right
+  tree[0].widgets[slot].pad_bottom = bottom
+  tree[0].widgets[slot].pad_left = left
+  if tree[0].height > 0:
+    tree[0].widgets[slot].design_pad_top = top * tree[0].design_height / tree[0].height
+    tree[0].widgets[slot].design_pad_bottom = bottom * tree[0].design_height / tree[0].height
+  if tree[0].width > 0:
+    tree[0].widgets[slot].design_pad_left = left * tree[0].design_width / tree[0].width
+    tree[0].widgets[slot].design_pad_right = right * tree[0].design_width / tree[0].width
+  ret tree_request_full_redraw(tree, TZ_FULL_REDRAW_LAYOUT_RESET)
+
+fn widget_set_preferred_size(tree:*TzWidgetTree, widget_id:int, w:int, h:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  slot:int = _tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  if w <= 0:
+    w = tree[0].widgets[slot].requested_w
+  if h <= 0:
+    h = tree[0].widgets[slot].requested_h
+  widget_update_bounds(tree, widget_id, tree[0].widgets[slot].requested_x, tree[0].widgets[slot].requested_y, w, h)
+  ret 0
+
+fn widget_set_hit_testable(tree:*TzWidgetTree, widget_id:int, enabled:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  slot:int = _tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  tree[0].widgets[slot].hit_testable = 0
+  if enabled != 0:
+    tree[0].widgets[slot].hit_testable = 1
+  if tree[0].widgets[slot].hit_testable == 0:
+    if tree[0].hovered_id == widget_id:
+      _tree_mark_interaction(tree, widget_id)
+      tree[0].hovered_id = 0
+    if tree[0].pressed_id == widget_id:
+      _tree_mark_interaction(tree, widget_id)
+      tree[0].pressed_id = 0
+  ret 0
 
 fn widget_update_bounds(tree:*TzWidgetTree, widget_id:int, x:int, y:int, w:int, h:int) -> int:
   slot:int = _tree_widget_slot_by_id(tree, widget_id)
@@ -473,7 +1289,17 @@ fn widget_update_bounds(tree:*TzWidgetTree, widget_id:int, x:int, y:int, w:int, 
   if h <= 0:
     h = 1
   if tree[0].widgets[slot].visible != 0:
-    _tree_add_rect(tree, tree[0].widgets[slot].x, tree[0].widgets[slot].y, tree[0].widgets[slot].w, tree[0].widgets[slot].h)
+    _tree_widget_mark_rect(tree, slot)
+  tree[0].widgets[slot].requested_x = x
+  tree[0].widgets[slot].requested_y = y
+  tree[0].widgets[slot].requested_w = w
+  tree[0].widgets[slot].requested_h = h
+  if tree[0].width > 0:
+    tree[0].widgets[slot].design_x = x * tree[0].design_width / tree[0].width
+    tree[0].widgets[slot].design_w = w * tree[0].design_width / tree[0].width
+  if tree[0].height > 0:
+    tree[0].widgets[slot].design_y = y * tree[0].design_height / tree[0].height
+    tree[0].widgets[slot].design_h = h * tree[0].design_height / tree[0].height
   tree[0].widgets[slot].x = x
   tree[0].widgets[slot].y = y
   tree[0].widgets[slot].w = w
@@ -483,13 +1309,557 @@ fn widget_update_bounds(tree:*TzWidgetTree, widget_id:int, x:int, y:int, w:int, 
     _tree_widget_mark_rect(tree, slot)
   ret 0
 
+fn _tree_sort_slots_by_id(tree:*TzWidgetTree, slots:*int, n:int) -> int:
+  if tree == 0 || slots == 0 || n <= 1:
+    ret 0
+  i:int = 1
+  while i < n:
+    key:int = slots[i]
+    j:int = i - 1
+    while j >= 0 && tree[0].widgets[slots[j]].id > tree[0].widgets[key].id:
+      slots[j + 1] = slots[j]
+      j = j - 1
+    slots[j + 1] = key
+    i = i + 1
+  ret 0
+
+fn _tree_sort_slots_by_order(tree:*TzWidgetTree, slots:*int, n:int) -> int:
+  if tree == 0 || slots == 0 || n <= 1:
+    ret 0
+  i:int = 1
+  while i < n:
+    key:int = slots[i]
+    j:int = i - 1
+    while j >= 0 && tree[0].widgets[slots[j]].order > tree[0].widgets[key].order:
+      slots[j + 1] = slots[j]
+      j = j - 1
+    slots[j + 1] = key
+    i = i + 1
+  ret 0
+
+fn _tree_apply_layout_bounds(tree:*TzWidgetTree, slot:int, x:int, y:int, w:int, h:int) -> int:
+  if tree == 0 || slot < 0 || slot >= TZ_WIDGET_MAX:
+    ret 0 - 1
+  if w < 1:
+    w = 1
+  if h < 1:
+    h = 1
+  if tree[0].widgets[slot].x == x && tree[0].widgets[slot].y == y && tree[0].widgets[slot].w == w && tree[0].widgets[slot].h == h:
+    ret 0
+  if tree[0].widgets[slot].visible != 0:
+    _tree_widget_mark_rect(tree, slot)
+  tree[0].widgets[slot].x = x
+  tree[0].widgets[slot].y = y
+  tree[0].widgets[slot].w = w
+  tree[0].widgets[slot].h = h
+  tree[0].widgets[slot].dirty = 1
+  if tree[0].widgets[slot].visible != 0:
+    _tree_widget_mark_rect(tree, slot)
+  ret 1
+
+fn tree_layout(tree:*TzWidgetTree) -> int:
+  if tree == 0:
+    ret 0 - 1
+  parents:[int;256]
+  parent_count:int = 0
+  i:int = 0
+  while i < TZ_WIDGET_MAX:
+    if tree[0].widgets[i].alive != 0:
+      parents[parent_count] = i
+      parent_count = parent_count + 1
+    i = i + 1
+  _tree_sort_slots_by_id(tree, &parents[0], parent_count)
+
+  changed:int = 0
+  parent_idx:int = 0
+  while parent_idx < parent_count:
+    parent_slot:int = parents[parent_idx]
+    if tree[0].widgets[parent_slot].layout_mode != TZ_LAYOUT_ABSOLUTE:
+      children:[int;256]
+      child_count:int = 0
+      child_i:int = 0
+      while child_i < TZ_WIDGET_MAX:
+        if tree[0].widgets[child_i].alive != 0 && tree[0].widgets[child_i].visible != 0 && tree[0].widgets[child_i].parent == tree[0].widgets[parent_slot].id:
+          children[child_count] = child_i
+          child_count = child_count + 1
+        child_i = child_i + 1
+      _tree_sort_slots_by_order(tree, &children[0], child_count)
+
+      if child_count > 0:
+        row_mode:int = tree[0].widgets[parent_slot].layout_mode == TZ_LAYOUT_ROW
+        inner_x:int = tree[0].widgets[parent_slot].x + tree[0].widgets[parent_slot].pad_left
+        inner_y:int = tree[0].widgets[parent_slot].y + tree[0].widgets[parent_slot].pad_top
+        inner_w:int = tree[0].widgets[parent_slot].w - tree[0].widgets[parent_slot].pad_left - tree[0].widgets[parent_slot].pad_right
+        inner_h:int = tree[0].widgets[parent_slot].h - tree[0].widgets[parent_slot].pad_top - tree[0].widgets[parent_slot].pad_bottom
+        if inner_w < 1:
+          inner_w = 1
+        if inner_h < 1:
+          inner_h = 1
+        main_available:int = inner_h
+        if row_mode != 0:
+          main_available = inner_w
+        gap:int = tree[0].widgets[parent_slot].layout_gap
+        main_used:int = gap * (child_count - 1)
+        flex_weight:int = 0
+        c:int = 0
+        while c < child_count:
+          child_slot:int = children[c]
+          basis:int = tree[0].widgets[child_slot].requested_h
+          margin_before:int = tree[0].widgets[child_slot].margin_top
+          margin_after:int = tree[0].widgets[child_slot].margin_bottom
+          if row_mode != 0:
+            basis = tree[0].widgets[child_slot].requested_w
+            margin_before = tree[0].widgets[child_slot].margin_left
+            margin_after = tree[0].widgets[child_slot].margin_right
+          if basis < 1:
+            basis = 1
+          main_used = main_used + basis + margin_before + margin_after
+          c = c + 1
+        remaining:int = main_available - main_used
+        c = 0
+        while c < child_count:
+          child_slot2:int = children[c]
+          basis2:int = tree[0].widgets[child_slot2].requested_h
+          if row_mode != 0:
+            basis2 = tree[0].widgets[child_slot2].requested_w
+          if basis2 < 1:
+            basis2 = 1
+          if remaining >= 0:
+            flex_weight = flex_weight + tree[0].widgets[child_slot2].grow
+          else:
+            flex_weight = flex_weight + tree[0].widgets[child_slot2].shrink * basis2
+          c = c + 1
+
+        sized:[int;256]
+        c = 0
+        sized_used:int = gap * (child_count - 1)
+        while c < child_count:
+          child_slot3:int = children[c]
+          basis3:int = tree[0].widgets[child_slot3].requested_h
+          margin_before3:int = tree[0].widgets[child_slot3].margin_top
+          margin_after3:int = tree[0].widgets[child_slot3].margin_bottom
+          if row_mode != 0:
+            basis3 = tree[0].widgets[child_slot3].requested_w
+            margin_before3 = tree[0].widgets[child_slot3].margin_left
+            margin_after3 = tree[0].widgets[child_slot3].margin_right
+          if basis3 < 1:
+            basis3 = 1
+          main_size:int = basis3
+          if flex_weight > 0 && remaining > 0:
+            main_size = basis3 + remaining * tree[0].widgets[child_slot3].grow / flex_weight
+          else:
+            if flex_weight > 0 && remaining < 0:
+              reduction:int = (0 - remaining) * tree[0].widgets[child_slot3].shrink * basis3 / flex_weight
+              main_size = basis3 - reduction
+              if main_size < 1:
+                main_size = 1
+          sized[c] = main_size
+          sized_used = sized_used + main_size + margin_before3 + margin_after3
+          c = c + 1
+
+        free_space:int = main_available - sized_used
+        if free_space < 0:
+          free_space = 0
+        offset:int = 0
+        extra_gap:int = 0
+        justify:int = tree[0].widgets[parent_slot].layout_justify
+        if justify == TZ_JUSTIFY_CENTER:
+          offset = free_space / 2
+        if justify == TZ_JUSTIFY_END:
+          offset = free_space
+        if justify == TZ_JUSTIFY_BETWEEN && child_count > 1:
+          extra_gap = free_space / (child_count - 1)
+        cursor:int = inner_y + offset
+        if row_mode != 0:
+          cursor = inner_x + offset
+        c = 0
+        while c < child_count:
+          child_slot4:int = children[c]
+          child_w:int = tree[0].widgets[child_slot4].requested_w
+          child_h:int = tree[0].widgets[child_slot4].requested_h
+          child_x:int = tree[0].widgets[child_slot4].requested_x
+          child_y:int = tree[0].widgets[child_slot4].requested_y
+          child_align:int = tree[0].widgets[child_slot4].align_self
+          if child_align < 0:
+            child_align = tree[0].widgets[parent_slot].layout_align
+          if row_mode != 0:
+            child_w = sized[c]
+            child_x = cursor + tree[0].widgets[child_slot4].margin_left
+            child_y = inner_y + tree[0].widgets[child_slot4].margin_top
+            cross_used:int = tree[0].widgets[child_slot4].margin_top + tree[0].widgets[child_slot4].margin_bottom + child_h
+            if child_align == TZ_ALIGN_STRETCH:
+              child_h = inner_h - tree[0].widgets[child_slot4].margin_top - tree[0].widgets[child_slot4].margin_bottom
+              if child_h < 1:
+                child_h = 1
+            else:
+              if child_align == TZ_ALIGN_CENTER:
+                child_y = inner_y + (inner_h - cross_used) / 2 + tree[0].widgets[child_slot4].margin_top
+              if child_align == TZ_ALIGN_END:
+                child_y = inner_y + inner_h - tree[0].widgets[child_slot4].margin_bottom - child_h
+            cursor = cursor + tree[0].widgets[child_slot4].margin_left + child_w + tree[0].widgets[child_slot4].margin_right + gap + extra_gap
+          else:
+            child_h = sized[c]
+            child_y = cursor + tree[0].widgets[child_slot4].margin_top
+            child_x = inner_x + tree[0].widgets[child_slot4].margin_left
+            cross_used2:int = tree[0].widgets[child_slot4].margin_left + tree[0].widgets[child_slot4].margin_right + child_w
+            if child_align == TZ_ALIGN_STRETCH:
+              child_w = inner_w - tree[0].widgets[child_slot4].margin_left - tree[0].widgets[child_slot4].margin_right
+              if child_w < 1:
+                child_w = 1
+            else:
+              if child_align == TZ_ALIGN_CENTER:
+                child_x = inner_x + (inner_w - cross_used2) / 2 + tree[0].widgets[child_slot4].margin_left
+              if child_align == TZ_ALIGN_END:
+                child_x = inner_x + inner_w - tree[0].widgets[child_slot4].margin_right - child_w
+            cursor = cursor + tree[0].widgets[child_slot4].margin_top + child_h + tree[0].widgets[child_slot4].margin_bottom + gap + extra_gap
+          if _tree_apply_layout_bounds(tree, child_slot4, child_x, child_y, child_w, child_h) > 0:
+            changed = changed + 1
+          c = c + 1
+    else:
+      child_i2:int = 0
+      while child_i2 < TZ_WIDGET_MAX:
+        if tree[0].widgets[child_i2].alive != 0 && tree[0].widgets[child_i2].visible != 0 && tree[0].widgets[child_i2].parent == tree[0].widgets[parent_slot].id:
+          abs_x:int = tree[0].widgets[parent_slot].x + tree[0].widgets[child_i2].requested_x
+          abs_y:int = tree[0].widgets[parent_slot].y + tree[0].widgets[child_i2].requested_y
+          if _tree_apply_layout_bounds(tree, child_i2, abs_x, abs_y, tree[0].widgets[child_i2].requested_w, tree[0].widgets[child_i2].requested_h) > 0:
+            changed = changed + 1
+        child_i2 = child_i2 + 1
+    parent_idx = parent_idx + 1
+  ret changed
+
+fn _tree_effective_visible(tree:*TzWidgetTree, slot:int) -> int:
+  if tree == 0 || slot < 0 || slot >= TZ_WIDGET_MAX:
+    ret 0
+  current:int = slot
+  depth:int = 0
+  while current >= 0 && depth < TZ_WIDGET_MAX:
+    if tree[0].widgets[current].alive == 0 || tree[0].widgets[current].visible == 0:
+      ret 0
+    parent_id:int = tree[0].widgets[current].parent
+    if parent_id <= 0:
+      ret 1
+    current = _tree_widget_slot_by_id(tree, parent_id)
+    if current < 0:
+      ret 0
+    depth = depth + 1
+  ret 0
+
+fn _tree_effective_enabled(tree:*TzWidgetTree, slot:int) -> int:
+  if tree == 0 || slot < 0 || slot >= TZ_WIDGET_MAX:
+    ret 0
+  current:int = slot
+  depth:int = 0
+  while current >= 0 && depth < TZ_WIDGET_MAX:
+    if tree[0].widgets[current].alive == 0 || tree[0].widgets[current].enabled == 0:
+      ret 0
+    parent_id:int = tree[0].widgets[current].parent
+    if parent_id <= 0:
+      ret 1
+    current = _tree_widget_slot_by_id(tree, parent_id)
+    if current < 0:
+      ret 0
+    depth = depth + 1
+  ret 0
+
+fn _tree_mark_interaction(tree:*TzWidgetTree, widget_id:int) -> int:
+  if tree == 0 || widget_id <= 0:
+    ret 0
+  slot:int = _tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0
+  tree[0].widgets[slot].dirty = 1
+  ret _tree_widget_mark_rect(tree, slot)
+
+fn tree_hit_test(tree:*TzWidgetTree, x:int, y:int) -> int:
+  if tree == 0:
+    ret 0
+  best_slot:int = 0 - 1
+  i:int = 0
+  while i < TZ_WIDGET_MAX:
+    if tree[0].widgets[i].alive != 0 && tree[0].widgets[i].visible != 0 && tree[0].widgets[i].hit_testable != 0 && _tree_effective_visible(tree, i) != 0 && _tree_effective_enabled(tree, i) != 0:
+      if x >= tree[0].widgets[i].x && y >= tree[0].widgets[i].y && x < tree[0].widgets[i].x + tree[0].widgets[i].w && y < tree[0].widgets[i].y + tree[0].widgets[i].h:
+        if best_slot < 0 || tree[0].widgets[i].z > tree[0].widgets[best_slot].z || (tree[0].widgets[i].z == tree[0].widgets[best_slot].z && tree[0].widgets[i].order > tree[0].widgets[best_slot].order):
+          best_slot = i
+    i = i + 1
+  if best_slot < 0:
+    ret 0
+  ret tree[0].widgets[best_slot].id
+
+fn tree_focus_set(tree:*TzWidgetTree, widget_id:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  if widget_id < 0:
+    ret 0 - 2
+  if widget_id > 0:
+    slot:int = _tree_widget_slot_by_id(tree, widget_id)
+    if slot < 0 || tree[0].widgets[slot].focusable == 0 || _tree_effective_visible(tree, slot) == 0 || _tree_effective_enabled(tree, slot) == 0:
+      ret 0 - 2
+  old_id:int = tree[0].focus_id
+  if old_id == widget_id:
+    ret 0
+  tree[0].focus_id = widget_id
+  _tree_mark_interaction(tree, old_id)
+  _tree_mark_interaction(tree, widget_id)
+  ret 0
+
+fn tree_focus_get(tree:*TzWidgetTree) -> int:
+  if tree == 0:
+    ret 0
+  ret tree[0].focus_id
+
+fn tree_hovered_get(tree:*TzWidgetTree) -> int:
+  if tree == 0:
+    ret 0
+  ret tree[0].hovered_id
+
+fn tree_pressed_get(tree:*TzWidgetTree) -> int:
+  if tree == 0:
+    ret 0
+  ret tree[0].pressed_id
+
+fn tree_focus_next(tree:*TzWidgetTree, reverse:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  slots:[int;256]
+  n:int = 0
+  i:int = 0
+  while i < TZ_WIDGET_MAX:
+    if tree[0].widgets[i].alive != 0 && tree[0].widgets[i].focusable != 0 && tree[0].widgets[i].visible != 0 && _tree_effective_visible(tree, i) != 0 && _tree_effective_enabled(tree, i) != 0:
+      slots[n] = i
+      n = n + 1
+    i = i + 1
+  if n <= 0:
+    tree_focus_set(tree, 0)
+    ret 0
+  i = 1
+  while i < n:
+    key_slot:int = slots[i]
+    j:int = i - 1
+    while j >= 0:
+      prev_slot:int = slots[j]
+      prev_tab:int = tree[0].widgets[prev_slot].tab_index
+      key_tab:int = tree[0].widgets[key_slot].tab_index
+      if prev_tab < key_tab || (prev_tab == key_tab && tree[0].widgets[prev_slot].order < tree[0].widgets[key_slot].order):
+        break
+      slots[j + 1] = slots[j]
+      j = j - 1
+    slots[j + 1] = key_slot
+    i = i + 1
+  current_idx:int = 0 - 1
+  i = 0
+  while i < n:
+    if tree[0].widgets[slots[i]].id == tree[0].focus_id:
+      current_idx = i
+      break
+    i = i + 1
+  step:int = 1
+  while step <= n:
+    next_idx:int = 0
+    if reverse != 0:
+      if current_idx < 0:
+        next_idx = n - step
+      else:
+        next_idx = current_idx - step
+        if next_idx < 0:
+          next_idx = next_idx + n
+    else:
+      if current_idx < 0:
+        next_idx = step - 1
+      else:
+        next_idx = current_idx + step
+        if next_idx >= n:
+          next_idx = next_idx - n
+    if tree_focus_set(tree, tree[0].widgets[slots[next_idx]].id) == 0:
+      ret tree[0].widgets[slots[next_idx]].id
+    step = step + 1
+  ret 0
+
+fn widget_set_focusable(tree:*TzWidgetTree, widget_id:int, focusable:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  slot:int = _tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  if tree[0].widgets[slot].focusable != 0 && focusable == 0:
+    _tree_widget_mark_rect(tree, slot)
+  tree[0].widgets[slot].focusable = 0
+  if focusable != 0:
+    tree[0].widgets[slot].focusable = 1
+  if tree[0].widgets[slot].focusable == 0 && tree[0].focus_id == widget_id:
+    tree_focus_set(tree, 0)
+  tree[0].widgets[slot].dirty = 1
+  ret 0
+
+fn widget_set_focus_order(tree:*TzWidgetTree, widget_id:int, tab_index:int) -> int:
+  if tree == 0 || tab_index < 0:
+    ret 0 - 1
+  slot:int = _tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  tree[0].widgets[slot].tab_index = tab_index
+  ret 0
+
+fn widget_set_enabled(tree:*TzWidgetTree, widget_id:int, enabled:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  slot:int = _tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  new_enabled:int = 0
+  if enabled != 0:
+    new_enabled = 1
+  if tree[0].widgets[slot].enabled == new_enabled:
+    ret 0
+  tree[0].widgets[slot].enabled = new_enabled
+  if tree[0].focus_id > 0:
+    focus_slot:int = _tree_widget_slot_by_id(tree, tree[0].focus_id)
+    if focus_slot < 0 || _tree_effective_enabled(tree, focus_slot) == 0:
+      tree_focus_set(tree, 0)
+  if tree[0].hovered_id > 0:
+    hover_slot:int = _tree_widget_slot_by_id(tree, tree[0].hovered_id)
+    if hover_slot < 0 || _tree_effective_enabled(tree, hover_slot) == 0:
+      _tree_mark_interaction(tree, tree[0].hovered_id)
+      tree[0].hovered_id = 0
+  if tree[0].pressed_id > 0:
+    press_slot:int = _tree_widget_slot_by_id(tree, tree[0].pressed_id)
+    if press_slot < 0 || _tree_effective_enabled(tree, press_slot) == 0:
+      _tree_mark_interaction(tree, tree[0].pressed_id)
+      tree[0].pressed_id = 0
+  ret tree_request_full_redraw(tree, TZ_FULL_REDRAW_TREE_RESET)
+
+fn tree_pointer_update(tree:*TzWidgetTree, x:int, y:int, buttons:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  previous_buttons:int = tree[0].pointer_buttons
+  previous_hover:int = tree[0].hovered_id
+  previous_pressed:int = tree[0].pressed_id
+  hit_id:int = tree_hit_test(tree, x, y)
+  tree[0].pointer_x = x
+  tree[0].pointer_y = y
+  tree[0].hovered_id = hit_id
+  if previous_hover != hit_id:
+    _tree_mark_interaction(tree, previous_hover)
+    _tree_mark_interaction(tree, hit_id)
+  was_down:int = previous_buttons & TZ_GUI_POINTER_PRIMARY
+  is_down:int = buttons & TZ_GUI_POINTER_PRIMARY
+  activated:int = 0
+  if was_down == 0 && is_down != 0:
+    tree[0].pressed_id = hit_id
+    if hit_id > 0:
+      hit_slot:int = _tree_widget_slot_by_id(tree, hit_id)
+      if hit_slot >= 0 && tree[0].widgets[hit_slot].focusable != 0:
+        // Avoid routing pointer focus through the public setter while the
+        // pointer packet queue is being drained; mark damage with the common
+        // interaction path after updating focus.
+        old_focus:int = tree[0].focus_id
+        tree[0].focus_id = hit_id
+        if old_focus != hit_id:
+          _tree_mark_interaction(tree, old_focus)
+          _tree_mark_interaction(tree, hit_id)
+      else:
+        tree[0].focus_id = 0
+  if was_down != 0 && is_down == 0:
+    if previous_pressed > 0 && previous_pressed == hit_id:
+      activated = previous_pressed
+    tree[0].pressed_id = 0
+  if previous_pressed != tree[0].pressed_id:
+    _tree_mark_interaction(tree, previous_pressed)
+    _tree_mark_interaction(tree, tree[0].pressed_id)
+  tree[0].pointer_buttons = buttons
+  ret activated
+
+fn tree_key_event(tree:*TzWidgetTree, key:int, mods:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  if key == TZ_GUI_KEY_TAB:
+    tree_focus_next(tree, mods & TZ_GUI_MOD_SHIFT)
+    ret 0
+  if key == TZ_GUI_KEY_LEFT || key == TZ_GUI_KEY_UP:
+    tree_focus_next(tree, 1)
+    ret 0
+  if key == TZ_GUI_KEY_RIGHT || key == TZ_GUI_KEY_DOWN:
+    tree_focus_next(tree, 0)
+    ret 0
+  if key == TZ_GUI_KEY_ENTER || key == TZ_GUI_KEY_SPACE:
+    focus_id:int = tree[0].focus_id
+    slot:int = _tree_widget_slot_by_id(tree, focus_id)
+    if slot >= 0 && tree[0].widgets[slot].enabled != 0 && tree[0].widgets[slot].focusable != 0 && _tree_effective_visible(tree, slot) != 0 && _tree_effective_enabled(tree, slot) != 0:
+      ret focus_id
+  ret 0
+
+// Route one GuiEvent through retained focus and pointer handling. Returns the
+// activated widget ID, zero for no activation, or a negative error code.
+fn tree_process_event(tree:*TzWidgetTree, ev:*GuiEvent) -> int:
+  if tree == 0 || ev == 0:
+    ret 0 - 1
+  if ev[0].kind == TZ_GUI_EVENT_KEY:
+    ret tree_key_event(tree, ev[0].key, ev[0].mods)
+  if ev[0].kind == TZ_GUI_EVENT_POINTER || ev[0].kind == TZ_GUI_EVENT_BUTTON:
+    ret tree_pointer_update(tree, ev[0].x, ev[0].y, ev[0].buttons)
+  if ev[0].kind == TZ_GUI_EVENT_TOUCH:
+    if ev[0].buttons == 1:
+      if tree[0].active_touch == 0:
+        tree[0].active_touch = 1
+        tree[0].active_touch_id = ev[0].key
+        ret tree_pointer_update(tree, ev[0].x, ev[0].y, TZ_GUI_POINTER_PRIMARY)
+      ret 0
+    if tree[0].active_touch != 0 && tree[0].active_touch_id == ev[0].key:
+      if ev[0].buttons == 2:
+        ret tree_pointer_update(tree, ev[0].x, ev[0].y, TZ_GUI_POINTER_PRIMARY)
+      if ev[0].buttons == 3:
+        activated:int = tree_pointer_update(tree, ev[0].x, ev[0].y, 0)
+        tree[0].active_touch = 0
+        tree[0].active_touch_id = 0
+        ret activated
+  ret 0
+
 fn widget_set_text(tree:*TzWidgetTree, widget_id:int, text:str) -> int:
   slot:int = _tree_widget_slot_by_id(tree, widget_id)
   if slot < 0:
     ret 0 - 1
   if tree[0].widgets[slot].visible != 0:
     _tree_add_rect(tree, tree[0].widgets[slot].x, tree[0].widgets[slot].y, tree[0].widgets[slot].w, tree[0].widgets[slot].h)
-  _tree_copy_text(&tree[0].widgets[slot].text[0], text)
+  // Text is borrowed to avoid copying through the module boundary. Callers
+  // keep dynamic strings alive until replacing the text or deinitializing tree.
+  if text == 0:
+    tree[0].widgets[slot].text = tree[0].text_storage + slot * TZ_WIDGET_TEXT_MAX
+    _tree_clear_text(tree[0].widgets[slot].text)
+  else:
+    tree[0].widgets[slot].text = text as *char
+  tree[0].widgets[slot].dirty = 1
+  if tree[0].widgets[slot].visible != 0:
+    _tree_widget_mark_rect(tree, slot)
+  ret 0
+
+// Copy transient text into tree-owned storage. Use this for formatted values,
+// temporary buffers, and any text whose lifetime ends before the next frame.
+fn widget_set_text_copy(tree:*TzWidgetTree, widget_id:int, text:str) -> int:
+  if tree == 0 || tree[0].widgets == 0 || tree[0].text_storage == 0:
+    ret 0 - 1
+  slot:int = _tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  if tree[0].widgets[slot].visible != 0:
+    _tree_add_rect(tree, tree[0].widgets[slot].x, tree[0].widgets[slot].y, tree[0].widgets[slot].w, tree[0].widgets[slot].h)
+  dst:*char = tree[0].text_storage + slot * TZ_WIDGET_TEXT_MAX
+  n:int = 0
+  i:int = 0
+  if text != 0:
+    n = len(text)
+    if n > TZ_WIDGET_TEXT_MAX - 1:
+      n = TZ_WIDGET_TEXT_MAX - 1
+    i = 0
+    while i < n:
+      ch:int = 0
+      unsafe:
+        ch = text[i] as int
+      dst[i] = ch as char
+      i = i + 1
+  i = n
+  while i < TZ_WIDGET_TEXT_MAX:
+    dst[i] = 0 as char
+    i = i + 1
+  tree[0].widgets[slot].text = dst
   tree[0].widgets[slot].dirty = 1
   if tree[0].widgets[slot].visible != 0:
     _tree_widget_mark_rect(tree, slot)
@@ -503,6 +1873,9 @@ fn widget_set_colors(tree:*TzWidgetTree, widget_id:int, bg:int, fg:int) -> int:
     _tree_add_rect(tree, tree[0].widgets[slot].x, tree[0].widgets[slot].y, tree[0].widgets[slot].w, tree[0].widgets[slot].h)
   tree[0].widgets[slot].bg = bg
   tree[0].widgets[slot].fg = fg
+  tree[0].widgets[slot].hover_bg = _tree_color_scale(bg, 112)
+  tree[0].widgets[slot].pressed_bg = _tree_color_scale(bg, 82)
+  tree[0].widgets[slot].disabled_bg = _tree_color_scale(bg, 70)
   if tree[0].widgets[slot].fg == 0:
     tree[0].widgets[slot].fg = 16777215
   tree[0].widgets[slot].dirty = 1
@@ -532,23 +1905,62 @@ fn widget_set_visible(tree:*TzWidgetTree, widget_id:int, visible:int) -> int:
   _tree_widget_mark_rect(tree, slot)
   tree[0].widgets[slot].visible = vis
   tree[0].widgets[slot].dirty = 1
-  if vis != 0:
-    _tree_widget_mark_rect(tree, slot)
-  ret 0
+  if vis == 0:
+    if tree[0].focus_id > 0:
+      focus_slot:int = _tree_widget_slot_by_id(tree, tree[0].focus_id)
+      if focus_slot < 0 || _tree_effective_visible(tree, focus_slot) == 0:
+        tree_focus_set(tree, 0)
+    if tree[0].hovered_id > 0:
+      hover_slot:int = _tree_widget_slot_by_id(tree, tree[0].hovered_id)
+      if hover_slot < 0 || _tree_effective_visible(tree, hover_slot) == 0:
+        _tree_mark_interaction(tree, tree[0].hovered_id)
+        tree[0].hovered_id = 0
+    if tree[0].pressed_id > 0:
+      press_slot:int = _tree_widget_slot_by_id(tree, tree[0].pressed_id)
+      if press_slot < 0 || _tree_effective_visible(tree, press_slot) == 0:
+        _tree_mark_interaction(tree, tree[0].pressed_id)
+        tree[0].pressed_id = 0
+  tree_layout(tree)
+  ret tree_request_full_redraw(tree, TZ_FULL_REDRAW_TREE_RESET)
 
 fn widget_remove(tree:*TzWidgetTree, widget_id:int) -> int:
-  slot:int = _tree_widget_slot_by_id(tree, widget_id)
-  if slot < 0:
+  if tree == 0:
     ret 0 - 1
-  _tree_widget_mark_rect(tree, slot)
-  tree[0].widgets[slot].alive = 0
-  tree[0].widgets[slot].visible = 0
-  tree[0].widgets[slot].dirty = 0
-  tree[0].widgets[slot].id = 0
-  tree[0].widgets[slot].order = 0
-  if tree[0].widget_count > 0:
-    tree[0].widget_count = tree[0].widget_count - 1
-  ret 0
+  if _tree_widget_slot_by_id(tree, widget_id) < 0:
+    ret 0 - 1
+  remove_ids:[int;256]
+  remove_count:int = 1
+  remove_ids[0] = widget_id
+  remove_idx:int = 0
+  while remove_idx < remove_count && remove_idx < TZ_WIDGET_MAX:
+    current_id:int = remove_ids[remove_idx]
+    child_slot:int = 0
+    while child_slot < TZ_WIDGET_MAX:
+      if tree[0].widgets[child_slot].alive != 0 && tree[0].widgets[child_slot].parent == current_id:
+        if remove_count < TZ_WIDGET_MAX:
+          remove_ids[remove_count] = tree[0].widgets[child_slot].id
+          remove_count = remove_count + 1
+      child_slot = child_slot + 1
+    removed_slot:int = _tree_widget_slot_by_id(tree, current_id)
+    if removed_slot >= 0:
+      if tree[0].focus_id == current_id:
+        tree_focus_set(tree, 0)
+      if tree[0].hovered_id == current_id:
+        _tree_mark_interaction(tree, current_id)
+        tree[0].hovered_id = 0
+      if tree[0].pressed_id == current_id:
+        _tree_mark_interaction(tree, current_id)
+        tree[0].pressed_id = 0
+      tree[0].widgets[removed_slot].alive = 0
+      tree[0].widgets[removed_slot].visible = 0
+      tree[0].widgets[removed_slot].dirty = 0
+      tree[0].widgets[removed_slot].id = 0
+      tree[0].widgets[removed_slot].order = 0
+      if tree[0].widget_count > 0:
+        tree[0].widget_count = tree[0].widget_count - 1
+    remove_idx = remove_idx + 1
+  tree_layout(tree)
+  ret tree_request_full_redraw(tree, TZ_FULL_REDRAW_TREE_RESET)
 
 fn widget_mark_dirty(tree:*TzWidgetTree, widget_id:int) -> int:
   slot:int = _tree_widget_slot_by_id(tree, widget_id)
@@ -561,11 +1973,11 @@ fn tree_collect_damage(tree:*TzWidgetTree, out:*TzDamage) -> int:
   if tree == 0 || out == 0:
     ret 0 - 1
   frame.tz_damage_reset(out)
-  n:int = frame.tz_damage_count(&tree[0].damage)
+  n:int = frame.tz_damage_count(tree[0].damage)
   i:int = 0
   while i < n:
     r:TzRect
-    if frame.tz_damage_take(&tree[0].damage, i, &r) != 0:
+    if frame.tz_damage_take(tree[0].damage, i, &r) != 0:
       frame.tz_damage_add_rect(out, &r)
     i = i + 1
   ret frame.tz_damage_count(out)
@@ -573,12 +1985,12 @@ fn tree_collect_damage(tree:*TzWidgetTree, out:*TzDamage) -> int:
 fn tree_dirty_pixels(tree:*TzWidgetTree) -> int:
   if tree == 0:
     ret 0
-  n:int = frame.tz_damage_count(&tree[0].damage)
+  n:int = frame.tz_damage_count(tree[0].damage)
   sum:int = 0
   i:int = 0
   while i < n:
     r:TzRect
-    if frame.tz_damage_take(&tree[0].damage, i, &r) != 0:
+    if frame.tz_damage_take(tree[0].damage, i, &r) != 0:
       sum = sum + (r.w * r.h)
     i = i + 1
   ret sum
@@ -606,12 +2018,143 @@ fn _tree_sort_widgets(tree:*TzWidgetTree, idxs:*int, n:int) -> int:
     i = i + 1
   ret 0
 
-fn _tree_draw_widget(tree:*TzWidgetTree, surface:*GuiSurface, slot:int) -> int:
+fn _tree_font_size(tree:*TzWidgetTree, slot:int) -> int:
+  size:int = tree[0].widgets[slot].font_size
+  if size <= 0:
+    scale:int = tree[0].widgets[slot].text_scale
+    if scale < 1:
+      scale = 1
+    size = 15 * scale
+  if size < 6:
+    size = 6
+  if size > 192:
+    size = 192
+  ret size
+
+fn _tree_font_weight(tree:*TzWidgetTree, slot:int) -> int:
+  weight:int = tree[0].widgets[slot].font_weight
+  if weight <= 0:
+    weight = 400
+    if tree[0].widgets[slot].text_bold != 0:
+      weight = 700
+  if weight < 100:
+    weight = 100
+  if weight > 900:
+    weight = 900
+  ret weight
+
+fn _tree_font_family(tree:*TzWidgetTree, slot:int) -> str:
+  family:*char = tree[0].widgets[slot].font_family
+  if family == 0:
+    ret "Segoe UI"
+  ret family as str
+
+fn _tree_draw_icon(surface:*GuiSurface, x:int, y:int, w:int, h:int, icon_id:int, requested_size:int, color:int) -> int:
+  if surface == 0 || icon_id <= 0:
+    ret 0
+  size:int = requested_size
+  if size <= 0:
+    size = w
+    if h < size:
+      size = h
+    size = size - 16
+  if size < 8:
+    size = 8
+  limit:int = w
+  if h < limit:
+    limit = h
+  if size > limit:
+    size = limit
+  if size < 6:
+    ret 0
+  left:int = x + (w - size) / 2
+  top:int = y + (h - size) / 2
+  right:int = left + size - 1
+  bottom:int = top + size - 1
+  cx:int = left + size / 2
+  cy:int = top + size / 2
+  t:int = size / 12
+  if t < 1:
+    t = 1
+
+  if icon_id == TZ_UI_ICON_MENU:
+    gui.gui_line(surface, left + size/5, top + size/4, right - size/5, top + size/4, color, t)
+    gui.gui_line(surface, left + size/5, cy, right - size/5, cy, color, t)
+    gui.gui_line(surface, left + size/5, bottom - size/4, right - size/5, bottom - size/4, color, t)
+    ret 0
+
+  if icon_id == TZ_UI_ICON_HISTORY:
+    // Eight connected segments create a compact, pixel-stable clock ring.
+    gui.gui_line(surface, cx, top + size/8, left + size*3/4, top + size/4, color, t)
+    gui.gui_line(surface, left + size*3/4, top + size/4, right - size/8, cy, color, t)
+    gui.gui_line(surface, right - size/8, cy, left + size*3/4, bottom - size/4, color, t)
+    gui.gui_line(surface, left + size*3/4, bottom - size/4, cx, bottom - size/8, color, t)
+    gui.gui_line(surface, cx, bottom - size/8, left + size/4, bottom - size/4, color, t)
+    gui.gui_line(surface, left + size/4, bottom - size/4, left + size/8, cy, color, t)
+    gui.gui_line(surface, left + size/8, cy, left + size/4, top + size/4, color, t)
+    gui.gui_line(surface, left + size/4, top + size/4, cx, top + size/8, color, t)
+    gui.gui_line(surface, cx, cy, cx, top + size/3, color, t)
+    gui.gui_line(surface, cx, cy, right - size/3, cy, color, t)
+    gui.gui_line(surface, left + size/8, top + size/8, left + size/3, top + size/8, color, t)
+    gui.gui_line(surface, left + size/8, top + size/8, left + size/8, top + size/3, color, t)
+    ret 0
+
+  if icon_id == TZ_UI_ICON_MODE:
+    gui.gui_line(surface, left + size/6, top + size/6, cx - t/2, top + size/6, color, t)
+    gui.gui_line(surface, left + size/6, top + size/6, left + size/6, cy - t/2, color, t)
+    gui.gui_line(surface, cx + t/2, top + size/6, right - size/6, top + size/6, color, t)
+    gui.gui_line(surface, right - size/6, top + size/6, right - size/6, cy - t/2, color, t)
+    gui.gui_line(surface, left + size/6, cy + t/2, left + size/6, bottom - size/6, color, t)
+    gui.gui_line(surface, left + size/6, bottom - size/6, cx - t/2, bottom - size/6, color, t)
+    gui.gui_line(surface, cx + t/2, cy + t/2, right - size/6, cy + t/2, color, t)
+    gui.gui_line(surface, right - size/6, cy + t/2, right - size/6, bottom - size/6, color, t)
+    gui.gui_line(surface, left + size/3, cy, cx - t, cy - size/6, color, t)
+    gui.gui_line(surface, cx - t, cy - size/6, cx - t, cy + size/6, color, t)
+    ret 0
+
+  if icon_id == TZ_UI_ICON_BACKSPACE:
+    gui.gui_line(surface, left + size/3, top + size/6, right - size/8, top + size/6, color, t)
+    gui.gui_line(surface, right - size/8, top + size/6, right - size/8, bottom - size/6, color, t)
+    gui.gui_line(surface, right - size/8, bottom - size/6, left + size/3, bottom - size/6, color, t)
+    gui.gui_line(surface, left + size/3, bottom - size/6, left + size/8, cy, color, t)
+    gui.gui_line(surface, left + size/8, cy, left + size/3, top + size/6, color, t)
+    gui.gui_line(surface, left + size/2, cy - size/6, right - size/4, cy + size/6, color, t)
+    gui.gui_line(surface, right - size/4, cy - size/6, left + size/2, cy + size/6, color, t)
+    ret 0
+
+  if icon_id == TZ_UI_ICON_CALCULATOR:
+    gui.gui_outline(surface, left + size/6, top + size/10, size*2/3, size*4/5, color, t)
+    gui.gui_line(surface, left + size/5, top + size/3, right - size/5, top + size/3, color, t)
+    gui.gui_line(surface, left + size/3, top + size/2, left + size/3, bottom - size/6, color, t)
+    gui.gui_line(surface, left + size/2, top + size/2, left + size/2, bottom - size/6, color, t)
+    gui.gui_line(surface, left + size*2/3, top + size/2, left + size*2/3, bottom - size/6, color, t)
+    gui.gui_line(surface, left + size/5, top + size*2/3, right - size/5, top + size*2/3, color, t)
+    ret 0
+
+  if icon_id == TZ_UI_ICON_CLOSE:
+    gui.gui_line(surface, left + size/4, top + size/4, right - size/4, bottom - size/4, color, t)
+    gui.gui_line(surface, right - size/4, top + size/4, left + size/4, bottom - size/4, color, t)
+    ret 0
+
+  if icon_id == TZ_UI_ICON_SETTINGS:
+    gui.gui_outline(surface, left + size/3, top + size/3, size/3, size/3, color, t)
+    gui.gui_line(surface, cx, top + size/10, cx, top + size/3, color, t)
+    gui.gui_line(surface, cx, bottom - size/3, cx, bottom - size/10, color, t)
+    gui.gui_line(surface, left + size/10, cy, left + size/3, cy, color, t)
+    gui.gui_line(surface, right - size/3, cy, right - size/10, cy, color, t)
+    gui.gui_line(surface, left + size/5, top + size/5, left + size/3, top + size/3, color, t)
+    gui.gui_line(surface, right - size/5, bottom - size/5, right - size/3, bottom - size/3, color, t)
+    gui.gui_line(surface, right - size/5, top + size/5, right - size/3, top + size/3, color, t)
+    gui.gui_line(surface, left + size/5, bottom - size/5, left + size/3, bottom - size/3, color, t)
+    ret 0
+  ret 0
+
+fn _tree_draw_widget(tree:*TzWidgetTree, surface:*GuiSurface, slot:int, draw_text:int) -> int:
   if tree == 0 || surface == 0:
     ret 0 - 1
   if slot < 0 || slot >= TZ_WIDGET_MAX:
     ret 0 - 1
-  if tree[0].widgets[slot].alive == 0 || tree[0].widgets[slot].visible == 0:
+  if tree[0].widgets[slot].alive == 0 || tree[0].widgets[slot].visible == 0 || _tree_effective_visible(tree, slot) == 0:
     ret 0
   x:int = tree[0].widgets[slot].x
   y:int = tree[0].widgets[slot].y
@@ -623,60 +2166,319 @@ fn _tree_draw_widget(tree:*TzWidgetTree, surface:*GuiSurface, slot:int) -> int:
   fg:int = tree[0].widgets[slot].fg
   if fg == 0:
     fg = 16777215
+  if _tree_effective_enabled(tree, slot) == 0:
+    bg = tree[0].widgets[slot].disabled_bg
+    fg = _tree_color_scale(fg, 70)
+  else:
+    if tree[0].pressed_id == tree[0].widgets[slot].id && tree[0].hovered_id == tree[0].widgets[slot].id:
+      bg = tree[0].widgets[slot].pressed_bg
+    else:
+      if tree[0].hovered_id == tree[0].widgets[slot].id:
+        bg = tree[0].widgets[slot].hover_bg
   kind:int = tree[0].widgets[slot].kind
   if kind == TZ_WIDGET_LABEL:
-    gui.gui_text(surface, x, y, &tree[0].widgets[slot].text[0], fg)
+    if draw_text == 0:
+      ret 0
+    if tree[0].widgets[slot].icon_id > 0:
+      _tree_draw_icon(surface, x, y, w, h, tree[0].widgets[slot].icon_id, tree[0].widgets[slot].icon_size, tree[0].widgets[slot].icon_color)
+    if tree[0].widgets[slot].text[0] == 0 as char:
+      ret 0
+    tx:int = x + tree[0].widgets[slot].pad_left
+    ty:int = y + tree[0].widgets[slot].pad_top
+    font_size:int = _tree_font_size(tree, slot)
+    font_weight:int = _tree_font_weight(tree, slot)
+    font_family:str = _tree_font_family(tree, slot)
+    text_width:int = gui.gui_text_measure(&tree[0].widgets[slot].text[0], font_size, font_weight, font_family)
+    content_width:int = w - tree[0].widgets[slot].pad_left - tree[0].widgets[slot].pad_right
+    if tree[0].widgets[slot].text_align == 1:
+      tx = tx + (content_width - text_width) / 2
+    if tree[0].widgets[slot].text_align == 2:
+      tx = tx + content_width - text_width
+    if tree[0].widgets[slot].pad_top == 0 && tree[0].widgets[slot].pad_bottom == 0:
+      ty = y + (h - font_size) / 2
+    gui.gui_text_style(surface, tx, ty, &tree[0].widgets[slot].text[0], fg, font_size, font_weight, font_family)
     ret 0
-  if kind == TZ_WIDGET_BUTTON:
-    inset:int = bg + 2236962
-    gui.gui_rect(surface, x, y, w, h, bg)
-    if w > 4 && h > 4:
-      gui.gui_rect(surface, x + 2, y + 2, w - 4, h - 4, inset)
-    gui.gui_text(surface, x + 6, y + 6, &tree[0].widgets[slot].text[0], fg)
-    ret 0
-  gui.gui_rect(surface, x, y, w, h, bg)
-  if tree[0].widgets[slot].text[0] != 0 as char:
-    gui.gui_text(surface, x + 4, y + 4, &tree[0].widgets[slot].text[0], fg)
+
+  shadow:int = tree[0].widgets[slot].shadow_size
+  radius:int = tree[0].widgets[slot].radius
+  border:int = tree[0].widgets[slot].border_width
+  border_color:int = tree[0].widgets[slot].border_color
+  if tree[0].hovered_id == tree[0].widgets[slot].id && tree[0].widgets[slot].hover_border >= 0:
+    border_color = tree[0].widgets[slot].hover_border
+  if tree[0].focus_id == tree[0].widgets[slot].id && tree[0].widgets[slot].focus_color >= 0:
+    border_color = tree[0].widgets[slot].focus_color
+  if border > w / 2:
+    border = w / 2
+  if border > h / 2:
+    border = h / 2
+  if shadow > 0:
+    gui.gui_round_rect(surface, x + shadow / 3, y + shadow / 2, w + shadow / 2, h + shadow / 2, tree[0].widgets[slot].shadow_color, radius + shadow / 2)
+  if border > 0:
+    gui.gui_round_rect(surface, x, y, w, h, border_color, radius)
+  bx:int = x + border
+  by:int = y + border
+  bw:int = w - border * 2
+  bh:int = h - border * 2
+  br:int = radius - border
+  if br < 0:
+    br = 0
+  if bw < 1:
+    bw = 1
+  if bh < 1:
+    bh = 1
+  if tree[0].widgets[slot].gradient_axis == TZ_GRADIENT_VERTICAL:
+    gui.gui_round_gradient_v(surface, bx, by, bw, bh, bg, tree[0].widgets[slot].gradient_color, br)
+  else:
+    if tree[0].widgets[slot].gradient_axis == TZ_GRADIENT_HORIZONTAL:
+      gui.gui_round_gradient_h(surface, bx, by, bw, bh, bg, tree[0].widgets[slot].gradient_color, br)
+    else:
+      gui.gui_round_rect(surface, bx, by, bw, bh, bg, br)
+  if tree[0].focus_id == tree[0].widgets[slot].id && tree[0].widgets[slot].focus_color >= 0:
+    gui.gui_outline(surface, x - 2, y - 2, w + 4, h + 4, tree[0].widgets[slot].focus_color, 1)
+  if tree[0].widgets[slot].icon_id > 0:
+    icon_color:int = tree[0].widgets[slot].icon_color
+    if _tree_effective_enabled(tree, slot) == 0:
+      icon_color = _tree_color_scale(icon_color, 65)
+    _tree_draw_icon(surface, x, y, w, h, tree[0].widgets[slot].icon_id, tree[0].widgets[slot].icon_size, icon_color)
+  if draw_text != 0 && tree[0].widgets[slot].text[0] != 0 as char:
+    tx2:int = x + tree[0].widgets[slot].pad_left
+    ty2:int = y + tree[0].widgets[slot].pad_top
+    font_size2:int = _tree_font_size(tree, slot)
+    font_weight2:int = _tree_font_weight(tree, slot)
+    font_family2:str = _tree_font_family(tree, slot)
+    text_width2:int = gui.gui_text_measure(&tree[0].widgets[slot].text[0], font_size2, font_weight2, font_family2)
+    content_width2:int = w - tree[0].widgets[slot].pad_left - tree[0].widgets[slot].pad_right
+    if tree[0].widgets[slot].text_align == 1:
+      tx2 = tx2 + (content_width2 - text_width2) / 2
+    if tree[0].widgets[slot].text_align == 2:
+      tx2 = tx2 + content_width2 - text_width2
+    text_height:int = font_size2 + 4
+    if text_height > h:
+      text_height = h
+    if tree[0].widgets[slot].pad_top == 0 && tree[0].widgets[slot].pad_bottom == 0:
+      ty2 = y + (h - text_height) / 2
+    gui.gui_text_style(surface, tx2, ty2, &tree[0].widgets[slot].text[0], fg, font_size2, font_weight2, font_family2)
   ret 0
+
+fn _tree_widget_text_bounds(tree:*TzWidgetTree, slot:int, out:*TzRect) -> int:
+  if tree == 0 || out == 0 || slot < 0 || slot >= TZ_WIDGET_MAX:
+    ret 0 - 1
+  if tree[0].widgets[slot].alive == 0:
+    ret 0
+  if tree[0].widgets[slot].text[0] == 0 as char:
+    out[0].x = 0
+    out[0].y = 0
+    out[0].w = 0
+    out[0].h = 0
+    ret 0
+  tx:int = tree[0].widgets[slot].x + tree[0].widgets[slot].pad_left
+  ty:int = tree[0].widgets[slot].y + tree[0].widgets[slot].pad_top
+  font_size:int = _tree_font_size(tree, slot)
+  font_weight:int = _tree_font_weight(tree, slot)
+  font_family:str = _tree_font_family(tree, slot)
+  text_w:int = gui.gui_text_measure(&tree[0].widgets[slot].text[0], font_size, font_weight, font_family)
+  content_w:int = tree[0].widgets[slot].w - tree[0].widgets[slot].pad_left - tree[0].widgets[slot].pad_right
+  if tree[0].widgets[slot].text_align == 1:
+    tx = tx + (content_w - text_w) / 2
+  if tree[0].widgets[slot].text_align == 2:
+    tx = tx + content_w - text_w
+  if tree[0].widgets[slot].pad_top == 0 && tree[0].widgets[slot].pad_bottom == 0:
+    ty = tree[0].widgets[slot].y + (tree[0].widgets[slot].h - font_size - 4) / 2
+  if tree[0].widgets[slot].kind != TZ_WIDGET_LABEL && tree[0].widgets[slot].pad_top == 0 && tree[0].widgets[slot].pad_bottom == 0:
+    text_h:int = font_size + 4
+    if text_h > tree[0].widgets[slot].h:
+      text_h = tree[0].widgets[slot].h
+    ty = tree[0].widgets[slot].y + (tree[0].widgets[slot].h - text_h) / 2
+  out[0].x = tx
+  out[0].y = ty
+  out[0].w = text_w
+  out[0].h = font_size + 6
+  ret 1
+
+fn _tree_widget_render_bounds(tree:*TzWidgetTree, slot:int, out:*TzRect) -> int:
+  if tree == 0 || out == 0 || slot < 0 || slot >= TZ_WIDGET_MAX:
+    ret 0 - 1
+  if tree[0].widgets[slot].alive == 0:
+    ret 0
+  extent:int = tree[0].widgets[slot].shadow_size
+  if tree[0].widgets[slot].focusable != 0:
+    extent = extent + 2
+  out[0].x = tree[0].widgets[slot].x - extent
+  out[0].y = tree[0].widgets[slot].y - extent
+  out[0].w = tree[0].widgets[slot].w + extent * 2
+  out[0].h = tree[0].widgets[slot].h + extent * 2
+  text_rect:TzRect
+  if _tree_widget_text_bounds(tree, slot, &text_rect) > 0:
+    combined:TzRect
+    frame.tz_rect_union(&combined, out, &text_rect)
+    out[0].x = combined.x
+    out[0].y = combined.y
+    out[0].w = combined.w
+    out[0].h = combined.h
+  ret 1
 
 fn tree_render_dirty(tree:*TzWidgetTree, surface:*GuiSurface) -> int:
   if tree == 0 || surface == 0:
     ret 0 - 1
-  n:int = frame.tz_damage_count(&tree[0].damage)
+  gui.gui_clip_reset()
+  tree[0].present_x = 0
+  tree[0].present_y = 0
+  tree[0].present_w = 0
+  tree[0].present_h = 0
+  n:int = frame.tz_damage_count(tree[0].damage)
   if n <= 0:
     ret 0
   idxs:[int;256]
   d_i:int = 0
   while d_i < n:
     dr:TzRect
-    if frame.tz_damage_take(&tree[0].damage, d_i, &dr) != 0:
+    if frame.tz_damage_take(tree[0].damage, d_i, &dr) != 0:
+      expand_more:int = 1
+      expand_pass:int = 0
+      while expand_more != 0 && expand_pass < TZ_WIDGET_MAX:
+        expand_more = 0
+        expand_slot:int = 0
+        while expand_slot < TZ_WIDGET_MAX:
+          if tree[0].widgets[expand_slot].alive != 0 && tree[0].widgets[expand_slot].visible != 0 && _tree_effective_visible(tree, expand_slot) != 0:
+            text_bounds:TzRect
+            overlap:TzRect
+            expanded:TzRect
+            clipped:TzRect
+            if _tree_widget_text_bounds(tree, expand_slot, &text_bounds) > 0 && frame.tz_rect_intersect(&overlap, &text_bounds, &dr) != 0:
+              frame.tz_rect_union(&expanded, &dr, &text_bounds)
+              if frame.tz_rect_clip(&clipped, &expanded, surface[0].width, surface[0].height) != 0:
+                if clipped.x != dr.x || clipped.y != dr.y || clipped.w != dr.w || clipped.h != dr.h:
+                  dr.x = clipped.x
+                  dr.y = clipped.y
+                  dr.w = clipped.w
+                  dr.h = clipped.h
+                  expand_more = 1
+          expand_slot = expand_slot + 1
+        expand_pass = expand_pass + 1
+      if tree[0].present_w == 0 || tree[0].present_h == 0:
+        tree[0].present_x = dr.x
+        tree[0].present_y = dr.y
+        tree[0].present_w = dr.w
+        tree[0].present_h = dr.h
+      else:
+        px1:int = tree[0].present_x
+        py1:int = tree[0].present_y
+        px2:int = px1 + tree[0].present_w
+        py2:int = py1 + tree[0].present_h
+        if dr.x < px1:
+          px1 = dr.x
+        if dr.y < py1:
+          py1 = dr.y
+        if dr.x + dr.w > px2:
+          px2 = dr.x + dr.w
+        if dr.y + dr.h > py2:
+          py2 = dr.y + dr.h
+        tree[0].present_x = px1
+        tree[0].present_y = py1
+        tree[0].present_w = px2 - px1
+        tree[0].present_h = py2 - py1
+      gui.gui_clip_set(surface, dr.x, dr.y, dr.w, dr.h)
       gui.gui_rect(surface, dr.x, dr.y, dr.w, dr.h, tree[0].clear_color)
       w_i:int = 0
       c:int = 0
       while w_i < TZ_WIDGET_MAX:
-        if tree[0].widgets[w_i].alive != 0 && tree[0].widgets[w_i].visible != 0:
+        if tree[0].widgets[w_i].alive != 0 && tree[0].widgets[w_i].visible != 0 && _tree_effective_visible(tree, w_i) != 0:
           wr:TzRect
           ir:TzRect
-          wr.x = tree[0].widgets[w_i].x
-          wr.y = tree[0].widgets[w_i].y
-          wr.w = tree[0].widgets[w_i].w
-          wr.h = tree[0].widgets[w_i].h
-          if frame.tz_rect_intersect(&ir, &wr, &dr) != 0:
+          if _tree_widget_render_bounds(tree, w_i, &wr) > 0 && frame.tz_rect_intersect(&ir, &wr, &dr) != 0:
             idxs[c] = w_i
             c = c + 1
         w_i = w_i + 1
       _tree_sort_widgets(tree, &idxs[0], c)
       j:int = 0
       while j < c:
-        _tree_draw_widget(tree, surface, idxs[j])
+        // The widget render bounds already include its text bounds. Draw text
+        // with every intersecting widget so GDI and direct framebuffer paths
+        // don't lose labels when a damage rectangle only clips their glyphs.
+        _tree_draw_widget(tree, surface, idxs[j], 1)
         tree[0].widgets[idxs[j]].dirty = 0
         j = j + 1
+      gui.gui_clip_reset()
     d_i = d_i + 1
-  frame.tz_damage_reset(&tree[0].damage)
+  frame.tz_damage_reset(tree[0].damage)
   tree[0].full_redraw_reason = TZ_FULL_REDRAW_NONE
   ret n
 
 fn tree_present_dirty(tree:*TzWidgetTree, surface:*GuiSurface) -> int:
   n:int = tree_render_dirty(tree, surface)
-  gui.gui_end(surface)
+  if n > 0:
+    if tree != 0 && tree[0].present_w > 0 && tree[0].present_h > 0 && os.fb_host_windowing() != 0:
+      if gui.gui_present_region(tree[0].present_x, tree[0].present_y, tree[0].present_w, tree[0].present_h) != 0:
+        gui.gui_end(surface)
+    else:
+      gui.gui_end(surface)
   ret n
+
+// ── Retained Widget Animation Engine ──────────────────────────────────────
+
+fn widget_animate_bounds(tree:*TzWidgetTree, widget_id:int, target_x:int, target_y:int, target_w:int, target_h:int, duration_ms:int, easing:int) -> int:
+  slot:int = _tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  if duration_ms <= 0:
+    duration_ms = 1
+  tree[0].widgets[slot].anim_active = 1
+  tree[0].widgets[slot].anim_start_x = tree[0].widgets[slot].x
+  tree[0].widgets[slot].anim_start_y = tree[0].widgets[slot].y
+  tree[0].widgets[slot].anim_start_w = tree[0].widgets[slot].w
+  tree[0].widgets[slot].anim_start_h = tree[0].widgets[slot].h
+  tree[0].widgets[slot].anim_target_x = target_x
+  tree[0].widgets[slot].anim_target_y = target_y
+  tree[0].widgets[slot].anim_target_w = target_w
+  tree[0].widgets[slot].anim_target_h = target_h
+  tree[0].widgets[slot].anim_dur = duration_ms
+  tree[0].widgets[slot].anim_elapsed = 0
+  tree[0].widgets[slot].anim_easing = easing
+  ret 0
+
+fn tree_animate_tick(tree:*TzWidgetTree, dt_ms:int) -> int:
+  if tree == 0:
+    ret 0
+  if dt_ms <= 0:
+    dt_ms = 16
+  active_count:int = 0
+  i:int = 0
+  while i < TZ_WIDGET_MAX:
+    if tree[0].widgets[i].alive != 0 && tree[0].widgets[i].anim_active != 0:
+      active_count = active_count + 1
+      tree[0].widgets[i].anim_elapsed = tree[0].widgets[i].anim_elapsed + dt_ms
+      p:int = tree[0].widgets[i].anim_elapsed * 1000 / tree[0].widgets[i].anim_dur
+      if p >= 1000:
+        p = 1000
+        tree[0].widgets[i].anim_active = 0
+      // Apply easing
+      eased:int = p
+      if tree[0].widgets[i].anim_easing == 1:
+        eased = p * p / 1000
+      else:
+        if tree[0].widgets[i].anim_easing == 2:
+          inv:int = 1000 - p
+          eased = 1000 - (inv * inv / 1000)
+        else:
+          if tree[0].widgets[i].anim_easing == 3:
+            if p < 500:
+              eased = 2 * p * p / 1000
+            else:
+              inv2:int = 1000 - p
+              eased = 1000 - 2 * inv2 * inv2 / 1000
+      sx:int = tree[0].widgets[i].anim_start_x
+      sy:int = tree[0].widgets[i].anim_start_y
+      sw:int = tree[0].widgets[i].anim_start_w
+      sh:int = tree[0].widgets[i].anim_start_h
+      tx:int = tree[0].widgets[i].anim_target_x
+      ty:int = tree[0].widgets[i].anim_target_y
+      tw:int = tree[0].widgets[i].anim_target_w
+      th:int = tree[0].widgets[i].anim_target_h
+      nx:int = sx + (tx - sx) * eased / 1000
+      ny:int = sy + (ty - sy) * eased / 1000
+      nw:int = sw + (tw - sw) * eased / 1000
+      nh:int = sh + (th - sh) * eased / 1000
+      widget_update_bounds(tree, tree[0].widgets[i].id, nx, ny, nw, nh)
+    i = i + 1
+  ret active_count
+

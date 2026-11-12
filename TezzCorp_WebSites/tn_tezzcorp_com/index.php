@@ -1,6 +1,6 @@
 <?php
 // index.php - TezzNative Homepage (Premier Programming Language Web Portal)
-$page_title = "TezzNative - Ultra-Fast Native AI, Tensors & Systems Language | TezzCorp Pvt Ltd.";
+$page_title = "TezzNative - Ultra-Fast Native AI, Tensors & Systems Language | TEZZCORP PRIVATE LIMITED";
 $active_nav = "home";
 require_once __DIR__ . '/includes/header.php';
 require_once __DIR__ . '/includes/nav.php';
@@ -14,7 +14,7 @@ require_once __DIR__ . '/includes/nav.php';
     <div class="hero-content">
       <div class="hero-pill-badge">
         <span class="pulse-dot" style="background: #ff9933; box-shadow: 0 0 10px #ff9933;"></span>
-        <span><?= __('hero_badge', 'TEZZNATIVE v2.2.1 PRODUCTION RELEASE LIVE • TEZZCORP PVT LTD') ?></span>
+        <span><?= __('hero_badge', 'TEZZNATIVE v1.0.0 PRODUCTION RELEASE LIVE • TEZZCORP PRIVATE LIMITED') ?></span>
       </div>
 
       <h1 class="hero-title">
@@ -24,7 +24,7 @@ require_once __DIR__ . '/includes/nav.php';
       </h1>
 
       <p class="hero-subtitle">
-        <?= __('hero_subtitle', 'A premier systems and AI programming language created by <strong>Rohit Pathak</strong> at <strong>TezzCorp Pvt Ltd</strong>. Compiling directly to zero-overhead standalone native executables with first-class tensor arithmetic, multi-threaded <code>async/await</code>, and scoped memory safety without garbage collection pauses.') ?>
+        <?= __('hero_subtitle', 'A premier systems and AI programming language created by <strong>Rohit Pathak</strong> at <strong>TEZZCORP PRIVATE LIMITED</strong>. Compiling directly to zero-overhead standalone native executables with first-class tensor arithmetic, multi-threaded <code>async/await</code>, and scoped memory safety without garbage collection pauses.') ?>
       </p>
 
       <!-- Hero Action Buttons -->

@@ -1,0 +1,746 @@
+// tzgpu_ui.tn — TezzNative GPU-Accelerated UI Framework v1.1
+//
+// Modern, animated, colorful, high-refresh-rate UI toolkit.
+// Builds on gui_win + gpu_render + tween + particle.
+//
+// Import with:   import "tzgpu_ui"
+// All widget functions use the gu_ prefix.
+//
+// TezzNative call conventions (enforced by tezzc):
+//   • Struct field TYPES  → bare name    (e.g. canvas:GpuCanvas)
+//   • Cross-module calls  → module.fn()  (e.g. gpu_render.gpr_clear(...))
+//   • Same-file functions → bare name    (e.g. _gu_hit(...))
+
+import "gui_win"
+import "gpu_render"
+import "tween"
+import "particle"
+
+// ── Curated color palette ─────────────────────────────────────────────────
+
+// ── Curated color palette (Modern Zinc / Obsidian Design System) ─────────
+
+let GU_BG:int          = 0x080C14  // Deep obsidian slate canvas
+let GU_BG2:int         = 0x0D1422  // Elevated surface / inset
+let GU_PANEL:int       = 0x111A2B  // Cards and structural panels
+let GU_GLASS:int       = 0x162238  // Frosted glass overlay
+let GU_CARD:int        = 0x131C2E  // Elevated card surface
+let GU_SURFACE:int     = 0x18243A  // Interactive elements base
+let GU_BORDER:int      = 0x223048  // Subtle clean border
+let GU_BORDER_HOT:int  = 0x364B6E  // Hover / active border
+let GU_SHEEN:int       = 0x3A5078  // 1px tactile top edge sheen
+
+let GU_VIOLET:int      = 0x6366F1  // Refined Electric Indigo
+let GU_PURPLE:int      = 0x8B5CF6  // Violet / Purple
+let GU_CYAN:int        = 0x06B6D4  // Tech Cyan
+let GU_TEAL:int        = 0x14B8A6  // Emerald Teal
+let GU_LIME:int        = 0x10B981  // Emerald Success
+let GU_AMBER:int       = 0xF59E0B  // Warm Amber Warning
+let GU_ROSE:int        = 0xF43F5E  // Coral Rose Danger
+let GU_PINK:int        = 0xEC4899  // Magenta Accent
+let GU_INDIGO:int      = 0x4F46E5  // Deep Indigo
+let GU_SKY:int         = 0x0EA5E9  // Sky Blue
+
+let GU_TEXT:int        = 0xF8FAFC  // Crisp White (Slate 50)
+let GU_TEXT_SEC:int    = 0x94A3B8  // Cool Slate (Slate 400)
+let GU_MUTED:int       = 0x64748B  // Muted Slate (Slate 500)
+let GU_DIM:int         = 0x223048  // Subtle Lines
+
+let GU_WHITE:int       = 0xFFFFFF
+let GU_BLACK:int       = 0x000000
+let GU_SHADOW:int      = 0x03060D
+
+// ── App context ───────────────────────────────────────────────────────────
+// Type names in struct fields are always bare (no module. prefix).
+
+struct TzGpuCtx:
+  canvas:GpuCanvas
+  mx:int
+  my:int
+  mb:int
+  pmb:int
+  real_mb:int
+  click_x:int
+  click_y:int
+  click_pending:int
+  key:int
+  tick:int
+  dt:int
+  W:int
+  H:int
+  quit:int
+  fps_cap:int
+  theme_accent:int
+  last_time_ms:int
+
+// ── Lifecycle ─────────────────────────────────────────────────────────────
+
+fn gu_create(ctx:*TzGpuCtx, title:str, W:int, H:int, fps_cap:int) -> int:
+  if ctx == 0:
+    ret (0 - 1)
+  if fps_cap <= 0:
+    fps_cap = 60
+  ctx[0].fps_cap      = fps_cap
+  ctx[0].tick         = 0
+  ctx[0].quit         = 0
+  ctx[0].mx           = 0
+  ctx[0].my           = 0
+  ctx[0].mb           = 0
+  ctx[0].pmb          = 0
+  ctx[0].real_mb      = 0
+  ctx[0].click_x      = 0
+  ctx[0].click_y      = 0
+  ctx[0].click_pending = 0
+  ctx[0].theme_accent = GU_VIOLET
+  ctx[0].dt           = 1000 / fps_cap
+  ctx[0].last_time_ms = gui_win.fb_time_ms()
+  gpu_render.gpr_canvas_init(&ctx[0].canvas, title, W, H, fps_cap)
+  ctx[0].W = ctx[0].canvas.W
+  ctx[0].H = ctx[0].canvas.H
+  ret 0
+
+fn gu_alive(ctx:*TzGpuCtx) -> int:
+  if ctx == 0:
+    ret 0
+  ret 1 - ctx[0].quit
+
+fn gu_begin(ctx:*TzGpuCtx) -> int:
+  if ctx == 0:
+    ret (0 - 1)
+  now_ms:int = gui_win.fb_time_ms()
+  if ctx[0].last_time_ms > 0:
+    measured_dt:int = now_ms - ctx[0].last_time_ms
+    if measured_dt > 0 && measured_dt < 250:
+      ctx[0].dt = measured_dt
+    else:
+      ctx[0].dt = 1000 / ctx[0].fps_cap
+  else:
+    ctx[0].dt = 1000 / ctx[0].fps_cap
+  ctx[0].last_time_ms = now_ms
+  // Pump and consume the complete native packet queue. Sampling only the last
+  // button state drops short down/up clicks between rendered frames.
+  // GPU immediate-mode apps keep their design framebuffer stable while the
+  // Win32 host scales it to the live client area. Retained apps can opt into
+  // fb_sync_resize when they also recompute their layout.
+  gui_win.fb_pump_events()
+  ctx[0].pmb = ctx[0].real_mb
+  ctx[0].mb  = ctx[0].real_mb
+  ctx[0].mx  = gui_win.mouse_pos_x()
+  ctx[0].my  = gui_win.mouse_pos_y()
+  ctx[0].click_pending = 0
+  packet_buttons:int = ctx[0].real_mb
+  saw_left_press:int = 0
+  press_x:int = ctx[0].mx
+  press_y:int = ctx[0].my
+  while gui_win.mouse_has_packet() != 0:
+    gui_win.mouse_read_packet()
+    packet_x:int = gui_win.mouse_packet_x()
+    packet_y:int = gui_win.mouse_packet_y()
+    next_buttons:int = gui_win.mouse_buttons()
+    if (next_buttons & 1) != 0 && (packet_buttons & 1) == 0:
+      saw_left_press = 1
+      // If several clicks arrived during one slow frame, use the latest
+      // press location while still producing a single clean UI edge.
+      press_x = packet_x
+      press_y = packet_y
+    packet_buttons = next_buttons
+    ctx[0].mx = packet_x
+    ctx[0].my = packet_y
+  ctx[0].real_mb = packet_buttons
+  ctx[0].mb = packet_buttons
+  if saw_left_press != 0:
+    ctx[0].click_pending = 1
+    ctx[0].click_x = press_x
+    ctx[0].click_y = press_y
+    // Preserve a press edge for this frame even if its release arrived before
+    // the UI loop drained the queue. This keeps immediate-mode widgets working
+    // without adding per-control event polling.
+    ctx[0].mb = ctx[0].mb | 1
+    ctx[0].pmb = ctx[0].pmb & (0 - 2)
+    ctx[0].mx = press_x
+    ctx[0].my = press_y
+  ctx[0].W   = gui_win.fb_width()
+  ctx[0].H   = gui_win.fb_height()
+  ctx[0].canvas.W = ctx[0].W
+  ctx[0].canvas.H = ctx[0].H
+  ctx[0].key = 0
+  if gui_win.kbd_has_event() != 0:
+    ctx[0].key = gui_win.kbd_read_char()
+  gpu_render.gpr_canvas_begin(&ctx[0].canvas)
+  ret 0
+
+fn gu_end(ctx:*TzGpuCtx) -> int:
+  if ctx == 0:
+    ret (0 - 1)
+  gpu_render.gpr_canvas_end(&ctx[0].canvas)
+  if ctx[0].key == 27:
+    ctx[0].quit = 1
+  // The synthetic click edge is frame-local; carry only the actual held state
+  // into the next iteration.
+  ctx[0].mb = ctx[0].real_mb
+  ctx[0].pmb = ctx[0].real_mb
+  ctx[0].click_pending = 0
+  ctx[0].tick = ctx[0].tick + 1
+  ret 0
+
+fn gu_fps(ctx:*TzGpuCtx) -> int:
+  ret gpu_render.gpr_fps(&ctx[0].canvas)
+
+// ── Hit testing (same-file helpers, bare name OK) ─────────────────────────
+
+fn _gu_hit(ctx:*TzGpuCtx, x:int, y:int, w:int, h:int) -> int:
+  if ctx[0].mx < x || ctx[0].my < y:
+    ret 0
+  if ctx[0].mx >= x+w || ctx[0].my >= y+h:
+    ret 0
+  ret 1
+
+fn _gu_clicked(ctx:*TzGpuCtx, x:int, y:int, w:int, h:int) -> int:
+  if _gu_hit(ctx, x, y, w, h) == 0:
+    ret 0
+  if (ctx[0].mb & 1) != 0 && (ctx[0].pmb & 1) == 0:
+    ret 1
+  ret 0
+
+fn _gu_slen(s:str) -> int:
+  n:int = 0
+  while s[n] != 0:
+    n = n + 1
+  ret n
+
+// ── Background helpers ────────────────────────────────────────────────────
+
+fn gu_clear(ctx:*TzGpuCtx, color:int) -> int:
+  ret gpu_render.gpr_clear(&ctx[0].canvas, color)
+
+fn gu_anim_bg(ctx:*TzGpuCtx, hue_speed:int, sat:int, lit_top:int, lit_bot:int) -> int:
+  ret gpu_render.gpr_animated_bg(&ctx[0].canvas, ctx[0].tick, hue_speed, sat, lit_top, lit_bot)
+
+fn gu_dark_bg(ctx:*TzGpuCtx) -> int:
+  ret gpu_render.gpr_gradient_v(&ctx[0].canvas, 0, 0, ctx[0].W, ctx[0].H, 0x0C1322, 0x080C14)
+
+// ── Glassmorphism panel ───────────────────────────────────────────────────
+
+fn gu_glass_panel(ctx:*TzGpuCtx, x:int, y:int, w:int, h:int, title:str) -> int:
+  // Ambient drop shadow
+  gpu_render.gpr_shadow(&ctx[0].canvas, x, y, w, h, 6, 140)
+  // Panel body
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x, y, w, h, GU_PANEL, 8)
+  // Frosted header area
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x, y, w, 34, 0x142035, 8)
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x, y+28, w, 6, 0x142035, 0)
+  // Header 1px divider
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x, y+34, w, 1, GU_BORDER, 0)
+  // Top sheen highlight
+  gpu_render.gpr_sheen(&ctx[0].canvas, x+8, y, w-16, GU_SHEEN)
+  // Ambient accent line in header
+  gpu_render.gpr_gradient_h(&ctx[0].canvas, x+12, y, 70, 2, ctx[0].theme_accent, GU_CYAN)
+  // 1px crisp outline
+  gpu_render.gpr_outline(&ctx[0].canvas, x, y, w, h, GU_BORDER)
+  if title != 0:
+    gpu_render.gpr_circle(&ctx[0].canvas, x+18, y+17, 3, ctx[0].theme_accent)
+    gpu_render.gpr_text_ex(&ctx[0].canvas, x+28, y+12, title, GU_TEXT, 1, 1)
+  ret 0
+
+fn gu_panel(ctx:*TzGpuCtx, x:int, y:int, w:int, h:int, title:str) -> int:
+  gpu_render.gpr_shadow(&ctx[0].canvas, x, y, w, h, 4, 100)
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x, y, w, h, GU_PANEL, 6)
+  gpu_render.gpr_sheen(&ctx[0].canvas, x+6, y, w-12, GU_SHEEN)
+  gpu_render.gpr_gradient_h(&ctx[0].canvas, x+6, y, 48, 2, ctx[0].theme_accent, GU_CYAN)
+  gpu_render.gpr_outline(&ctx[0].canvas, x, y, w, h, GU_BORDER)
+  if title != 0:
+    gpu_render.gpr_text_ex(&ctx[0].canvas, x+14, y+10, title, GU_TEXT, 1, 1)
+  ret 0
+
+fn gu_card(ctx:*TzGpuCtx, x:int, y:int, w:int, h:int) -> int:
+  gpu_render.gpr_shadow(&ctx[0].canvas, x, y, w, h, 4, 80)
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x, y, w, h, GU_CARD, 6)
+  gpu_render.gpr_sheen(&ctx[0].canvas, x+6, y, w-12, 0x2A3B58)
+  gpu_render.gpr_outline(&ctx[0].canvas, x, y, w, h, GU_BORDER)
+  ret 0
+
+// ── Labels & text ─────────────────────────────────────────────────────────
+
+fn gu_label(ctx:*TzGpuCtx, x:int, y:int, text:str, color:int, scale:int, bold:int) -> int:
+  ret gpu_render.gpr_text_ex(&ctx[0].canvas, x, y, text, color, scale, bold)
+
+fn gu_label_sm(ctx:*TzGpuCtx, x:int, y:int, text:str, color:int) -> int:
+  ret gpu_render.gpr_text(&ctx[0].canvas, x, y, text, color)
+
+fn gu_divider(ctx:*TzGpuCtx, x:int, y:int, w:int) -> int:
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x, y, w, 1, GU_BORDER, 0)
+  ret 0
+
+// ── Animated button ───────────────────────────────────────────────────────
+// TzGpuBtn holds per-button animation state — declare once, call each frame.
+
+struct TzGpuBtn:
+  hover_tween:TzTween
+  press_tween:TzTween
+  hot:int
+  was_hot:int
+  emitter:TzEmitter
+
+fn gu_btn_init(b:*TzGpuBtn) -> int:
+  if b == 0:
+    ret (0 - 1)
+  tween.tween_init(&b[0].hover_tween, 0, 1000, 150, 2)
+  tween.tween_init(&b[0].press_tween, 0, 1000, 80,  2)
+  b[0].hot     = 0
+  b[0].was_hot = 0
+  particle.emitter_init(&b[0].emitter, 12345)
+  ret 0
+
+fn gu_btn(ctx:*TzGpuCtx, b:*TzGpuBtn, x:int, y:int, w:int, h:int, label:str, accent:int) -> int:
+  hot:int     = _gu_hit(ctx, x, y, w, h)
+  clicked:int = _gu_clicked(ctx, x, y, w, h)
+  b[0].was_hot = b[0].hot
+  b[0].hot     = hot
+
+  if hot != 0 && b[0].was_hot == 0:
+    tween.tween_init(&b[0].hover_tween, 0, 1000, 150, 2)
+  if hot == 0 && b[0].was_hot != 0:
+    tween.tween_init(&b[0].hover_tween, tween.tween_peek(&b[0].hover_tween), 0, 150, 1)
+
+  hover_val:int = tween.tween_tick(&b[0].hover_tween, ctx[0].dt)
+  bg_base:int   = gpu_render.gpr_darken(accent, 20)
+  bg:int        = tween.tween_color(bg_base, accent, hover_val)
+
+  // 1px tactile pressed offset
+  pressed:int = (ctx[0].mb & 1) != 0 && hot != 0
+  py:int = y
+  if pressed != 0:
+    py = y + 1
+
+  // Soft button elevation shadow
+  shadow_sz:int = 3 + hover_val * 3 / 1000
+  if pressed == 0:
+    gpu_render.gpr_shadow(&ctx[0].canvas, x, py, w, h, shadow_sz, 100)
+
+  // Rounded pill/card body
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x, py, w, h, bg, 6)
+
+  // Top highlight sheen
+  sheen:int = gpu_render.gpr_brighten(accent, 50)
+  gpu_render.gpr_sheen(&ctx[0].canvas, x+4, py, w-8, sheen)
+
+  // Hover outline glow
+  border_c:int = gpu_render.gpr_darken(accent, 10)
+  if hover_val > 100:
+    border_c = gpu_render.gpr_brighten(accent, 30)
+  gpu_render.gpr_outline(&ctx[0].canvas, x, py, w, h, border_c)
+
+  n:int  = _gu_slen(label)
+  tx:int = x + (w - n*8) / 2
+  ty:int = py + (h - 8) / 2
+  if tx < x+4:
+    tx = x+4
+  gpu_render.gpr_text_ex(&ctx[0].canvas, tx, ty, label, GU_WHITE, 1, 1)
+
+  if clicked != 0:
+    tween.tween_init(&b[0].press_tween, 0, 1000, 80, 2)
+    particle.emitter_preset_click(&b[0].emitter, x + w/2, py + h/2, accent)
+    particle.emitter_emit(&b[0].emitter, 20)
+
+  particle.emitter_tick(&b[0].emitter)
+  particle.emitter_draw(&b[0].emitter, &ctx[0].canvas)
+
+  ret clicked
+
+fn gu_btn_simple(ctx:*TzGpuCtx, x:int, y:int, w:int, h:int, label:str) -> int:
+  hot:int     = _gu_hit(ctx, x, y, w, h)
+  clicked:int = _gu_clicked(ctx, x, y, w, h)
+  bg:int = GU_SURFACE
+  border_c:int = GU_BORDER
+  if hot != 0:
+    bg = 0x22324E
+    border_c = GU_BORDER_HOT
+  if (ctx[0].mb & 1) != 0 && hot != 0:
+    bg = 0x162236
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x, y, w, h, bg, 6)
+  gpu_render.gpr_sheen(&ctx[0].canvas, x+4, y, w-8, 0x334566)
+  gpu_render.gpr_outline(&ctx[0].canvas, x, y, w, h, border_c)
+  n:int  = _gu_slen(label)
+  tx:int = x + (w - n*8) / 2
+  ty:int = y + (h - 8) / 2
+  if tx < x+4:
+    tx = x+4
+  gpu_render.gpr_text_ex(&ctx[0].canvas, tx, ty, label, GU_TEXT, 1, 1)
+  ret clicked
+
+// ── Animated progress bar ─────────────────────────────────────────────────
+
+struct TzGpuProgress:
+  display_pct:TzTween
+
+fn gu_progress_init(p:*TzGpuProgress) -> int:
+  if p == 0:
+    ret (0 - 1)
+  tween.tween_init(&p[0].display_pct, 0, 0, 400, 2)
+  ret 0
+
+fn gu_progress_set(p:*TzGpuProgress, target_pct:int) -> int:
+  if p == 0:
+    ret (0 - 1)
+  cur:int = tween.tween_peek(&p[0].display_pct)
+  tween.tween_init(&p[0].display_pct, cur, target_pct, 400, 3)
+  ret 0
+
+fn gu_progress(ctx:*TzGpuCtx, p:*TzGpuProgress, x:int, y:int, w:int, h:int, accent:int) -> int:
+  pct:int = tween.tween_tick(&p[0].display_pct, ctx[0].dt)
+  if pct > 100:
+    pct = 100
+  if pct < 0:
+    pct = 0
+  // Background track
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x, y, w, h, 0x090E18, h/2)
+  gpu_render.gpr_outline(&ctx[0].canvas, x, y, w, h, GU_BORDER)
+  filled:int = pct * (w-2) / 100
+  if filled > 0:
+    c2:int = gpu_render.gpr_brighten(accent, 40)
+    gpu_render.gpr_gradient_h(&ctx[0].canvas, x+1, y+1, filled, h-2, accent, c2)
+    // Moving scanning sheen pulse
+    shim_x:int = x + 1 + (ctx[0].tick * 5) % (filled + 60) - 30
+    if shim_x > x+1 && shim_x < x+1+filled-12:
+      gpu_render.gpr_blend(&ctx[0].canvas, shim_x, y+1, 14, h-2, GU_WHITE, 70)
+  ret 0
+
+// ── Static progress bar (no state needed, pass 0..100 pct directly) ────────
+
+fn gu_progress_static(ctx:*TzGpuCtx, x:int, y:int, w:int, h:int, pct:int, accent:int) -> int:
+  if pct > 100: pct = 100
+  if pct < 0:   pct = 0
+  // Background track
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x, y, w, h, 0x090E18, h/2)
+  gpu_render.gpr_outline(&ctx[0].canvas, x, y, w, h, GU_BORDER)
+  filled:int = pct * (w-2) / 100
+  if filled > 0:
+    c2:int = gpu_render.gpr_brighten(accent, 40)
+    gpu_render.gpr_gradient_h(&ctx[0].canvas, x+1, y+1, filled, h-2, accent, c2)
+    // Moving scanning sheen pulse
+    shim_x:int = x + 1 + (ctx[0].tick * 5) % (filled + 60) - 30
+    if shim_x > x+1 && shim_x < x+1+filled-12:
+      gpu_render.gpr_blend(&ctx[0].canvas, shim_x, y+1, 14, h-2, GU_WHITE, 70)
+  ret 0
+
+// ── Slider ─────────────────────────────────────────────────────────────────
+
+fn gu_slider(ctx:*TzGpuCtx, x:int, y:int, w:int, lo:int, hi:int, val:int, accent:int) -> int:
+  rng:int = hi - lo
+  if rng < 1:
+    rng = 1
+  // Track trough (height 6px, rounded)
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x, y+7, w, 6, 0x0A0F1A, 3)
+  gpu_render.gpr_outline(&ctx[0].canvas, x, y+7, w, 6, GU_BORDER)
+  filled:int = (val - lo) * (w-16) / rng
+  if filled > 0:
+    gpu_render.gpr_gradient_h(&ctx[0].canvas, x+1, y+8, filled+7, 4, accent, gpu_render.gpr_brighten(accent, 40))
+  thumb_x:int = x + 8 + filled
+  hot:int = _gu_hit(ctx, thumb_x-10, y, 20, 20)
+  thumb_c:int = accent
+  if hot != 0:
+    thumb_c = gpu_render.gpr_brighten(accent, 35)
+  // Knob: outer ring + inner pip + hover glow
+  gpu_render.gpr_circle(&ctx[0].canvas, thumb_x, y+10, 8, 0x060A14)
+  gpu_render.gpr_circle(&ctx[0].canvas, thumb_x, y+10, 7, 0xF8FAFC)
+  gpu_render.gpr_circle(&ctx[0].canvas, thumb_x, y+10, 5, thumb_c)
+  if _gu_hit(ctx, x, y, w, 20) != 0 && (ctx[0].mb & 1) != 0:
+    rel:int = ctx[0].mx - x - 8
+    if rel < 0:
+      rel = 0
+    if rel > w-16:
+      rel = w-16
+    val = lo + rel * rng / (w-16)
+    if val < lo:
+      val = lo
+    if val > hi:
+      val = hi
+  ret val
+
+// ── Modern Toggle Switch ───────────────────────────────────────────────────
+
+fn gu_toggle(ctx:*TzGpuCtx, x:int, y:int, label:str, checked:int, accent:int) -> int:
+  state:int = checked
+  if _gu_clicked(ctx, x, y, 220, 20) != 0:
+    if state != 0:
+      state = 0
+    else:
+      state = 1
+  hot:int = _gu_hit(ctx, x, y, 36, 20)
+  // Capsule switch track (w=36, h=20)
+  track_c:int = 0x162238
+  border_c:int = GU_BORDER
+  if state != 0:
+    track_c = accent
+    border_c = gpu_render.gpr_brighten(accent, 20)
+  else:
+    if hot != 0:
+      track_c = 0x1E2F4C
+      border_c = GU_BORDER_HOT
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x, y, 36, 20, track_c, 10)
+  gpu_render.gpr_outline(&ctx[0].canvas, x, y, 36, 20, border_c)
+  // Sliding knob (diameter 14)
+  knob_x:int = x + 3
+  if state != 0:
+    knob_x = x + 19
+  gpu_render.gpr_circle(&ctx[0].canvas, knob_x + 7, y + 10, 7, 0x050810)
+  gpu_render.gpr_circle(&ctx[0].canvas, knob_x + 7, y + 10, 6, 0xF8FAFC)
+  if label != 0:
+    gpu_render.gpr_text(&ctx[0].canvas, x + 44, y + 6, label, GU_TEXT)
+  ret state
+
+// ── Checkbox ──────────────────────────────────────────────────────────────
+
+fn gu_checkbox(ctx:*TzGpuCtx, x:int, y:int, label:str, checked:int, accent:int) -> int:
+  state:int = checked
+  if _gu_clicked(ctx, x, y, 200, 18) != 0:
+    if state != 0:
+      state = 0
+    else:
+      state = 1
+  hot:int = _gu_hit(ctx, x, y, 18, 18)
+  bc:int = GU_BORDER
+  if hot != 0:
+    bc = GU_BORDER_HOT
+  if state != 0:
+    bc = accent
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x, y, 18, 18, 0x090E18, 4)
+  gpu_render.gpr_outline(&ctx[0].canvas, x, y, 18, 18, bc)
+  if state != 0:
+    gpu_render.gpr_rect_r(&ctx[0].canvas, x+3, y+3, 12, 12, accent, 3)
+    gpu_render.gpr_sheen(&ctx[0].canvas, x+4, y+3, 10, gpu_render.gpr_brighten(accent, 50))
+    // Crisp inner indicator pip
+    gpu_render.gpr_rect_r(&ctx[0].canvas, x+6, y+6, 6, 6, 0xF8FAFC, 1)
+  gpu_render.gpr_text(&ctx[0].canvas, x+26, y+5, label, GU_TEXT)
+  ret state
+
+// ── Badge ─────────────────────────────────────────────────────────────────
+
+fn gu_badge(ctx:*TzGpuCtx, x:int, y:int, text:str, bg:int) -> int:
+  n:int  = _gu_slen(text)
+  bw:int = n*8 + 18
+  // Soft badge body with subtle border
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x, y, bw, 20, 0x141E30, 10)
+  gpu_render.gpr_outline(&ctx[0].canvas, x, y, bw, 20, GU_BORDER)
+  // Status indicator dot
+  gpu_render.gpr_circle(&ctx[0].canvas, x+8, y+10, 3, bg)
+  gpu_render.gpr_text(&ctx[0].canvas, x+16, y+6, text, GU_TEXT)
+  ret 0
+
+// ── Toast notification ────────────────────────────────────────────────────
+
+struct TzGpuToast:
+  text:[char;128]
+  color:int
+  life:int
+  slide:TzTween
+
+fn gu_toast_show(t:*TzGpuToast, text:str, color:int, duration:int) -> int:
+  if t == 0:
+    ret (0 - 1)
+  n:int = 0
+  while text[n] != 0 && n < 127:
+    unsafe:
+      t[0].text[n] = text[n] as char
+    n = n + 1
+  t[0].text[n] = 0 as char
+  t[0].color   = color
+  t[0].life    = duration
+  tween.tween_init(&t[0].slide, 0 - 40, 0, 300, 4)
+  ret 0
+
+fn gu_toast(ctx:*TzGpuCtx, t:*TzGpuToast) -> int:
+  if t == 0 || t[0].life <= 0:
+    ret 0
+  t[0].life = t[0].life - 1
+  dy:int = tween.tween_tick(&t[0].slide, ctx[0].dt)
+  n:int  = _gu_slen(&t[0].text[0])
+  bw:int = n*8 + 36
+  tx:int = ctx[0].W - bw - 20
+  ty:int = ctx[0].H - 56 + dy
+  gpu_render.gpr_shadow(&ctx[0].canvas, tx, ty, bw, 38, 8, 160)
+  gpu_render.gpr_rect_r(&ctx[0].canvas, tx, ty, bw, 38, 0x111A2B, 8)
+  gpu_render.gpr_sheen(&ctx[0].canvas, tx+6, ty, bw-12, GU_SHEEN)
+  gpu_render.gpr_rect_r(&ctx[0].canvas, tx, ty+6, 4, 26, t[0].color, 2)
+  gpu_render.gpr_outline(&ctx[0].canvas, tx, ty, bw, 38, GU_BORDER)
+  gpu_render.gpr_circle(&ctx[0].canvas, tx+16, ty+19, 4, t[0].color)
+  gpu_render.gpr_text_ex(&ctx[0].canvas, tx+26, ty+14, &t[0].text[0], GU_TEXT, 1, 1)
+  ret t[0].life
+
+// ── Sidebar nav item ──────────────────────────────────────────────────────
+
+fn gu_nav_item(ctx:*TzGpuCtx, x:int, y:int, w:int, label:str, active:int, accent:int) -> int:
+  clicked:int = _gu_clicked(ctx, x, y, w, 38)
+  hot:int     = _gu_hit(ctx, x, y, w, 38)
+  if active != 0:
+    // Tinted active background
+    gpu_render.gpr_rect_r(&ctx[0].canvas, x+8, y+2, w-16, 34, 0x18243A, 6)
+    gpu_render.gpr_sheen(&ctx[0].canvas, x+12, y+2, w-24, 0x2A3B58)
+    // Left glowing indicator pill
+    gpu_render.gpr_rect_r(&ctx[0].canvas, x+8, y+8, 3, 22, accent, 1)
+    gpu_render.gpr_text_ex(&ctx[0].canvas, x+24, y+14, label, GU_TEXT, 1, 1)
+  else:
+    if hot != 0:
+      gpu_render.gpr_rect_r(&ctx[0].canvas, x+8, y+2, w-16, 34, 0x131D2E, 6)
+      gpu_render.gpr_text(&ctx[0].canvas, x+24, y+14, label, GU_TEXT)
+    else:
+      gpu_render.gpr_text(&ctx[0].canvas, x+24, y+14, label, GU_TEXT_SEC)
+  ret clicked
+
+// ── Tab (Segmented Control) ────────────────────────────────────────────────
+
+fn gu_tab(ctx:*TzGpuCtx, x:int, y:int, w:int, label:str, active:int, accent:int) -> int:
+  clicked:int = _gu_clicked(ctx, x, y, w, 32)
+  hot:int     = _gu_hit(ctx, x, y, w, 32)
+  n:int  = _gu_slen(label)
+  tx:int = x + (w - n*8) / 2
+  if active != 0:
+    gpu_render.gpr_rect_r(&ctx[0].canvas, x+2, y+2, w-4, 28, 0x1C283F, 5)
+    gpu_render.gpr_sheen(&ctx[0].canvas, x+4, y+2, w-8, 0x334466)
+    gpu_render.gpr_outline(&ctx[0].canvas, x+2, y+2, w-4, 28, GU_BORDER_HOT)
+    gpu_render.gpr_gradient_h(&ctx[0].canvas, x+8, y+28, w-16, 2, accent, gpu_render.gpr_brighten(accent, 40))
+    gpu_render.gpr_text_ex(&ctx[0].canvas, tx, y+11, label, GU_TEXT, 1, 1)
+  else:
+    if hot != 0:
+      gpu_render.gpr_rect_r(&ctx[0].canvas, x+2, y+2, w-4, 28, 0x131C2D, 5)
+      gpu_render.gpr_text(&ctx[0].canvas, tx, y+11, label, GU_TEXT)
+    else:
+      gpu_render.gpr_text(&ctx[0].canvas, tx, y+11, label, GU_MUTED)
+  ret clicked
+
+// ── Stat card (Modern KPI Card) ────────────────────────────────────────────
+
+fn gu_stat(ctx:*TzGpuCtx, x:int, y:int, w:int, h:int, value:str, label:str, accent:int) -> int:
+  gu_card(ctx, x, y, w, h)
+  // Status indicator pip
+  gpu_render.gpr_circle(&ctx[0].canvas, x+16, y+18, 3, accent)
+  // Sub-label
+  gpu_render.gpr_text(&ctx[0].canvas, x+26, y+14, label, GU_TEXT_SEC)
+  // Bold high-contrast metric
+  gpu_render.gpr_text_ex(&ctx[0].canvas, x+14, y+34, value, GU_TEXT, 2, 1)
+  // Bottom accent glow line
+  gpu_render.gpr_gradient_h(&ctx[0].canvas, x+8, y+h-4, w-16, 2, accent, gpu_render.gpr_brighten(accent, 50))
+  ret 0
+
+// ── Input field ───────────────────────────────────────────────────────────
+
+fn gu_input(ctx:*TzGpuCtx, x:int, y:int, w:int, h:int, text:str, accent:int) -> int:
+  focused:int = _gu_hit(ctx, x, y, w, h)
+  bc:int = GU_BORDER
+  if focused != 0:
+    bc = accent
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x, y, w, h, 0x090D18, 5)
+  gpu_render.gpr_outline(&ctx[0].canvas, x, y, w, h, bc)
+  if focused != 0:
+    gpu_render.gpr_blend(&ctx[0].canvas, x+1, y+1, w-2, h-2, accent, 15)
+  gpu_render.gpr_text(&ctx[0].canvas, x+10, y+(h-8)/2, text, GU_TEXT)
+  if focused != 0:
+    blink:int = (ctx[0].tick / 30) % 2
+    if blink == 0:
+      n:int = _gu_slen(text)
+      gpu_render.gpr_rect_r(&ctx[0].canvas, x+10+n*8, y+5, 2, h-10, accent, 1)
+  ret focused
+
+// ── Scrollbar ────────────────────────────────────────────────────────────
+
+fn gu_scrollbar(ctx:*TzGpuCtx, x:int, y:int, h:int, content_h:int, offset:int, accent:int) -> int:
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x, y, 6, h, 0x090E18, 3)
+  gpu_render.gpr_outline(&ctx[0].canvas, x, y, 6, h, GU_BORDER)
+  if content_h <= h:
+    ret offset
+  thumb_h:int = h * h / content_h
+  if thumb_h < 20:
+    thumb_h = 20
+  max_off:int = content_h - h
+  if max_off < 1:
+    max_off = 1
+  thumb_y:int = y + offset * (h - thumb_h) / max_off
+  hot:int = _gu_hit(ctx, x, y, 6, h)
+  if hot != 0 && (ctx[0].mb & 1) != 0:
+    rel:int = ctx[0].my - y - thumb_h/2
+    if rel < 0:
+      rel = 0
+    if rel > h - thumb_h:
+      rel = h - thumb_h
+    offset = rel * max_off / (h - thumb_h)
+    if offset < 0:
+      offset = 0
+    if offset > max_off:
+      offset = max_off
+  tc:int = GU_BORDER_HOT
+  if hot != 0:
+    tc = accent
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x+1, thumb_y, 4, thumb_h, tc, 2)
+  ret offset
+
+// ── Spinner ───────────────────────────────────────────────────────────────
+
+// Integer sin approximation: t 0..999 → -1000..+1000
+fn _gu_sin1000(t:int) -> int:
+  t2:int = t % 1000
+  if t2 < 0:
+    t2 = t2 + 1000
+  if t2 <= 500:
+    ret 4 * t2 * (1000 - t2) / 1000
+  t3:int = t2 - 500
+  ret 0 - (4 * t3 * (1000 - t3) / 1000)
+
+fn gu_spinner(ctx:*TzGpuCtx, cx:int, cy:int, radius:int, accent:int) -> int:
+  angle_start:int = (ctx[0].tick * 6) % 360
+  i:int = 0
+  while i < 270:
+    a:int  = angle_start + i
+    ax:int = a % 360
+    sin_a:int = _gu_sin1000(ax * 1000 / 360)
+    cos_a:int = _gu_sin1000((ax + 90) * 1000 / 360)
+    px:int = cx + radius * cos_a / 1000
+    py:int = cy + radius * sin_a / 1000
+    t_col:int = i * 1000 / 270
+    col:int = tween.tween_color(GU_DIM, accent, t_col)
+    gpu_render.gpr_pixel(&ctx[0].canvas, px, py, col)
+    i = i + 4
+  tip_a:int   = (angle_start + 270) % 360
+  tip_sin:int = _gu_sin1000(tip_a * 1000 / 360)
+  tip_cos:int = _gu_sin1000((tip_a + 90) * 1000 / 360)
+  tip_x:int   = cx + radius * tip_cos / 1000
+  tip_y:int   = cy + radius * tip_sin / 1000
+  gpu_render.gpr_circle(&ctx[0].canvas, tip_x, tip_y, 3, gpu_render.gpr_brighten(accent, 60))
+  ret 0
+
+fn gu_loader_bar(ctx:*TzGpuCtx, x:int, y:int, w:int, h:int, accent:int) -> int:
+  gpu_render.gpr_rect_r(&ctx[0].canvas, x, y, w, h, GU_BG, h/2)
+  pos:int = (ctx[0].tick * 6) % (w + 80)
+  sx:int = x + pos - 80
+  if sx < x:
+    sx = x
+  ex:int = x + pos
+  if ex > x + w:
+    ex = x + w
+  if ex > sx:
+    gpu_render.gpr_gradient_h(&ctx[0].canvas, sx, y, ex-sx, h, accent, gpu_render.gpr_brighten(accent, 60))
+  ret 0
+
+// ── Ambient particle background ───────────────────────────────────────────
+
+struct TzGpuAmbient:
+  tick:int
+  emitter:TzEmitter
+
+fn gu_ambient_init(a:*TzGpuAmbient, W:int, H:int, style:int) -> int:
+  if a == 0:
+    ret (0 - 1)
+  unsafe:
+    a[0].tick = 0
+    em:*TzEmitter = &a[0].emitter
+    particle.emitter_init(em, 99999)
+  ret 0
+
+fn gu_ambient_tick(a:*TzGpuAmbient, c:*GpuCanvas) -> int:
+  if a == 0:
+    ret 0
+  a[0].tick = a[0].tick + 1
+  if a[0].tick % 12 == 0:
+    particle.emitter_emit(&a[0].emitter, 1)
+  particle.emitter_tick(&a[0].emitter)
+  ret particle.emitter_draw(&a[0].emitter, c)
+

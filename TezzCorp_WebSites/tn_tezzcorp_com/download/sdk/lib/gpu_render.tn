@@ -1,0 +1,306 @@
+// gpu_render.tn — TezzNative 2D Renderer v1.1
+//
+// Provides a GpuCanvas abstraction over the software framebuffer.
+// Uses gui_win for all primitive drawing (fb_fill_rect, fb_fill_rounded,
+// fb_put_pixel, fb_text, fb_text_ex).  GPU acceleration stubs remain as
+// no-ops so callers checking gpu_ok can enable higher-quality paths later.
+
+import "gui_win"
+
+// ── Constants ─────────────────────────────────────────────────────────────
+
+let GPR_OK:int        = 0
+let GPR_ERR:int       = (0 - 1)
+let GPR_CPU_ONLY:int  = 1
+
+let GPR_BLEND_NONE:int  = 0
+let GPR_BLEND_ALPHA:int = 1
+let GPR_BLEND_ADD:int   = 2
+
+// ── GpuCanvas: logical rendering context ──────────────────────────────────
+
+struct GpuCanvas:
+  W:int        // surface width
+  H:int        // surface height
+  gpu_ok:int   // 0 — software path; reserved for future GPU backend
+  fps_cap:int  // target fps
+  frame:int    // frame counter
+  last_fps:int // measured fps
+
+// ── Lifecycle ─────────────────────────────────────────────────────────────
+
+fn gpr_canvas_init(c:*GpuCanvas, title:str, W:int, H:int, fps_cap:int) -> int:
+  if c == 0:
+    ret (0 - 1)
+  gui_win.fb_init_ex(title, W, H)
+  c[0].W       = gui_win.fb_width()
+  c[0].H       = gui_win.fb_height()
+  c[0].gpu_ok  = 0
+  c[0].fps_cap = fps_cap
+  c[0].frame   = 0
+  c[0].last_fps = 0
+  ret 0
+
+fn gpr_canvas_begin(c:*GpuCanvas) -> int:
+  if c == 0:
+    ret (0 - 1)
+  c[0].W = gui_win.fb_width()
+  c[0].H = gui_win.fb_height()
+  ret 0
+
+fn gpr_canvas_end(c:*GpuCanvas) -> int:
+  if c == 0:
+    ret (0 - 1)
+  gui_win.fb_present()
+  c[0].frame = c[0].frame + 1
+  if c[0].fps_cap > 0:
+    dt:int = gui_win.fb_frame_sync(c[0].fps_cap)
+    if dt > 0:
+      c[0].last_fps = 1000 / dt
+  ret 0
+
+fn gpr_fps(c:*GpuCanvas) -> int:
+  if c == 0:
+    ret 0
+  if c[0].last_fps > 0:
+    ret c[0].last_fps
+  ret c[0].fps_cap
+
+// ── Color utilities ────────────────────────────────────────────────────────
+
+fn gpr_rgb(r:int, g:int, b:int) -> int:
+  ret (r * 65536) + (g * 256) + b
+
+fn gpr_red(c:int) -> int:
+  ret (c / 65536) % 256
+
+fn gpr_green(c:int) -> int:
+  ret (c / 256) % 256
+
+fn gpr_blue(c:int) -> int:
+  ret c % 256
+
+fn gpr_lerp_color(a:int, b:int, t:int) -> int:
+  if t <= 0:
+    ret a
+  if t >= 1000:
+    ret b
+  ar:int = gpr_red(a)
+  ag:int = gpr_green(a)
+  ab:int = gpr_blue(a)
+  br:int = gpr_red(b)
+  bg:int = gpr_green(b)
+  bb:int = gpr_blue(b)
+  nr:int = ar + (br - ar) * t / 1000
+  ng:int = ag + (bg - ag) * t / 1000
+  nb:int = ab + (bb - ab) * t / 1000
+  ret gpr_rgb(nr, ng, nb)
+
+fn _hue_to_rgb(p:int, q:int, t:int) -> int:
+  if t < 0:
+    t = t + 1000
+  if t > 1000:
+    t = t - 1000
+  if t < 167:
+    ret p + (q - p) * t * 6 / 1000
+  if t < 500:
+    ret q
+  if t < 667:
+    ret p + (q - p) * (667 - t) * 6 / 1000
+  ret p
+
+fn gpr_hsl(h:int, s:int, l:int) -> int:
+  if s == 0:
+    lv:int = l * 255 / 100
+    ret gpr_rgb(lv, lv, lv)
+  l1000:int = l * 10
+  s1000:int = s * 10
+  q:int = 0
+  if l1000 < 500:
+    q = l1000 + l1000 * s1000 / 1000
+  else:
+    q = l1000 + s1000 - l1000 * s1000 / 1000
+  p:int = 2 * l1000 - q
+  h1000:int = h * 1000 / 360
+  rr:int = _hue_to_rgb(p, q, h1000 + 333)
+  gg:int = _hue_to_rgb(p, q, h1000)
+  bb:int = _hue_to_rgb(p, q, h1000 - 333)
+  r:int = rr * 255 / 1000
+  g:int = gg * 255 / 1000
+  b:int = bb * 255 / 1000
+  ret gpr_rgb(r, g, b)
+
+fn gpr_brighten(c:int, pct:int) -> int:
+  r:int = gpr_red(c)
+  g:int = gpr_green(c)
+  b:int = gpr_blue(c)
+  r = r + r * pct / 100
+  g = g + g * pct / 100
+  b = b + b * pct / 100
+  if r > 255:
+    r = 255
+  if g > 255:
+    g = 255
+  if b > 255:
+    b = 255
+  ret gpr_rgb(r, g, b)
+
+fn gpr_darken(c:int, pct:int) -> int:
+  r:int = gpr_red(c)
+  g:int = gpr_green(c)
+  b:int = gpr_blue(c)
+  r = r - r * pct / 100
+  g = g - g * pct / 100
+  b = b - b * pct / 100
+  if r < 0:
+    r = 0
+  if g < 0:
+    g = 0
+  if b < 0:
+    b = 0
+  ret gpr_rgb(r, g, b)
+
+// ── Software primitive helpers ─────────────────────────────────────────────
+
+fn _sw_gradient_v(x:int, y:int, w:int, h:int, c0:int, c1:int) -> int:
+  if h <= 0 || w <= 0:
+    ret 0
+  ret gui_win.fb_gradient_v(x, y, w, h, c0, c1)
+
+fn _sw_gradient_h(x:int, y:int, w:int, h:int, c0:int, c1:int) -> int:
+  if w <= 0 || h <= 0:
+    ret 0
+  ret gui_win.fb_gradient_h(x, y, w, h, c0, c1)
+
+fn _sw_circle(cx:int, cy:int, radius:int, color:int) -> int:
+  y:int = 0 - radius
+  while y <= radius:
+    x:int = 0 - radius
+    while x <= radius:
+      d:int = x*x + y*y
+      if d <= radius*radius:
+        gui_win.fb_put_pixel(cx + x, cy + y, color)
+      x = x + 1
+    y = y + 1
+  ret 0
+
+fn _sw_line(x0:int, y0:int, x1:int, y1:int, color:int) -> int:
+  dx:int = x1 - x0
+  dy:int = y1 - y0
+  if dx < 0:
+    dx = 0 - dx
+  if dy < 0:
+    dy = 0 - dy
+  steps:int = dx
+  if dy > steps:
+    steps = dy
+  if steps == 0:
+    gui_win.fb_put_pixel(x0, y0, color)
+    ret 0
+  i:int = 0
+  while i <= steps:
+    px:int = x0 + (x1 - x0) * i / steps
+    py:int = y0 + (y1 - y0) * i / steps
+    gui_win.fb_put_pixel(px, py, color)
+    i = i + 1
+  ret 0
+
+// ── Public draw calls ──────────────────────────────────────────────────────
+
+fn gpr_clear(c:*GpuCanvas, color:int) -> int:
+  ret gui_win.fb_fill(color)
+
+fn gpr_rect(c:*GpuCanvas, x:int, y:int, w:int, h:int, color:int) -> int:
+  ret gui_win.fb_fill_rect(x, y, w, h, color)
+
+fn gpr_rect_r(c:*GpuCanvas, x:int, y:int, w:int, h:int, color:int, r:int) -> int:
+  ret gui_win.fb_fill_rounded(x, y, w, h, color, r)
+
+fn gpr_gradient_v(c:*GpuCanvas, x:int, y:int, w:int, h:int, top:int, bot:int) -> int:
+  ret _sw_gradient_v(x, y, w, h, top, bot)
+
+fn gpr_gradient_h(c:*GpuCanvas, x:int, y:int, w:int, h:int, left:int, right:int) -> int:
+  ret _sw_gradient_h(x, y, w, h, left, right)
+
+// Multi-tier soft drop shadow for realistic elevation
+fn gpr_shadow(c:*GpuCanvas, x:int, y:int, w:int, h:int, spread:int, alpha:int) -> int:
+  if spread <= 0:
+    ret 0
+  // Multi-tier soft ambient occlusion: broad faint bloom -> contact shadow
+  gui_win.fb_fill_rounded(x - 2, y + 2, w + 4, h + spread + 2, 0x03060C, 10)
+  gui_win.fb_fill_rounded(x - 1, y + 3, w + 2, h + spread,     0x050912, 8)
+  gui_win.fb_fill_rounded(x,     y + 4, w,     h + spread - 2, 0x070D18, 6)
+  ret 0
+
+// Crisp 1px outline
+fn gpr_outline(c:*GpuCanvas, x:int, y:int, w:int, h:int, color:int) -> int:
+  gui_win.fb_fill_rect(x, y, w, 1, color)
+  gui_win.fb_fill_rect(x, y+h-1, w, 1, color)
+  gui_win.fb_fill_rect(x, y, 1, h, color)
+  gui_win.fb_fill_rect(x+w-1, y, 1, h, color)
+  ret 0
+
+// Top-edge light reflection / tactile sheen
+fn gpr_sheen(c:*GpuCanvas, x:int, y:int, w:int, color:int) -> int:
+  gui_win.fb_fill_rect(x, y, w, 1, color)
+  ret 0
+
+// Pill-shaped rounded rectangle (radius = h / 2)
+fn gpr_pill(c:*GpuCanvas, x:int, y:int, w:int, h:int, color:int) -> int:
+  ret gui_win.fb_fill_rounded(x, y, w, h, color, h / 2)
+
+// High-fidelity card primitive: shadow + rounded surface + top highlight sheen + 1px border
+fn gpr_card(c:*GpuCanvas, x:int, y:int, w:int, h:int, bg:int, border:int, r:int) -> int:
+  gpr_shadow(c, x, y, w, h, 4, 120)
+  gui_win.fb_fill_rounded(x, y, w, h, bg, r)
+  sheen:int = gpr_brighten(bg, 35)
+  if r < w / 2:
+    gui_win.fb_fill_rect(x + r, y, w - 2*r, 1, sheen)
+  gpr_outline(c, x, y, w, h, border)
+  ret 0
+
+// Alpha blend (accelerated 32-bit ARGB alpha compositing)
+fn gpr_blend(c:*GpuCanvas, x:int, y:int, w:int, h:int, color:int, alpha:int) -> int:
+  if alpha <= 0:
+    ret 0
+  if alpha >= 255:
+    ret gui_win.fb_fill_rect(x, y, w, h, color)
+  ret gui_win.fb_composite_rect(x, y, w, h, color, alpha)
+
+// Blur (no-op on CPU path — glass effect achieved via dark tinted overlay)
+fn gpr_blur(c:*GpuCanvas, x:int, y:int, w:int, h:int, radius:int) -> int:
+  ret 0
+
+fn gpr_circle(c:*GpuCanvas, cx:int, cy:int, radius:int, color:int) -> int:
+  ret _sw_circle(cx, cy, radius, color)
+
+fn gpr_line(c:*GpuCanvas, x0:int, y0:int, x1:int, y1:int, color:int, thick:int) -> int:
+  ret _sw_line(x0, y0, x1, y1, color)
+
+fn gpr_text(c:*GpuCanvas, x:int, y:int, s:str, color:int) -> int:
+  ret gui_win.fb_text(x, y, s, color)
+
+fn gpr_text_ex(c:*GpuCanvas, x:int, y:int, s:str, color:int, scale:int, bold:int) -> int:
+  ret gui_win.fb_text_ex(x, y, s, color, scale, bold)
+
+fn gpr_pixel(c:*GpuCanvas, x:int, y:int, color:int) -> int:
+  ret gui_win.fb_put_pixel(x, y, color)
+
+// ── Animated gradient background ───────────────────────────────────────────
+// Smooth oscillation within deep obsidian slate spectrum (hue 218°..248°)
+fn gpr_animated_bg(c:*GpuCanvas, tick:int, hue_speed:int, sat:int, lit_top:int, lit_bot:int) -> int:
+  if c == 0:
+    ret (0 - 1)
+  osc:int = (tick * hue_speed / 20) % 1000
+  base_hue:int = 218 + (osc * 30 / 1000)
+  hue2:int = (base_hue + 16) % 360
+  c0:int = gpr_hsl(base_hue, sat, lit_top)
+  c1:int = gpr_hsl(hue2, sat, lit_bot)
+  gw:int = 0
+  gh:int = 0
+  unsafe:
+    gw = c[0].W
+    gh = c[0].H
+  ret _sw_gradient_v(0, 0, gw, gh, c0, c1)
+
+

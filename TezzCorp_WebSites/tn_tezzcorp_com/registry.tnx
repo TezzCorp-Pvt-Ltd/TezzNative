@@ -1,14 +1,15 @@
-# registry-meta v1 lines=49 payload=7AD95CD2 key=none sig=none
+# registry-meta v1 lines=62 payload=6C93534B key=none sig=none
 actor@0.1.0 https://tezznative.org/download/sdk/lib/actor.tn 38BA8BDB
 arena@0.1.0 https://tezznative.org/download/sdk/lib/arena.tn 7B42E28B
 color@0.1.0 https://tezznative.org/download/sdk/lib/color.tn 10472682
 cyber@0.1.0 https://tezznative.org/download/sdk/lib/cyber.tn 0E0374EE
 data@0.1.0 https://tezznative.org/download/sdk/lib/data.tn 02470332
-event@0.1.0 https://tezznative.org/download/sdk/lib/event.tn 4AC5D736
-frame@0.1.0 https://tezznative.org/download/sdk/lib/frame.tn 210DC052
+event@0.1.0 https://tezznative.org/download/sdk/lib/event.tn 239554BF
+frame@0.1.0 https://tezznative.org/download/sdk/lib/frame.tn 6233D545
 gpu@0.1.0 https://tezznative.org/download/sdk/lib/gpu.tn 18C45656
-gui@0.1.0 https://tezznative.org/download/sdk/lib/gui.tn 1B599DDA
-gui_win@0.1.0 https://tezznative.org/download/sdk/lib/gui_win.tn 3FCB4390
+gpu_render@1.0.0 https://tezznative.org/download/sdk/lib/gpu_render.tn 575D77A3
+gui@0.1.0 https://tezznative.org/download/sdk/lib/gui.tn 55E41279
+gui_win@0.1.0 https://tezznative.org/download/sdk/lib/gui_win.tn 79E9178A
 intrin@0.1.0 https://tezznative.org/download/sdk/lib/intrin.tn 4D2A6999
 io@0.1.0 https://tezznative.org/download/sdk/lib/io.tn 0669EF63
 llm@0.1.0 https://tezznative.org/download/sdk/lib/llm.tn 207FE104
@@ -18,7 +19,8 @@ mind@0.1.0 https://tezznative.org/download/sdk/lib/mind.tn 656858A8
 net@0.1.0 https://tezznative.org/download/sdk/lib/net.tn 29B2711F
 nn@0.1.0 https://tezznative.org/download/sdk/lib/nn.tn 776C769A
 npu@0.1.0 https://tezznative.org/download/sdk/lib/npu.tn 3F2A0B96
-os@0.1.0 https://tezznative.org/download/sdk/lib/os.tn 27174D8C
+os@0.1.0 https://tezznative.org/download/sdk/lib/os.tn 4D1DD7ED
+particle@1.0.0 https://tezznative.org/download/sdk/lib/particle.tn 44062EC5
 simd@0.1.0 https://tezznative.org/download/sdk/lib/simd.tn 2382C055
 std@0.1.0 https://tezznative.org/download/sdk/lib/std.tn 2A0177A2
 str@0.1.0 https://tezznative.org/download/sdk/lib/str.tn 0AC6DA99
@@ -42,9 +44,20 @@ tokenizer@0.1.0 https://tezznative.org/download/sdk/lib/tokenizer.tn 3AEF4023
 trainer@0.1.0 https://tezznative.org/download/sdk/lib/trainer.tn 4B4832ED
 tsm@0.1.0 https://tezznative.org/download/sdk/lib/tsm.tn 2A702A27
 tts@0.1.0 https://tezznative.org/download/sdk/lib/tts.tn 4D87F3D4
-tzgui@0.1.0 https://tezznative.org/download/sdk/lib/tzgui.tn 6B953795
+tween@1.0.0 https://tezznative.org/download/sdk/lib/tween.tn 7B1E106E
+tzcalc@0.1.0 https://tezznative.org/download/sdk/lib/tzcalc.tn 5539F7F5
+tzcss@1.0.0 https://tezznative.org/download/sdk/lib/tzcss.tn 029A93AE
+tzfont@1.0.0 https://tezznative.org/download/sdk/lib/tzfont.tn 4F4BC617
+tzgpu_ui@1.0.0 https://tezznative.org/download/sdk/lib/tzgpu_ui.tn 1DBC62B7
+tzgpu_wm@1.0.0 https://tezznative.org/download/sdk/lib/tzgpu_wm.tn 1FB25B17
+tzgui@0.1.0 https://tezznative.org/download/sdk/lib/tzgui.tn 76F62CF6
 tzgui_native@0.1.0 https://tezznative.org/download/sdk/lib/tzgui_native.tn 7E928B6B
+tzicon@1.0.0 https://tezznative.org/download/sdk/lib/tzicon.tn 0C68E31A
 tzimage@0.1.0 https://tezznative.org/download/sdk/lib/tzimage.tn 69F1FB82
+tzrouter@1.0.0 https://tezznative.org/download/sdk/lib/tzrouter.tn 25B428C5
+tzsvg@1.0.0 https://tezznative.org/download/sdk/lib/tzsvg.tn 577D6DA4
 tzui@0.1.0 https://tezznative.org/download/sdk/lib/tzui.tn 4C29E001
+tzvideo@1.0.0 https://tezznative.org/download/sdk/lib/tzvideo.tn 02156F17
+tzwindow@1.0.0 https://tezznative.org/download/sdk/lib/tzwindow.tn 0150E3CC
 vec@0.1.0 https://tezznative.org/download/sdk/lib/vec.tn 1822B372
 wm@0.1.0 https://tezznative.org/download/sdk/lib/wm.tn 7D4C37F1

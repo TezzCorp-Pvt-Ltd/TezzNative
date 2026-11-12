@@ -37,6 +37,8 @@ benchmarks/results/**
 !tests/
 !tests/conformance/
 !tests/conformance/**
+!tests/gui/
+!tests/gui/**
 !tezznative-vscode/
 !tezznative-vscode/**
 !tools/
@@ -55,6 +57,8 @@ benchmarks/results/**
 !install.ps1
 !install.sh
 !install.cmd
+!install-gui.ps1
+!install-gui.sh
 !tezz
 !tezz.cmd
 !tezz.ps1

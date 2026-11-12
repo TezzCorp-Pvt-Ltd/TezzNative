@@ -847,7 +847,7 @@ public class RecordAttendanceExample {
                         </div>
                         
                         <div class="changelog-item">
-                            <div class="version">v1.1.0</div>
+                            <div class="version">v1.0.0</div>
                             <div class="date">2023-02-01</div>
                             <div class="changes">
                                 <h3>Added</h3>

@@ -1,5 +1,5 @@
 name = tezznative
-version = 1.1.0
+version = 1.0.0
 module_root = lib
 registry = https://tezznative.org/registry.tnx
 registry_lib = https://tezznative.org/download/sdk/lib/

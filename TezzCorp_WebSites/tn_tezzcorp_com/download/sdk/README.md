@@ -11,7 +11,7 @@ This repository is the public TezzNative distribution surface. It contains:
 - The official VS Code language extension in `tezznative-vscode/`
 - Public project documentation
 
-Current language metadata: **TezzNative 1.1.0**, release channel, API `v1`.
+Current language metadata: **TezzNative 1.0.0**, release channel, API `v1`.
 
 ## Project Goal
 

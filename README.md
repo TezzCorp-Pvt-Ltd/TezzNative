@@ -1,4 +1,11 @@
+<p align="center">
+  <img src="tezz-corp-logo.png" alt="TezzNative Logo" width="160" />
+</p>
+
 # TezzNative
+
+> **Official Website & Portal:** [https://tezznative.org](https://tezznative.org)  
+> **Documentation:** [https://tezznative.org/docs/](https://tezznative.org/docs/)
 
 TezzNative is a Python-readable, C-adjacent native programming language. It is
 designed for developers who want simple syntax, static typing, native binaries,
@@ -11,7 +18,7 @@ This repository is the public TezzNative distribution surface. It contains:
 - The official VS Code language extension in `tezznative-vscode/`
 - Public project documentation
 
-Current language metadata: **TezzNative 1.1.0**, release channel, API `v1`.
+Current language metadata: **TezzNative 1.0.0**, release channel, API `v1`.
 
 ## Project Goal
 

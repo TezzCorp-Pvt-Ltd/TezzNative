@@ -2,7 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/_common.php';
 tn_doc_boot('/docs/language', 'language');
-tn_head('TezzNative Language Reference & Syntax Tour', 'Complete official syntax, type system, tensors, actor concurrency, memory safety, GUI, audio, and language specification for TezzNative v1.1.0.', 'docs', '/docs/language');
+tn_head('TezzNative Language Reference & Syntax Tour', 'Complete official syntax, type system, tensors, actor concurrency, memory safety, GUI, audio, and language specification for TezzNative v1.0.0.', 'docs', '/docs/language');
 tn_page_shell_start('Language Reference Manual', 'Complete Syntax & Architecture Specification', 'TezzNative combines the clean clarity of Python with bare-metal native performance, built-in SIMD, native tensors, Erlang-style actor supervision, and zero garbage collection pauses.');
 ?>
 

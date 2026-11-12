@@ -112,7 +112,7 @@ jobs:
               -UseBasicParsing `
               -Headers @{ "User-Agent" = "TezzNative-GitHub-Actions" } `
               -TimeoutSec 45 `
-              -Uri "https://tn.tezzcorp.com/download/release_manifest.json?v=$cacheKey"
+              -Uri "https://tezznative.org/download/release_manifest.json?v=$cacheKey"
           } catch {
             Write-Warning "Release manifest download failed: $($_.Exception.Message)"
           }
@@ -141,8 +141,8 @@ jobs:
           }
 
           $compilerCandidates = @(
-            @{ Url = "https://tn.tezzcorp.com/download/sdk/bin/tezzc-windows-x64.exe?v=$cacheKey"; Path = "download/sdk/bin/tezzc-windows-x64.exe" },
-            @{ Url = "https://tn.tezzcorp.com/download/sdk/bin/tezzc.exe?v=$cacheKey"; Path = "download/sdk/bin/tezzc.exe" }
+            @{ Url = "https://tezznative.org/download/sdk/bin/tezzc-windows-x64.exe?v=$cacheKey"; Path = "download/sdk/bin/tezzc-windows-x64.exe" },
+            @{ Url = "https://tezznative.org/download/sdk/bin/tezzc.exe?v=$cacheKey"; Path = "download/sdk/bin/tezzc.exe" }
           )
           foreach ($candidate in $compilerCandidates) {
             if (Save-Url -Url $candidate.Url -OutFile "tezzc.exe" -TimeoutSec 75) {
@@ -157,8 +157,8 @@ jobs:
           }
 
           $sdkUrls = @(
-            "https://tn.tezzcorp.com/download/tezznative-sdk.zip?v=$cacheKey",
-            "https://tn.tezzcorp.com/api/download_request.php?artifact=windows-sdk&source=github-actions&v=$cacheKey"
+            "https://tezznative.org/download/tezznative-sdk.zip?v=$cacheKey",
+            "https://tezznative.org/api/download_request.php?artifact=windows-sdk&source=github-actions&v=$cacheKey"
           )
           $downloaded = $false
           foreach ($sdkUrl in $sdkUrls) {
@@ -179,7 +179,7 @@ jobs:
                 -UseBasicParsing `
                 -Headers @{ "User-Agent" = "TezzNative-GitHub-Actions" } `
                 -TimeoutSec 45 `
-                -Uri "https://tn.tezzcorp.com/download/tezznative-sdk.zip.sha256?v=$cacheKey"
+                -Uri "https://tezznative.org/download/tezznative-sdk.zip.sha256?v=$cacheKey"
               $expectedZip = (($shaText.Content.Trim() -split "\s+")[0]).ToUpperInvariant()
             } catch {
               Write-Warning "SDK checksum sidecar download failed: $($_.Exception.Message)"
@@ -356,7 +356,7 @@ jobs:
           fi
 
           compiler_gz_urls=(
-            "https://tn.tezzcorp.com/download/tezzc-linux-x64.gz?v=${cache_key}"
+            "https://tezznative.org/download/tezzc-linux-x64.gz?v=${cache_key}"
           )
           compiler=""
           for compiler_gz_url in "${compiler_gz_urls[@]}"; do
@@ -384,7 +384,7 @@ jobs:
           fi
 
           compiler_urls=(
-            "https://tn.tezzcorp.com/download/sdk/bin/tezzc-linux-x64?v=${cache_key}"
+            "https://tezznative.org/download/sdk/bin/tezzc-linux-x64?v=${cache_key}"
           )
           for compiler_url in "${compiler_urls[@]}"; do
             if fetch_artifact "$compiler_url" tezzc-linux-x64 "Linux compiler" 60; then
@@ -409,8 +409,8 @@ jobs:
           fi
 
           sdk_urls=(
-            "https://tn.tezzcorp.com/download/tezznative-sdk-linux.tar.gz?v=${cache_key}"
-            "https://tn.tezzcorp.com/api/download_request.php?artifact=linux-sdk&source=github-actions&v=${cache_key}"
+            "https://tezznative.org/download/tezznative-sdk-linux.tar.gz?v=${cache_key}"
+            "https://tezznative.org/api/download_request.php?artifact=linux-sdk&source=github-actions&v=${cache_key}"
           )
           downloaded=0
           for sdk_url in "${sdk_urls[@]}"; do

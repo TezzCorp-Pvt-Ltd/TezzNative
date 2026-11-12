@@ -1,0 +1,252 @@
+// particle.tn — TezzNative GPU Particle Emitter v1.1
+//
+// Lightweight 2D particle system for hover/click effects, ambient animations,
+// sparkles, fire, snow, etc.
+//
+// Particles are purely software-simulated (positions/velocities on CPU),
+// rendered via gpu_render draw calls.
+
+import "gpu_render"
+import "tween"
+
+// ── Constants ──────────────────────────────────────────────────────────────
+
+let PARTICLE_MAX:int = 64      // max particles per pool
+
+// Particle types
+let PART_SPARK:int   = 0   // tiny bright dot that fades
+let PART_CIRCLE:int  = 1   // filled circle
+let PART_SQUARE:int  = 2   // filled square pixel
+let PART_STAR:int    = 3   // 4-pixel cross
+
+// Blend styles
+let PART_BLEND_FADE:int  = 0  // alpha fades with life
+let PART_BLEND_SOLID:int = 1  // constant color
+
+// ── Global Particle Pool ───────────────────────────────────────────────────
+
+let g_part_x:[int;64]
+let g_part_y:[int;64]
+let g_part_vx:[int;64]
+let g_part_vy:[int;64]
+let g_part_life:[int;64]
+let g_part_max_life:[int;64]
+let g_part_color:[int;64]
+let g_part_size:[int;64]
+let g_part_kind:[int;64]
+
+// ── Emitter ────────────────────────────────────────────────────────────────
+
+struct TzEmitter:
+  count:int        // number of allocated slots (active or dead)
+  active:int       // number of live particles
+  // Emitter configuration
+  emit_x:int       // center emit position
+  emit_y:int
+  emit_spread_x:int   // random spread in pixels
+  emit_spread_y:int
+  emit_vx:int         // base velocity
+  emit_vy:int
+  emit_vspread:int    // velocity spread
+  emit_life:int       // particle lifetime in ticks
+  emit_color:int      // base color
+  emit_color2:int     // end color (for gradient particles, 0 = no gradient)
+  emit_size:int       // particle size
+  emit_kind:int       // PART_*
+  emit_gravity:int    // gravity per tick (fixed-point *16)
+  // RNG state
+  _rng:int
+
+// ── Internal RNG (simple LCG) ──────────────────────────────────────────────
+
+fn _part_rng(e:*TzEmitter) -> int:
+  e[0]._rng = e[0]._rng * 1664525 + 1013904223
+  val:int = (e[0]._rng / 256) % 32768
+  if val < 0:
+    ret 0 - val
+  ret val
+
+// Random in range [lo, hi]
+fn _part_rand(e:*TzEmitter, lo:int, hi:int) -> int:
+  if hi <= lo:
+    ret lo
+  rng:int = _part_rng(e)
+  ret lo + rng % (hi - lo + 1)
+
+// ── Emitter API ────────────────────────────────────────────────────────────
+
+fn emitter_init(e:*TzEmitter, seed:int) -> int:
+  if e == 0:
+    ret (0 - 1)
+  e[0]._rng        = seed
+  e[0].count       = 0
+  e[0].active      = 0
+  e[0].emit_x      = 400
+  e[0].emit_y      = 300
+  e[0].emit_spread_x = 4
+  e[0].emit_spread_y = 4
+  e[0].emit_vx     = 0
+  e[0].emit_vy     = 0 - 48  // upward by default
+  e[0].emit_vspread = 32
+  e[0].emit_life   = 60
+  e[0].emit_color  = 0xFF8833
+  e[0].emit_color2 = 0
+  e[0].emit_size   = 2
+  e[0].emit_kind   = PART_SPARK
+  e[0].emit_gravity = 4     // slight downward gravity
+  i:int = 0
+  while i < PARTICLE_MAX:
+    g_part_life[i] = 0
+    i = i + 1
+  ret 0
+
+// Configure emitter position and shape
+fn emitter_set_pos(e:*TzEmitter, x:int, y:int, spread_x:int, spread_y:int) -> int:
+  if e == 0:
+    ret (0 - 1)
+  e[0].emit_x       = x
+  e[0].emit_y       = y
+  e[0].emit_spread_x = spread_x
+  e[0].emit_spread_y = spread_y
+  ret 0
+
+// Configure emitter velocity and gravity
+fn emitter_set_velocity(e:*TzEmitter, vx:int, vy:int, vspread:int, gravity:int) -> int:
+  if e == 0:
+    ret (0 - 1)
+  e[0].emit_vx      = vx
+  e[0].emit_vy      = vy
+  e[0].emit_vspread = vspread
+  e[0].emit_gravity = gravity
+  ret 0
+
+// Configure emitter visuals
+fn emitter_set_visuals(e:*TzEmitter, color:int, color2:int, size:int, kind:int, life:int) -> int:
+  if e == 0:
+    ret (0 - 1)
+  e[0].emit_color  = color
+  e[0].emit_color2 = color2
+  e[0].emit_size   = size
+  e[0].emit_kind   = kind
+  e[0].emit_life   = life
+  ret 0
+
+// ── Presets ────────────────────────────────────────────────────────────────
+
+// Burst on button click (sparks flying out from center)
+fn emitter_preset_click(e:*TzEmitter, x:int, y:int, color:int) -> int:
+  emitter_set_pos(e, x, y, 8, 8)
+  emitter_set_velocity(e, 0, 0, 64, 2)
+  emitter_set_visuals(e, color, 0x222222, 3, PART_SPARK, 40)
+  ret 0
+
+// Ambient glow particles rising from a surface (fire/energy aura)
+fn emitter_preset_glow(e:*TzEmitter, x:int, y:int, w:int, color:int, color2:int) -> int:
+  emitter_set_pos(e, x + w/2, y, w/2, 2)
+  emitter_set_velocity(e, 0, 0 - 20, 12, 0)
+  emitter_set_visuals(e, color, color2, 2, PART_CIRCLE, 80)
+  ret 0
+
+// Snow effect (falling particles)
+fn emitter_preset_snow(e:*TzEmitter, W:int) -> int:
+  emitter_set_pos(e, W/2, 0, W/2, 0)
+  emitter_set_velocity(e, 0, 8, 4, 0)
+  emitter_set_visuals(e, 0xCCDDFF, 0x88AACC, 2, PART_CIRCLE, 120)
+  e[0].emit_gravity = 0
+  ret 0
+
+// Sparkle (twinkling points scattered on screen)
+fn emitter_preset_sparkle(e:*TzEmitter, W:int, H:int) -> int:
+  emitter_set_pos(e, W/2, H/2, W/2, H/2)
+  emitter_set_velocity(e, 0, 0, 0, 0)
+  emitter_set_visuals(e, 0xFFFFAA, 0xFF6600, 1, PART_STAR, 60)
+  e[0].emit_gravity = 0
+  ret 0
+
+// ── Emit n particles ──────────────────────────────────────────────────────
+
+fn emitter_emit(e:*TzEmitter, n:int) -> int:
+  if e == 0 || n <= 0:
+    ret 0
+  emitted:int = 0
+  i:int = 0
+  while i < PARTICLE_MAX && emitted < n:
+    if g_part_life[i] <= 0:
+      // spawn
+      ox:int = _part_rand(e, 0 - e[0].emit_spread_x, e[0].emit_spread_x)
+      oy:int = _part_rand(e, 0 - e[0].emit_spread_y, e[0].emit_spread_y)
+      vx:int = e[0].emit_vx + _part_rand(e, 0 - e[0].emit_vspread, e[0].emit_vspread)
+      vy:int = e[0].emit_vy + _part_rand(e, 0 - e[0].emit_vspread, e[0].emit_vspread)
+      g_part_x[i]        = (e[0].emit_x + ox) * 16
+      g_part_y[i]        = (e[0].emit_y + oy) * 16
+      g_part_vx[i]       = vx
+      g_part_vy[i]       = vy
+      g_part_life[i]     = e[0].emit_life
+      g_part_max_life[i] = e[0].emit_life
+      g_part_color[i]    = e[0].emit_color
+      g_part_size[i]     = e[0].emit_size
+      g_part_kind[i]     = e[0].emit_kind
+      if e[0].count <= i:
+        e[0].count = i + 1
+      emitted = emitted + 1
+    i = i + 1
+  e[0].active = e[0].active + emitted
+  ret emitted
+
+// ── Simulate one tick ──────────────────────────────────────────────────────
+
+fn emitter_tick(e:*TzEmitter) -> int:
+  if e == 0:
+    ret 0
+  live:int = 0
+  i:int = 0
+  while i < e[0].count:
+    if g_part_life[i] > 0:
+      // Euler integration
+      g_part_vy[i] = g_part_vy[i] + e[0].emit_gravity
+      g_part_x[i]  = g_part_x[i] + g_part_vx[i]
+      g_part_y[i]  = g_part_y[i] + g_part_vy[i]
+      g_part_life[i] = g_part_life[i] - 1
+      live = live + 1
+    i = i + 1
+  e[0].active = live
+  ret live
+
+// ── Render all live particles ─────────────────────────────────────────────
+
+fn emitter_draw(e:*TzEmitter, c:*GpuCanvas) -> int:
+  if e == 0 || c == 0:
+    ret (0 - 1)
+  i:int = 0
+  while i < e[0].count:
+    if g_part_life[i] > 0:
+      px:int = g_part_x[i] / 16
+      py:int = g_part_y[i] / 16
+      // fade color toward black as life runs out
+      life_t:int = g_part_life[i] * 1000 / g_part_max_life[i]
+      col:int = tween.tween_color(0x111111, g_part_color[i], life_t)
+      sz:int = g_part_size[i]
+      if sz < 1:
+        sz = 1
+      kind:int = g_part_kind[i]
+      if kind == PART_CIRCLE:
+        gpu_render.gpr_circle(c, px, py, sz, col)
+      else:
+        if kind == PART_SQUARE:
+          gpu_render.gpr_rect(c, px - sz, py - sz, sz*2, sz*2, col)
+        else:
+          if kind == PART_STAR:
+            gpu_render.gpr_rect(c, px - sz, py, sz*2+1, 1, col)
+            gpu_render.gpr_rect(c, px, py - sz, 1, sz*2+1, col)
+          else:
+            // PART_SPARK: single bright pixel or tiny rect
+            gpu_render.gpr_pixel(c, px, py, col)
+    i = i + 1
+  ret e[0].active
+
+// ── Active count ──────────────────────────────────────────────────────────
+
+fn emitter_active(e:*TzEmitter) -> int:
+  if e == 0:
+    ret 0
+  ret e[0].active

@@ -1,0 +1,341 @@
+// gpu_hello_ui.tn — TezzNative GPU Studio Pro Showcase Demo
+//
+// Demonstrates production-ready, mature GUI graphics built on
+// tzgpu_ui + tzgpu_wm + gpu_render + particle + tween.
+//
+// Visual highlights:
+//  - Modern Zinc/Obsidian design system with calm ambient slate gradient
+//  - Global top header bar with workspace breadcrumb, search bar, and system badges
+//  - Structured left navigation rail with category headers and target hardware card
+//  - High-contrast KPI stat cards (FPS, latency, VRAM, GPU compute)
+//  - Segmented control tab bar with elevated active indicator
+//  - Glassmorphism pipeline control panel with live tweened progress bars and scanning sheen
+//  - Interactive toggle switches, quality slider, and tactile 3D action buttons
+//  - Live diagnostic console log with engine feature badges
+//  - Multi-window compositor with deep elevation drop shadows, macOS-style controls,
+//    and rich interactive shader/hardware diagnostics inside floating inspector windows
+
+import "tzgpu_ui"
+import "tzgpu_wm"
+import "gpu_render"
+import "particle"
+import "tween"
+import "tzsvg"
+
+// ── App state ─────────────────────────────────────────────────────────────
+
+struct AppState:
+  ctx:TzGpuCtx
+  brand_svg:*TzSvgAsset
+
+  // Ambient atmosphere
+  ambient:TzGpuAmbient
+
+  // Navigation & widget states
+  active_tab:int
+  slider_val:int
+  check1:int
+  check2:int
+  check3:int
+
+  // Progress bars
+  prog1:TzGpuProgress
+  prog2:TzGpuProgress
+  prog_target:int
+
+  // Action buttons
+  btn_main:TzGpuBtn
+  btn_danger:TzGpuBtn
+  btn_ok:TzGpuBtn
+
+  // Toast notification
+  toast:TzGpuToast
+
+  // Window manager
+  wm:TzGpuWM
+  win1:int    // Shader Pipeline Inspector
+  win2:int    // Hardware Telemetry
+
+  // Performance timer
+  fps_tick:int
+
+fn main() -> int:
+  app:AppState
+  fps:int = 0
+  cx1:int = 0
+  cy1:int = 0
+  cw1:int = 0
+  cx2:int = 0
+  cy2:int = 0
+  cw2:int = 0
+  unsafe:
+    // ── Init context (1280x720 @ 60fps target) ────────────────────────────
+    tzgpu_ui.gu_create(&app.ctx, "TezzNative GPU Studio Pro", 1280, 720, 60)
+    app.ctx.theme_accent = 0x6366F1   // Refined Electric Indigo
+    // Load once; svg_draw reuses the compiled vector paths every frame.
+    app.brand_svg = tzsvg.svg_load_file("examples/dx/assets/tezz-mark.svg")
+
+    // Ambient particle background (calm subtle motes)
+    tzgpu_ui.gu_ambient_init(&app.ambient, app.ctx.W, app.ctx.H, 1)
+
+    // Default states
+    app.active_tab  = 0
+    app.slider_val  = 80
+    app.check1      = 1
+    app.check2      = 1
+    app.check3      = 1
+    app.prog_target = 74
+
+    // Animated progress bars
+    tzgpu_ui.gu_progress_init(&app.prog1)
+    tzgpu_ui.gu_progress_set(&app.prog1, app.prog_target)
+    tzgpu_ui.gu_progress_init(&app.prog2)
+    tzgpu_ui.gu_progress_set(&app.prog2, 38)
+
+    // Button state structs
+    tzgpu_ui.gu_btn_init(&app.btn_main)
+    tzgpu_ui.gu_btn_init(&app.btn_danger)
+    tzgpu_ui.gu_btn_init(&app.btn_ok)
+
+    // Window manager: open two floating inspector windows on the right side
+    tzgpu_wm.wm_init(&app.wm)
+    app.win1 = tzgpu_wm.wm_open(&app.wm, "Shader Pipeline Inspector", 760, 56, 504, 320, 0x6366F1)
+    app.win2 = tzgpu_wm.wm_open(&app.wm, "Hardware Telemetry",        760, 392, 504, 308, 0x06B6D4)
+
+    app.fps_tick = 0
+
+    // ── Main loop ──────────────────────────────────────────────────────────
+    while tzgpu_ui.gu_alive(&app.ctx):
+      tzgpu_ui.gu_begin(&app.ctx)
+
+      // ── Background ────────────────────────────────────────────────────
+      // Calm, living obsidian slate oscillation (no jarring rainbow flashing)
+      tzgpu_ui.gu_anim_bg(&app.ctx, 12, 45, 12, 6)
+
+      // Ambient particle sparkles
+      tzgpu_ui.gu_ambient_tick(&app.ambient, &app.ctx.canvas)
+
+      // ── Top Header Bar (y=0..44) ──────────────────────────────────────
+      gpu_render.gpr_rect_r(&app.ctx.canvas, 0, 0, app.ctx.W, 44, 0x0C1322, 0)
+      gpu_render.gpr_rect_r(&app.ctx.canvas, 0, 44, app.ctx.W, 1, 0x223048, 0)
+      gpu_render.gpr_sheen(&app.ctx.canvas, 0, 0, app.ctx.W, 0x2B3D5C)
+
+      // Brand Logo Icon
+      if app.brand_svg != 0:
+        tzsvg.svg_draw(app.brand_svg, &app.ctx.canvas, 16, 12, 20, 20, 0xFFFFFF)
+      else:
+        gpu_render.gpr_rect_r(&app.ctx.canvas, 12, 8, 28, 28, 0x6366F1, 6)
+        gpu_render.gpr_sheen(&app.ctx.canvas, 14, 8, 24, 0x818CF8)
+        gpu_render.gpr_text_ex(&app.ctx.canvas, 18, 14, "TN", 0xFFFFFF, 1, 1)
+
+      // Studio Title & Subtitle
+      gpu_render.gpr_text_ex(&app.ctx.canvas, 48, 14, "TezzNative GPU Studio", 0xF8FAFC, 1, 1)
+      gpu_render.gpr_text(&app.ctx.canvas, 236, 17, "|  Pipeline: Deferred_Pass_01.hlsl", 0x64748B)
+
+      // Search / Command Palette Box
+      tzgpu_ui.gu_input(&app.ctx, 510, 8, 280, 28, "Ctrl+K Search pipelines...", 0x6366F1)
+
+      // Header System Badges
+      tzgpu_ui.gu_badge(&app.ctx, 804,  12, "D3D12 AGILITY", 0x4F46E5)
+      tzgpu_ui.gu_badge(&app.ctx, 940,  12, "144 FPS * 6.9ms", 0x10B981)
+      tzgpu_ui.gu_badge(&app.ctx, 1100, 12, "VRAM 8.2/24GB", 0x06B6D4)
+
+      // ── Left Navigation Sidebar (x=0..220, y=45..H) ───────────────────
+      gpu_render.gpr_rect_r(&app.ctx.canvas, 0, 45, 220, app.ctx.H-45, 0x0E1526, 0)
+      gpu_render.gpr_rect_r(&app.ctx.canvas, 220, 45, 1, app.ctx.H-45, 0x223048, 0)
+
+      // Section: WORKSPACES
+      gpu_render.gpr_text(&app.ctx.canvas, 16, 58, "WORKSPACES", 0x64748B)
+
+      // Nav items
+      if tzgpu_ui.gu_nav_item(&app.ctx, 0, 74,  220, "Dashboard",       app.active_tab == 0, 0x6366F1) != 0:
+        app.active_tab = 0
+      if tzgpu_ui.gu_nav_item(&app.ctx, 0, 114, 220, "Shader Studio",   app.active_tab == 1, 0x06B6D4) != 0:
+        app.active_tab = 1
+      if tzgpu_ui.gu_nav_item(&app.ctx, 0, 154, 220, "Pipeline Graph",  app.active_tab == 2, 0x8B5CF6) != 0:
+        app.active_tab = 2
+      if tzgpu_ui.gu_nav_item(&app.ctx, 0, 194, 220, "Compute Passes",  app.active_tab == 3, 0x10B981) != 0:
+        app.active_tab = 3
+      if tzgpu_ui.gu_nav_item(&app.ctx, 0, 234, 220, "Diagnostics",     app.active_tab == 4, 0xF59E0B) != 0:
+        app.active_tab = 4
+
+      // Divider
+      tzgpu_ui.gu_divider(&app.ctx, 12, 282, 196)
+
+      // Section: TARGET HARDWARE
+      gpu_render.gpr_text(&app.ctx.canvas, 16, 294, "TARGET HARDWARE", 0x64748B)
+      gpu_render.gpr_rect_r(&app.ctx.canvas, 12, 310, 196, 76, 0x111A2B, 6)
+      gpu_render.gpr_sheen(&app.ctx.canvas, 16, 310, 188, 0x2A3B58)
+      gpu_render.gpr_outline(&app.ctx.canvas, 12, 310, 196, 76, 0x223048)
+      gpu_render.gpr_circle(&app.ctx.canvas, 24, 326, 4, 0x10B981)
+      gpu_render.gpr_text_ex(&app.ctx.canvas, 34, 322, "RTX 4090 24GB", 0xF8FAFC, 1, 1)
+      gpu_render.gpr_text(&app.ctx.canvas, 24, 344, "Driver: 560.94 WHQL", 0x94A3B8)
+      gpu_render.gpr_text(&app.ctx.canvas, 24, 362, "DirectX 12.2 Ultimate", 0x06B6D4)
+
+      // Divider
+      tzgpu_ui.gu_divider(&app.ctx, 12, 398, 196)
+
+      // Section: SYSTEM HEALTH
+      gpu_render.gpr_text(&app.ctx.canvas, 16, 410, "SYSTEM HEALTH", 0x64748B)
+      gpu_render.gpr_rect_r(&app.ctx.canvas, 12, 426, 196, 116, 0x111A2B, 6)
+      gpu_render.gpr_sheen(&app.ctx.canvas, 16, 426, 188, 0x2A3B58)
+      gpu_render.gpr_outline(&app.ctx.canvas, 12, 426, 196, 116, 0x223048)
+      gpu_render.gpr_text(&app.ctx.canvas, 22, 438, "VRAM Usage: 34%", 0xF8FAFC)
+      gpu_render.gpr_rect_r(&app.ctx.canvas, 22, 454, 176, 6, 0x090E18, 3)
+      gpu_render.gpr_gradient_h(&app.ctx.canvas, 22, 454, 60, 6, 0x6366F1, 0x06B6D4)
+      gpu_render.gpr_text(&app.ctx.canvas, 22, 470, "Core Temp : 62 C", 0x10B981)
+      gpu_render.gpr_text(&app.ctx.canvas, 22, 490, "Fan Speed : 1450 RPM", 0x94A3B8)
+      gpu_render.gpr_text(&app.ctx.canvas, 22, 510, "Power Draw: 285 W", 0xF59E0B)
+
+      // Bottom Status Indicator
+      app.fps_tick = app.fps_tick + 1
+      fps = tzgpu_ui.gu_fps(&app.ctx)
+      gpu_render.gpr_circle(&app.ctx.canvas, 20, app.ctx.H - 18, 4, 0x10B981)
+      gpu_render.gpr_text(&app.ctx.canvas, 30, app.ctx.H - 22, "144 FPS Locked", 0xF8FAFC)
+
+      // ── Main Content Area (x=234..744, w=510) ─────────────────────────
+      // Row 1: KPI Stat Cards (4 cards, elegant cohesive colors)
+      tzgpu_ui.gu_stat(&app.ctx, 234, 56, 122, 74, "144 FPS", "FRAME RATE", 0x10B981)
+      tzgpu_ui.gu_stat(&app.ctx, 362, 56, 122, 74, "6.94 ms", "FRAME TIME", 0x06B6D4)
+      tzgpu_ui.gu_stat(&app.ctx, 490, 56, 122, 74, "8.24 GB", "VRAM USAGE", 0x6366F1)
+      tzgpu_ui.gu_stat(&app.ctx, 618, 56, 122, 74, "89.4 %",  "GPU LOAD",   0xF59E0B)
+
+      // Row 2: Segmented Tab Bar (width 506)
+      gpu_render.gpr_rect_r(&app.ctx.canvas, 234, 138, 506, 32, 0x0A0F1A, 6)
+      gpu_render.gpr_outline(&app.ctx.canvas, 234, 138, 506, 32, 0x223048)
+      if tzgpu_ui.gu_tab(&app.ctx, 234, 138, 126, "Pipeline Config", app.active_tab == 0, 0x6366F1) != 0:
+        app.active_tab = 0
+      if tzgpu_ui.gu_tab(&app.ctx, 360, 138, 126, "Ray Tracing",     app.active_tab == 1, 0x06B6D4) != 0:
+        app.active_tab = 1
+      if tzgpu_ui.gu_tab(&app.ctx, 486, 138, 126, "Post-FX",          app.active_tab == 2, 0x8B5CF6) != 0:
+        app.active_tab = 2
+      if tzgpu_ui.gu_tab(&app.ctx, 612, 138, 128, "Compute",          app.active_tab == 3, 0x10B981) != 0:
+        app.active_tab = 3
+
+      // Row 3: Main Glass Panel: Real-Time Pipeline Configuration (h=374)
+      tzgpu_ui.gu_glass_panel(&app.ctx, 234, 178, 506, 374, "Hardware Rendering Pipeline")
+
+      // Progress bar 1: Rasterizer Pass
+      gpu_render.gpr_text(&app.ctx.canvas, 250, 222, "Rasterizer & Geometry Pass  (74%)", 0x94A3B8)
+      tzgpu_ui.gu_progress(&app.ctx, &app.prog1, 250, 238, 474, 10, 0x6366F1)
+
+      // Progress bar 2: VRAM Bandwidth
+      gpu_render.gpr_text(&app.ctx.canvas, 250, 258, "VRAM Bandwidth Transfer  (38%)", 0x94A3B8)
+      tzgpu_ui.gu_progress(&app.ctx, &app.prog2, 250, 274, 474, 10, 0x06B6D4)
+
+      // Animated Loader: Shader Compilation Cache
+      gpu_render.gpr_text(&app.ctx.canvas, 250, 294, "Pipeline State Object (PSO) Compilation", 0x94A3B8)
+      tzgpu_ui.gu_loader_bar(&app.ctx, 250, 310, 474, 8, 0x8B5CF6)
+
+      // Resolution Scale Slider
+      gpu_render.gpr_text(&app.ctx.canvas, 250, 330, "Render Resolution Scale  (2560 x 1440 QHD Native)", 0x94A3B8)
+      app.slider_val = tzgpu_ui.gu_slider(&app.ctx, 250, 346, 474, 0, 100, app.slider_val, 0x6366F1)
+
+      // Modern Toggle Switches
+      app.check1 = tzgpu_ui.gu_toggle(&app.ctx, 250, 382, "Hardware Ray Tracing (DXR 1.1 BVH)", app.check1, 0x10B981)
+      app.check2 = tzgpu_ui.gu_toggle(&app.ctx, 250, 412, "Temporal Anti-Aliasing (DLSS 3.5)",   app.check2, 0x06B6D4)
+      app.check3 = tzgpu_ui.gu_toggle(&app.ctx, 250, 442, "Dynamic Global Illumination (RTXGI)", app.check3, 0x6366F1)
+
+      // Action Buttons Row (y=492)
+      if tzgpu_ui.gu_btn(&app.ctx, &app.btn_main,   250, 492, 150, 36, "Apply Pipeline", 0x6366F1) != 0:
+        tzgpu_ui.gu_progress_set(&app.prog1, 100)
+        tzgpu_ui.gu_toast_show(&app.toast, "Pipeline applied successfully!", 0x10B981, 180)
+
+      if tzgpu_ui.gu_btn(&app.ctx, &app.btn_ok,     410, 492, 150, 36, "Benchmark GPU",  0x14B8A6) != 0:
+        tzgpu_ui.gu_progress_set(&app.prog2, 86)
+        tzgpu_ui.gu_toast_show(&app.toast, "GPU Benchmark started", 0x06B6D4, 180)
+
+      if tzgpu_ui.gu_btn(&app.ctx, &app.btn_danger, 570, 492, 154, 36, "Reset Config",   0xF43F5E) != 0:
+        app.slider_val = 50
+        tzgpu_ui.gu_progress_set(&app.prog1, 20)
+        tzgpu_ui.gu_progress_set(&app.prog2, 20)
+        tzgpu_ui.gu_toast_show(&app.toast, "Configuration restored to default", 0xF59E0B, 180)
+
+      // Row 4: Diagnostic Console Card & Badges (y=560..706, h=146)
+      tzgpu_ui.gu_card(&app.ctx, 234, 560, 506, 146)
+      gpu_render.gpr_circle(&app.ctx.canvas, 248, 576, 4, 0x10B981)
+      gpu_render.gpr_text_ex(&app.ctx.canvas, 258, 571, "Diagnostic Console Log", 0xF8FAFC, 1, 1)
+
+      gpu_render.gpr_text(&app.ctx.canvas, 248, 594, "[12:16:01] Device: NVIDIA GeForce RTX 4090 (24GB VRAM)", 0x94A3B8)
+      gpu_render.gpr_text(&app.ctx.canvas, 248, 612, "[12:16:02] SwapChain: 3 backbuffers, FlipDiscard, Latency: Ultra", 0x94A3B8)
+      gpu_render.gpr_text(&app.ctx.canvas, 248, 630, "[12:16:03] D3D12 PSO Cache: 2,480 PSOs warm, 0 pipeline hitches", 0x10B981)
+
+      // Engine Feature Badges
+      tzgpu_ui.gu_badge(&app.ctx, 248, 664, "DirectX 12.2", 0x4F46E5)
+      tzgpu_ui.gu_badge(&app.ctx, 360, 664, "Vulkan 1.3",   0x7C3AED)
+      tzgpu_ui.gu_badge(&app.ctx, 456, 664, "Mesh Shaders", 0x14B8A6)
+      tzgpu_ui.gu_badge(&app.ctx, 568, 664, "DLSS 3.5",     0x10B981)
+      tzgpu_ui.gu_badge(&app.ctx, 650, 664, "144Hz HDR",    0x06B6D4)
+
+      // ── Window Manager (Composited Floating Windows on right side) ──
+      tzgpu_wm.wm_process(&app.wm, &app.ctx)
+      tzgpu_wm.wm_draw(&app.wm, &app.ctx)
+
+      // Draw rich content inside Window 1: Shader Pipeline Inspector
+      if tzgpu_wm.wm_window_count(&app.wm) > 0:
+        cx1 = tzgpu_wm.wm_client_x(&app.wm, app.win1)
+        cy1 = tzgpu_wm.wm_client_y(&app.wm, app.win1)
+        cw1 = tzgpu_wm.wm_client_w(&app.wm, app.win1)
+
+        // Stage tabs
+        gpu_render.gpr_rect_r(&app.ctx.canvas, cx1+8, cy1+6, 76, 20, 0x1C283F, 4)
+        gpu_render.gpr_text(&app.ctx.canvas, cx1+14, cy1+10, "VS Vertex", 0xF8FAFC)
+        gpu_render.gpr_rect_r(&app.ctx.canvas, cx1+88, cy1+6, 72, 20, 0x141E30, 4)
+        gpu_render.gpr_text(&app.ctx.canvas, cx1+94, cy1+10, "MS Mesh", 0x94A3B8)
+        gpu_render.gpr_rect_r(&app.ctx.canvas, cx1+164, cy1+6, 72, 20, 0x141E30, 4)
+        gpu_render.gpr_text(&app.ctx.canvas, cx1+170, cy1+10, "PS Pixel", 0x94A3B8)
+        gpu_render.gpr_rect_r(&app.ctx.canvas, cx1+240, cy1+6, 84, 20, 0x141E30, 4)
+        gpu_render.gpr_text(&app.ctx.canvas, cx1+246, cy1+10, "CS Compute", 0x94A3B8)
+
+        // Divider
+        gpu_render.gpr_rect_r(&app.ctx.canvas, cx1+8, cy1+32, cw1-16, 1, 0x223048, 0)
+
+        // Diagnostic metrics
+        gpu_render.gpr_text(&app.ctx.canvas, cx1+8, cy1+42,  "Pass Name      : GBuffer_Deferred_PBR", 0xF8FAFC)
+        gpu_render.gpr_text(&app.ctx.canvas, cx1+8, cy1+64,  "Draw Calls     : 1,482 calls / frame",  0x94A3B8)
+        gpu_render.gpr_text(&app.ctx.canvas, cx1+8, cy1+86,  "Primitives     : 3,842,109 triangles",  0x94A3B8)
+        gpu_render.gpr_text(&app.ctx.canvas, cx1+8, cy1+108, "Compute Threads: 65,536 threads",       0x94A3B8)
+        gpu_render.gpr_text(&app.ctx.canvas, cx1+8, cy1+130, "Active PSO     : PSO_MetalRough_Opaque",0x06B6D4)
+        gpu_render.gpr_text(&app.ctx.canvas, cx1+8, cy1+152, "Shader Model   : HLSL SM 6.7 Native",   0x10B981)
+
+        // ALU compute density bar
+        gpu_render.gpr_text(&app.ctx.canvas, cx1+8, cy1+178, "ALU Compute Density (78%)", 0x94A3B8)
+        gpu_render.gpr_rect_r(&app.ctx.canvas, cx1+8, cy1+194, cw1-16, 8, 0x090E18, 4)
+        gpu_render.gpr_gradient_h(&app.ctx.canvas, cx1+8, cy1+194, (cw1-16)*78/100, 8, 0x6366F1, 0x8B5CF6)
+
+        // Texture sampler load bar
+        gpu_render.gpr_text(&app.ctx.canvas, cx1+8, cy1+214, "Texture Sampler Load (44%)", 0x94A3B8)
+        gpu_render.gpr_rect_r(&app.ctx.canvas, cx1+8, cy1+230, cw1-16, 8, 0x090E18, 4)
+        gpu_render.gpr_gradient_h(&app.ctx.canvas, cx1+8, cy1+230, (cw1-16)*44/100, 8, 0x06B6D4, 0x38BDF8)
+
+      // Draw rich content inside Window 2: Hardware Telemetry
+      if tzgpu_wm.wm_window_count(&app.wm) > 1:
+        cx2 = tzgpu_wm.wm_client_x(&app.wm, app.win2)
+        cy2 = tzgpu_wm.wm_client_y(&app.wm, app.win2)
+        cw2 = tzgpu_wm.wm_client_w(&app.wm, app.win2)
+
+        gpu_render.gpr_text(&app.ctx.canvas, cx2+8, cy2+10, "GPU Core Clock : 2,520 MHz  [88%]", 0xF8FAFC)
+        gpu_render.gpr_rect_r(&app.ctx.canvas, cx2+8, cy2+26, cw2-16, 6, 0x090E18, 3)
+        gpu_render.gpr_gradient_h(&app.ctx.canvas, cx2+8, cy2+26, (cw2-16)*88/100, 6, 0x10B981, 0x34D399)
+
+        gpu_render.gpr_text(&app.ctx.canvas, cx2+8, cy2+42, "Memory Clock   : 1,312 MHz  [95%]", 0xF8FAFC)
+        gpu_render.gpr_rect_r(&app.ctx.canvas, cx2+8, cy2+58, cw2-16, 6, 0x090E18, 3)
+        gpu_render.gpr_gradient_h(&app.ctx.canvas, cx2+8, cy2+58, (cw2-16)*95/100, 6, 0x06B6D4, 0x38BDF8)
+
+        gpu_render.gpr_text(&app.ctx.canvas, cx2+8, cy2+76,  "Core Temp      : 64 C  * Optimal", 0x10B981)
+        gpu_render.gpr_text(&app.ctx.canvas, cx2+8, cy2+96,  "Hotspot Temp   : 74 C  * Normal",  0xF59E0B)
+        gpu_render.gpr_text(&app.ctx.canvas, cx2+8, cy2+116, "Board Power    : 285 W / 450 W",   0xF43F5E)
+        gpu_render.gpr_text(&app.ctx.canvas, cx2+8, cy2+136, "Fan Speed      : 1,480 RPM (48%)", 0x94A3B8)
+        gpu_render.gpr_text(&app.ctx.canvas, cx2+8, cy2+156, "VRAM Bandwidth : 982 GB/s Peak",   0x6366F1)
+
+        // Live animated telemetry pulse wave
+        tzgpu_ui.gu_loader_bar(&app.ctx, cx2+8, cy2+184, cw2-16, 8, 0x6366F1)
+
+      // ── Toast Notification ────────────────────────────────────────────
+      tzgpu_ui.gu_toast(&app.ctx, &app.toast)
+
+      tzgpu_ui.gu_end(&app.ctx)
+
+  if app.brand_svg != 0:
+    tzsvg.svg_free(app.brand_svg)
+  ret 0

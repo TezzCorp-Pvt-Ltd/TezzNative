@@ -38,8 +38,8 @@ The gate covers:
 - `name` must be a lowercase package identifier.
 - `version` must use `x.y.z` semantic version form.
 - `module_root` is `lib` for the public SDK.
-- `registry` points to `https://tn.tezzcorp.com/registry.tnx`.
-- `registry_lib` points to `https://tn.tezzcorp.com/download/sdk/lib/`.
+- `registry` points to `https://tezznative.org/registry.tnx`.
+- `registry_lib` points to `https://tezznative.org/download/sdk/lib/`.
 - `dep.*` and `optdep.*` versions use the same `x.y.z` form.
 
 `tezz.lock` is the reproducibility declaration:

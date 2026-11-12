@@ -1,0 +1,592 @@
+// tzrouter.tn — TezzNative Multi-Page Router, Tab Management & Sidebar Subsystem v2.0
+//
+// Features:
+//  - Full navigation stack (push, pop, back, history)
+//  - Dynamic Tab Management (open, switch, close tabs with 'x' button, add with '+')
+//  - Collapsible Sidebar Navigation Rail (expanded with labels or compact icon dock)
+//  - Responsive Top Navigation Bar (adapts to canvas width, no overlapping)
+
+import "gpu_render"
+import "tzicon"
+import "tzfont"
+
+// ── Page ID constants & accessors ─────────────────────────────────────────
+
+let PAGE_VLC_STUDIO:int   = 0
+let PAGE_TYPOGRAPHY:int   = 1
+let PAGE_CSS_STUDIO:int   = 2
+let PAGE_DESKTOP_WM:int   = 3
+let PAGE_APP_LAUNCHER:int = 4
+let PAGE_SETTINGS:int     = 5
+
+fn page_vlc_studio() -> int: ret 0
+fn page_typography() -> int: ret 1
+fn page_css_studio() -> int: ret 2
+fn page_desktop_wm() -> int: ret 3
+fn page_app_launcher() -> int: ret 4
+fn page_settings() -> int: ret 5
+
+// ── TzRouter struct ───────────────────────────────────────────────────────
+
+struct TzRouter:
+  current_page:int
+  prev_page:int
+  history_0:int
+  history_1:int
+  history_2:int
+  history_3:int
+  history_4:int
+  history_5:int
+  history_6:int
+  history_7:int
+  history_len:int
+  transition_t:int
+
+// ── Router Initializer & Navigation ───────────────────────────────────────
+
+fn router_init(r:*TzRouter, initial_page:int) -> int:
+  if r == 0:
+    ret (0 - 1)
+  unsafe:
+    r[0].current_page  = initial_page
+    r[0].prev_page     = initial_page
+    r[0].history_len   = 0
+    r[0].history_0     = initial_page
+    r[0].transition_t  = 1000
+  ret 0
+
+fn router_navigate(r:*TzRouter, target_page:int) -> int:
+  if r == 0:
+    ret (0 - 1)
+  unsafe:
+    if r[0].current_page == target_page:
+      ret 0
+    // Push onto history stack
+    hlen:int = r[0].history_len
+    if hlen == 0: r[0].history_0 = r[0].current_page
+    if hlen == 1: r[0].history_1 = r[0].current_page
+    if hlen == 2: r[0].history_2 = r[0].current_page
+    if hlen == 3: r[0].history_3 = r[0].current_page
+    if hlen == 4: r[0].history_4 = r[0].current_page
+    if hlen == 5: r[0].history_5 = r[0].current_page
+    if hlen < 7:
+      r[0].history_len = hlen + 1
+
+    r[0].prev_page    = r[0].current_page
+    r[0].current_page = target_page
+    r[0].transition_t = 0
+  ret 0
+
+fn router_can_go_back(r:*TzRouter) -> int:
+  if r == 0:
+    ret 0
+  unsafe:
+    if r[0].history_len > 0:
+      ret 1
+  ret 0
+
+fn router_back(r:*TzRouter) -> int:
+  if r == 0:
+    ret (0 - 1)
+  unsafe:
+    hlen:int = r[0].history_len
+    if hlen <= 0:
+      ret 0
+    target:int = r[0].history_0
+    if hlen == 2: target = r[0].history_1
+    if hlen == 3: target = r[0].history_2
+    if hlen == 4: target = r[0].history_3
+    if hlen == 5: target = r[0].history_4
+    if hlen == 6: target = r[0].history_5
+
+    r[0].history_len = hlen - 1
+    r[0].prev_page = r[0].current_page
+    r[0].current_page = target
+    r[0].transition_t = 0
+  ret 0
+
+fn router_current(r:*TzRouter) -> int:
+  if r == 0:
+    ret 0
+  unsafe:
+    ret r[0].current_page
+
+fn router_page_name(page_id:int) -> str:
+  if page_id == PAGE_VLC_STUDIO:
+    ret "VLC Player"
+  if page_id == PAGE_TYPOGRAPHY:
+    ret "Typography"
+  if page_id == PAGE_CSS_STUDIO:
+    ret "CSS & Gravity"
+  if page_id == PAGE_DESKTOP_WM:
+    ret "Desktop WM"
+  if page_id == PAGE_APP_LAUNCHER:
+    ret "All Apps"
+  if page_id == PAGE_SETTINGS:
+    ret "Settings"
+  ret "Workspace"
+
+fn router_page_icon(page_id:int) -> int:
+  if page_id == PAGE_VLC_STUDIO:
+    ret tzicon.icon_video()
+  if page_id == PAGE_TYPOGRAPHY:
+    ret tzicon.icon_file()
+  if page_id == PAGE_CSS_STUDIO:
+    ret tzicon.icon_settings()
+  if page_id == PAGE_DESKTOP_WM:
+    ret tzicon.icon_home()
+  if page_id == PAGE_APP_LAUNCHER:
+    ret tzicon.icon_folder()
+  ret tzicon.icon_settings()
+
+// ── Tab Management Subsystem (TzTabBar) ───────────────────────────────────
+
+struct TzTabBar:
+  count:int
+  active_idx:int
+  // 6 tab slots (scalar fields prevent array memory lowering bugs)
+  tab0_page:int
+  tab0_title:str
+  tab0_icon:int
+  tab1_page:int
+  tab1_title:str
+  tab1_icon:int
+  tab2_page:int
+  tab2_title:str
+  tab2_icon:int
+  tab3_page:int
+  tab3_title:str
+  tab3_icon:int
+  tab4_page:int
+  tab4_title:str
+  tab4_icon:int
+  tab5_page:int
+  tab5_title:str
+  tab5_icon:int
+
+fn tabbar_init(tb:*TzTabBar) -> int:
+  if tb == 0: ret (0 - 1)
+  unsafe:
+    tb[0].count = 4
+    tb[0].active_idx = 0
+    tb[0].tab0_page  = PAGE_VLC_STUDIO
+    tb[0].tab0_title = "VLC Player"
+    tb[0].tab0_icon  = tzicon.icon_video()
+
+    tb[0].tab1_page  = PAGE_TYPOGRAPHY
+    tb[0].tab1_title = "Typography"
+    tb[0].tab1_icon  = tzicon.icon_file()
+
+    tb[0].tab2_page  = PAGE_CSS_STUDIO
+    tb[0].tab2_title = "CSS & Gravity"
+    tb[0].tab2_icon  = tzicon.icon_settings()
+
+    tb[0].tab3_page  = PAGE_DESKTOP_WM
+    tb[0].tab3_title = "Desktop WM"
+    tb[0].tab3_icon  = tzicon.icon_home()
+  ret 0
+
+fn tabbar_get_page(tb:*TzTabBar, idx:int) -> int:
+  if tb == 0: ret 0
+  unsafe:
+    if idx == 0: ret tb[0].tab0_page
+    if idx == 1: ret tb[0].tab1_page
+    if idx == 2: ret tb[0].tab2_page
+    if idx == 3: ret tb[0].tab3_page
+    if idx == 4: ret tb[0].tab4_page
+    if idx == 5: ret tb[0].tab5_page
+  ret 0
+
+fn tabbar_get_title(tb:*TzTabBar, idx:int) -> str:
+  if tb == 0: ret "Tab"
+  unsafe:
+    if idx == 0: ret tb[0].tab0_title
+    if idx == 1: ret tb[0].tab1_title
+    if idx == 2: ret tb[0].tab2_title
+    if idx == 3: ret tb[0].tab3_title
+    if idx == 4: ret tb[0].tab4_title
+    if idx == 5: ret tb[0].tab5_title
+  ret "Tab"
+
+fn tabbar_get_icon(tb:*TzTabBar, idx:int) -> int:
+  if tb == 0: ret 0
+  unsafe:
+    if idx == 0: ret tb[0].tab0_icon
+    if idx == 1: ret tb[0].tab1_icon
+    if idx == 2: ret tb[0].tab2_icon
+    if idx == 3: ret tb[0].tab3_icon
+    if idx == 4: ret tb[0].tab4_icon
+    if idx == 5: ret tb[0].tab5_icon
+  ret 0
+
+fn tabbar_select(tb:*TzTabBar, idx:int, r:*TzRouter) -> int:
+  if tb == 0 || idx < 0: ret (0 - 1)
+  unsafe:
+    if idx < tb[0].count:
+      tb[0].active_idx = idx
+      if r != 0:
+        target:int = tabbar_get_page(tb, idx)
+        router_navigate(r, target)
+  ret 0
+
+fn tabbar_close(tb:*TzTabBar, idx:int, r:*TzRouter) -> int:
+  if tb == 0: ret (0 - 1)
+  unsafe:
+    c:int = tb[0].count
+    if c <= 1:
+      // Keep at least one tab open
+      ret 0
+    if idx == 0:
+      tb[0].tab0_page = tb[0].tab1_page
+      tb[0].tab0_title = tb[0].tab1_title
+      tb[0].tab0_icon = tb[0].tab1_icon
+      tb[0].tab1_page = tb[0].tab2_page
+      tb[0].tab1_title = tb[0].tab2_title
+      tb[0].tab1_icon = tb[0].tab2_icon
+      tb[0].tab2_page = tb[0].tab3_page
+      tb[0].tab2_title = tb[0].tab3_title
+      tb[0].tab2_icon = tb[0].tab3_icon
+      tb[0].tab3_page = tb[0].tab4_page
+      tb[0].tab3_title = tb[0].tab4_title
+      tb[0].tab3_icon = tb[0].tab4_icon
+      tb[0].tab4_page = tb[0].tab5_page
+      tb[0].tab4_title = tb[0].tab5_title
+      tb[0].tab4_icon = tb[0].tab5_icon
+    if idx == 1:
+      tb[0].tab1_page = tb[0].tab2_page
+      tb[0].tab1_title = tb[0].tab2_title
+      tb[0].tab1_icon = tb[0].tab2_icon
+      tb[0].tab2_page = tb[0].tab3_page
+      tb[0].tab2_title = tb[0].tab3_title
+      tb[0].tab2_icon = tb[0].tab3_icon
+      tb[0].tab3_page = tb[0].tab4_page
+      tb[0].tab3_title = tb[0].tab4_title
+      tb[0].tab3_icon = tb[0].tab4_icon
+      tb[0].tab4_page = tb[0].tab5_page
+      tb[0].tab4_title = tb[0].tab5_title
+      tb[0].tab4_icon = tb[0].tab5_icon
+    if idx == 2:
+      tb[0].tab2_page = tb[0].tab3_page
+      tb[0].tab2_title = tb[0].tab3_title
+      tb[0].tab2_icon = tb[0].tab3_icon
+      tb[0].tab3_page = tb[0].tab4_page
+      tb[0].tab3_title = tb[0].tab4_title
+      tb[0].tab3_icon = tb[0].tab4_icon
+      tb[0].tab4_page = tb[0].tab5_page
+      tb[0].tab4_title = tb[0].tab5_title
+      tb[0].tab4_icon = tb[0].tab5_icon
+    if idx == 3:
+      tb[0].tab3_page = tb[0].tab4_page
+      tb[0].tab3_title = tb[0].tab4_title
+      tb[0].tab3_icon = tb[0].tab4_icon
+      tb[0].tab4_page = tb[0].tab5_page
+      tb[0].tab4_title = tb[0].tab5_title
+      tb[0].tab4_icon = tb[0].tab5_icon
+    if idx == 4:
+      tb[0].tab4_page = tb[0].tab5_page
+      tb[0].tab4_title = tb[0].tab5_title
+      tb[0].tab4_icon = tb[0].tab5_icon
+
+    tb[0].count = c - 1
+    if tb[0].active_idx >= tb[0].count:
+      tb[0].active_idx = tb[0].count - 1
+    if r != 0:
+      new_page:int = tabbar_get_page(tb, tb[0].active_idx)
+      router_navigate(r, new_page)
+  ret 0
+
+fn tabbar_add(tb:*TzTabBar, page_id:int, title:str, icon_id:int, r:*TzRouter) -> int:
+  if tb == 0: ret (0 - 1)
+  unsafe:
+    c:int = tb[0].count
+    if c >= 6:
+      ret 0 // max tabs reached
+    if c == 1:
+      tb[0].tab1_page = page_id
+      tb[0].tab1_title = title
+      tb[0].tab1_icon = icon_id
+    if c == 2:
+      tb[0].tab2_page = page_id
+      tb[0].tab2_title = title
+      tb[0].tab2_icon = icon_id
+    if c == 3:
+      tb[0].tab3_page = page_id
+      tb[0].tab3_title = title
+      tb[0].tab3_icon = icon_id
+    if c == 4:
+      tb[0].tab4_page = page_id
+      tb[0].tab4_title = title
+      tb[0].tab4_icon = icon_id
+    if c == 5:
+      tb[0].tab5_page = page_id
+      tb[0].tab5_title = title
+      tb[0].tab5_icon = icon_id
+    tb[0].count = c + 1
+    tb[0].active_idx = c
+    if r != 0:
+      router_navigate(r, page_id)
+  ret 0
+
+// ── Tab Bar Renderer with Tab Switching and Close Buttons ─────────────────
+
+fn tabbar_render(canvas:*GpuCanvas, x:int, y:int, max_w:int, h:int, tb:*TzTabBar, r:*TzRouter, mx:int, my:int, mb:int, pmb:int) -> int:
+  if canvas == 0 || tb == 0 || max_w <= 0:
+    ret (0 - 1)
+
+  lmb_click:int = (mb & 1) != 0 && (pmb & 1) == 0
+  num_tabs:int = 0
+  active_i:int = 0
+  unsafe:
+    num_tabs = tb[0].count
+    active_i = tb[0].active_idx
+
+  // Tab width responsive scaling
+  tab_w:int = 110
+  if (tab_w + 4) * num_tabs + 36 > max_w:
+    tab_w = (max_w - 36) / num_tabs - 4
+  if tab_w < 50:
+    tab_w = 50
+
+  cur_x:int = x
+  idx:int = 0
+  while idx < num_tabs:
+    is_act:int = (idx == active_i)
+    is_hot:int = (mx >= cur_x && mx <= cur_x + tab_w && my >= y && my <= y + h)
+
+    // Close button ('x') hit test at right edge of tab
+    cx_btn:int = cur_x + tab_w - 18
+    is_close_hot:int = (mx >= cx_btn && mx <= cx_btn + 14 && my >= y + 8 && my <= y + 22)
+
+    if is_close_hot != 0 && lmb_click != 0:
+      tabbar_close(tb, idx, r)
+      ret 0
+
+    if is_hot != 0 && is_close_hot == 0 && lmb_click != 0:
+      tabbar_select(tb, idx, r)
+
+    // Tab Background styling
+    tab_bg:int = 0x0E1624
+    if is_act != 0:
+      tab_bg = 0x18253D
+      gpu_render.gpr_rect_r(canvas, cur_x, y + 2, tab_w, h - 4, tab_bg, 5)
+      gpu_render.gpr_sheen(canvas, cur_x + 4, y + 2, tab_w - 8, 0x334566)
+      gpu_render.gpr_outline(canvas, cur_x, y + 2, tab_w, h - 4, 0x6366F1)
+      gpu_render.gpr_gradient_h(canvas, cur_x + 6, y + h - 4, tab_w - 12, 2, 0x6366F1, 0x06B6D4)
+    else:
+      if is_hot != 0:
+        tab_bg = 0x141E30
+      gpu_render.gpr_rect_r(canvas, cur_x, y + 2, tab_w, h - 4, tab_bg, 5)
+      gpu_render.gpr_outline(canvas, cur_x, y + 2, tab_w, h - 4, 0x223048)
+
+    // Tab Icon & Title
+    ic:int = tabbar_get_icon(tb, idx)
+    ic_c:int = 0x64748B
+    txt_c:int = 0x94A3B8
+    txt_wt:int = tzfont.weight_regular()
+    if is_act != 0:
+      ic_c = 0x6366F1
+      txt_c = 0xFFFFFF
+      txt_wt = tzfont.weight_semibold()
+    tzicon.tzi_draw_icon(canvas, cur_x + 6, y + (h - 14)/2, 14, ic, ic_c)
+
+    t_str:str = tabbar_get_title(tb, idx)
+    tzfont.tzf_draw_text(canvas, cur_x + 24, y + (h - 9)/2, t_str, tzfont.font_poppins(), 1, txt_wt, txt_c)
+
+    // Close button ('x')
+    x_c:int = 0x64748B
+    if is_close_hot != 0:
+      x_c = 0xF43F5E
+    tzicon.tzi_draw_icon(canvas, cx_btn, y + (h - 10)/2, 10, tzicon.icon_close(), x_c)
+
+    cur_x = cur_x + tab_w + 4
+    idx = idx + 1
+
+  // '+' Add New Tab Button
+  is_add_hot:int = (mx >= cur_x && mx <= cur_x + 28 && my >= y + 4 && my <= y + h - 4)
+  if is_add_hot != 0:
+    gpu_render.gpr_rect_r(canvas, cur_x, y + 4, 28, h - 8, 0x1E2B40, 4)
+    if lmb_click != 0:
+      tabbar_add(tb, PAGE_APP_LAUNCHER, "All Apps", tzicon.icon_folder(), r)
+  tzfont.tzf_draw_text(canvas, cur_x + 10, y + (h - 12)/2, "+", tzfont.font_poppins(), 1, tzfont.weight_bold(), 0x94A3B8)
+
+  ret 0
+
+// ── Collapsible Sidebar Navigation Subsystem (TzSidebar) ──────────────────
+
+struct TzSidebar:
+  collapsed:int   // 0 = 200px expanded with labels, 1 = 56px icon dock
+  active_item:int // 0=VLC, 1=Typography, 2=CSS, 3=Desktop, 4=Launcher, 5=Settings
+  width:int
+
+fn sidebar_init(sb:*TzSidebar) -> int:
+  if sb == 0: ret (0 - 1)
+  unsafe:
+    sb[0].collapsed = 0
+    sb[0].active_item = 0
+    sb[0].width = 200
+  ret 0
+
+fn sidebar_toggle(sb:*TzSidebar) -> int:
+  if sb == 0: ret (0 - 1)
+  unsafe:
+    sb[0].collapsed = 1 - sb[0].collapsed
+    if sb[0].collapsed != 0:
+      sb[0].width = 56
+    else:
+      sb[0].width = 200
+  ret 0
+
+fn sidebar_render(canvas:*GpuCanvas, x:int, y:int, h:int, sb:*TzSidebar, r:*TzRouter, tb:*TzTabBar, mx:int, my:int, mb:int, pmb:int) -> int:
+  if canvas == 0 || sb == 0:
+    ret (0 - 1)
+
+  lmb_click:int = (mb & 1) != 0 && (pmb & 1) == 0
+  is_col:int = 0
+  w:int = 200
+  active_pg:int = 0
+  unsafe:
+    is_col = sb[0].collapsed
+    w = sb[0].width
+    if r != 0:
+      active_pg = r[0].current_page
+
+  // Sidebar background
+  gpu_render.gpr_rect(canvas, x, y, w, h, 0x090E18)
+  gpu_render.gpr_rect(canvas, x + w - 1, y, 1, h, 0x1E2B3E)
+
+  // Top Section: App Branding & Toggle Hamburger
+  header_h:int = 48
+  gpu_render.gpr_rect(canvas, x, y, w, header_h, 0x0B1220)
+  gpu_render.gpr_rect(canvas, x, y + header_h - 1, w, 1, 0x1E2B3E)
+
+  // Hamburger Toggle Button
+  btn_toggle_x:int = x + 12
+  is_tog_hot:int = (mx >= btn_toggle_x && mx <= btn_toggle_x + 32 && my >= y + 8 && my <= y + 40)
+  if is_tog_hot != 0:
+    gpu_render.gpr_rect_r(canvas, btn_toggle_x, y + 8, 32, 32, 0x18243A, 4)
+    if lmb_click != 0:
+      sidebar_toggle(sb)
+  // 3 horizontal bars of hamburger icon
+  gpu_render.gpr_rect(canvas, btn_toggle_x + 8, y + 16, 16, 2, 0xF8FAFC)
+  gpu_render.gpr_rect(canvas, btn_toggle_x + 8, y + 23, 16, 2, 0xF8FAFC)
+  gpu_render.gpr_rect(canvas, btn_toggle_x + 8, y + 30, 16, 2, 0xF8FAFC)
+
+  if is_col == 0:
+    tzfont.tzf_draw_text(canvas, x + 52, y + 18, "TezzNative", tzfont.font_poppins(), 1, tzfont.weight_bold(), 0xF8FAFC)
+
+  // Navigation Items
+  item_y:int = y + header_h + 16
+  nav_idx:int = 0
+
+  while nav_idx < 5:
+    pg_id:int = nav_idx
+    lbl:str = router_page_name(pg_id)
+    ic_id:int = router_page_icon(pg_id)
+    is_act:int = (active_pg == pg_id)
+
+    item_h:int = 40
+    is_hot:int = (mx >= x + 8 && mx <= x + w - 8 && my >= item_y && my <= item_y + item_h)
+
+    if is_hot != 0 && lmb_click != 0:
+      if r != 0:
+        router_navigate(r, pg_id)
+      if tb != 0:
+        // Switch tab or add if not open
+        tabbar_add(tb, pg_id, lbl, ic_id, r)
+
+    // Item styling
+    if is_act != 0:
+      gpu_render.gpr_rect_r(canvas, x + 6, item_y, w - 12, item_h, 0x18253D, 6)
+      gpu_render.gpr_outline(canvas, x + 6, item_y, w - 12, item_h, 0x6366F1)
+      // Glowing left accent strip
+      gpu_render.gpr_rect_r(canvas, x + 6, item_y + 6, 3, item_h - 12, 0x6366F1, 1)
+    else:
+      if is_hot != 0:
+        gpu_render.gpr_rect_r(canvas, x + 6, item_y, w - 12, item_h, 0x131C2D, 6)
+
+    // Icon
+    s_ic_c:int = 0x94A3B8
+    s_txt_c:int = 0x94A3B8
+    s_wt:int = tzfont.weight_regular()
+    if is_act != 0:
+      s_ic_c = 0x6366F1
+      s_txt_c = 0xFFFFFF
+      s_wt = tzfont.weight_semibold()
+    tzicon.tzi_draw_icon(canvas, x + 16, item_y + 11, 18, ic_id, s_ic_c)
+
+    // Label if expanded
+    if is_col == 0:
+      tzfont.tzf_draw_text(canvas, x + 44, item_y + 14, lbl, tzfont.font_poppins(), 1, s_wt, s_txt_c)
+
+    item_y = item_y + item_h + 6
+    nav_idx = nav_idx + 1
+
+  // Bottom Status / Collapse info
+  bot_y:int = y + h - 48
+  gpu_render.gpr_rect(canvas, x, bot_y, w, 1, 0x1E2B3E)
+  if is_col == 0:
+    gpu_render.gpr_circle(canvas, x + 18, bot_y + 24, 4, 0x10B981)
+    tzfont.tzf_draw_text(canvas, x + 30, bot_y + 19, "Engine: 60 FPS", tzfont.font_poppins(), 1, tzfont.weight_regular(), 0x10B981)
+  else:
+    gpu_render.gpr_circle(canvas, x + w/2, bot_y + 24, 4, 0x10B981)
+
+  ret 0
+
+// ── Global Router Navigation Bar (Backwards-Compatible wrapper) ───────────
+
+fn router_render_nav(canvas:*GpuCanvas, x:int, y:int, w:int, h:int, r:*TzRouter, mx:int, my:int, mb:int, pmb:int) -> int:
+  if canvas == 0 || r == 0 || w <= 0:
+    ret (0 - 1)
+
+  lmb_click:int = (mb & 1) != 0 && (pmb & 1) == 0
+
+  // Bar surface
+  gpu_render.gpr_rect_r(canvas, x, y, w, h, 0x0D1422, 6)
+  gpu_render.gpr_sheen(canvas, x + 6, y, w - 12, 0x24324D)
+  gpu_render.gpr_outline(canvas, x, y, w, h, 0x1E2B3E)
+
+  cur_x:int = x + 8
+
+  // Back button
+  can_back:int = router_can_go_back(r)
+  back_c:int = 0x475569
+  if can_back != 0:
+    back_c = 0xF8FAFC
+  is_back_hot:int = (mx >= cur_x && mx <= cur_x + 28 && my >= y + 4 && my <= y + h - 4)
+  if is_back_hot != 0 && can_back != 0:
+    gpu_render.gpr_rect_r(canvas, cur_x, y + 4, 28, h - 8, 0x18243A, 4)
+    if lmb_click != 0:
+      router_back(r)
+  tzicon.tzi_draw_icon(canvas, cur_x + 6, y + (h - 16)/2, 16, tzicon.icon_chevron_left(), back_c)
+  cur_x = cur_x + 32
+
+  // Page Switcher Tabs
+  tab_idx:int = 0
+  while tab_idx < 4:
+    name:str = router_page_name(tab_idx)
+    tw:int = tzfont.tzf_measure_w(name, tzfont.font_poppins(), 1) + 16
+    is_active:int = 0
+    unsafe:
+      if r[0].current_page == tab_idx:
+        is_active = 1
+
+    is_hot:int = (mx >= cur_x && mx <= cur_x + tw && my >= y + 4 && my <= y + h - 4)
+    tab_bg:int = 0x0D1422
+    if is_active != 0:
+      tab_bg = 0x18253D
+      gpu_render.gpr_rect_r(canvas, cur_x, y + 4, tw, h - 8, tab_bg, 5)
+      gpu_render.gpr_sheen(canvas, cur_x + 4, y + 4, tw - 8, 0x334466)
+      gpu_render.gpr_outline(canvas, cur_x, y + 4, tw, h - 8, 0x6366F1)
+      gpu_render.gpr_gradient_h(canvas, cur_x + 6, y + h - 6, tw - 12, 2, 0x6366F1, 0x06B6D4)
+      tzfont.tzf_draw_text(canvas, cur_x + 8, y + (h - 10)/2, name, tzfont.font_poppins(), 1, tzfont.weight_semibold(), 0xFFFFFF)
+    else:
+      if is_hot != 0:
+        gpu_render.gpr_rect_r(canvas, cur_x, y + 4, tw, h - 8, 0x141E30, 5)
+        if lmb_click != 0:
+          router_navigate(r, tab_idx)
+      tzfont.tzf_draw_text(canvas, cur_x + 8, y + (h - 10)/2, name, tzfont.font_poppins(), 1, tzfont.weight_regular(), 0x94A3B8)
+
+    cur_x = cur_x + tw + 4
+    tab_idx = tab_idx + 1
+
+  ret 0

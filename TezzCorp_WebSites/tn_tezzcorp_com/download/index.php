@@ -43,6 +43,17 @@ require_once __DIR__ . '/../includes/nav.php';
       </div>
     </div>
 
+    <div style="background: var(--code-bg); border: 1px solid var(--code-border); border-radius: var(--radius-lg); padding: 24px; margin-bottom: 40px;">
+      <h2 style="margin: 0 0 8px;">Prefer a graphical installer?</h2>
+      <p class="section-desc" style="margin: 0 0 18px;">Choose the install folder, download source, and PATH setup in the wizard. Linux desktop sessions need Zenity or YAD.</p>
+      <div class="terminal-comment"># Windows PowerShell:</div>
+      <div class="terminal-cmd" style="margin-bottom: 18px;"><code>irm https://tezznative.org/install-gui.ps1 | iex</code></div>
+      <div class="terminal-comment"># Linux desktop:</div>
+      <div class="terminal-cmd" style="margin-bottom: 18px;"><code>curl -fsSL https://tezznative.org/install-gui.sh | bash</code></div>
+      <div class="terminal-comment"># Windows Command Prompt:</div>
+      <div class="terminal-cmd" style="margin-bottom: 0;"><code>curl -fsSL https://tezznative.org/install.cmd -o install.cmd &amp;&amp; install.cmd --gui</code></div>
+    </div>
+
     <!-- Download Cards Grid -->
     <div class="download-grid" style="margin-bottom: 50px;">
       <!-- Card 1: Windows SDK Archive -->

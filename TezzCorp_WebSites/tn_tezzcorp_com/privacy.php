@@ -12,11 +12,11 @@ tn_page_shell_start('Privacy Policy', 'DATA PRIVACY & COMPLIANCE', 'Learn how Te
 ?>
 
 <div style="max-width: 860px; margin: 30px auto; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 32px;">
-  <p style="color: var(--text-tertiary); font-size: 0.88rem; margin-bottom: 24px;">Effective date: <?= htmlspecialchars($effectiveDate) ?> &bull; Published by TezzCorp Pvt Ltd.</p>
+  <p style="color: var(--text-tertiary); font-size: 0.88rem; margin-bottom: 24px;">Effective date: <?= htmlspecialchars($effectiveDate) ?> &bull; Published by TEZZCORP PRIVATE LIMITED</p>
 
   <section style="margin-bottom: 24px;">
     <h3 style="color: var(--text-primary); margin-bottom: 8px;">1. Introduction</h3>
-    <p style="color: var(--text-secondary); line-height: 1.6;">TezzCorp Pvt Ltd respects developer privacy. This Privacy Policy explains how information is handled when downloading, installing, or interacting with TezzNative services.</p>
+    <p style="color: var(--text-secondary); line-height: 1.6;">TEZZCORP PRIVATE LIMITED respects developer privacy. This Privacy Policy explains how information is handled when downloading, installing, or interacting with TezzNative services.</p>
   </section>
 
   <section style="margin-bottom: 24px;">

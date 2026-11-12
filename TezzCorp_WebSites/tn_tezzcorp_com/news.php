@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
-$page_title = 'News & Announcements — TezzCorp Pvt Ltd';
-$page_desc  = 'Latest news, press releases, and company announcements from TezzCorp Pvt Ltd — Bihar\'s leading technology company.';
+$page_title = 'News & Announcements — TEZZCORP PRIVATE LIMITED';
+$page_desc  = 'Latest news, press releases, and company announcements from TEZZCORP PRIVATE LIMITED — Bihar\'s leading technology company.';
 $active_nav = 'news';
 include 'includes/header.php';
 
@@ -32,8 +32,8 @@ $news_items = [
     'cat_color' => 'var(--green)',
     'cat_bg' => 'rgba(16,185,129,.12)',
     'icon' => '🏢',
-    'title' => 'TezzCorp Pvt Ltd Incorporated — CIN: U62011BR2026PTC083413',
-    'excerpt' => 'TezzCorp Pvt Ltd is officially incorporated in Bihar, India (Jhiliya, Bettiah) under the Companies Act, 2013. The company formalizes its software engineering, AI research, and product development operations.',
+    'title' => 'TEZZCORP PRIVATE LIMITED Incorporated — CIN: U62011BR2026PTC083413',
+    'excerpt' => 'TEZZCORP PRIVATE LIMITED is officially incorporated in Bihar, India (Jhiliya, Bettiah) under the Companies Act, 2013. The company formalizes its software engineering, AI research, and product development operations.',
     'link' => 'about.php',
   ],
   [
@@ -44,7 +44,7 @@ $news_items = [
     'icon' => '🗄️',
     'title' => 'TezzDB — Embedded SQL Database Engine Ships with TezzNative Ecosystem',
     'excerpt' => 'TezzDB, a fully embedded SQL-compatible database engine with ACID transaction support and B-tree storage, is released as part of the TezzNative standard ecosystem — no external SQLite or database runtimes needed.',
-    'link' => 'https://tn.tezzcorp.com/frameworks/tezzdb.php',
+    'link' => 'https://tezznative.org/frameworks/tezzdb.php',
   ],
   [
     'date' => 'January 2026',
@@ -54,7 +54,7 @@ $news_items = [
     'icon' => '🖥️',
     'title' => 'TezzUI Native GUI Toolkit — Win32 Desktop Apps in Pure TezzNative',
     'excerpt' => 'TezzUI releases as a stable native GUI framework for building full-featured Windows desktop applications using only TezzNative. Supports windows, controls, dialogs, custom rendering, and message loop management.',
-    'link' => 'https://tn.tezzcorp.com/frameworks/tezzui.php',
+    'link' => 'https://tezznative.org/frameworks/tezzui.php',
   ],
   [
     'date' => 'December 2025',
@@ -76,7 +76,7 @@ $news_items = [
       <div class="eyebrow">Company</div>
       <h1 id="news-page-heading">News &amp; Announcements</h1>
       <p style="font-size:1.125rem;margin-top:.75rem;max-width:560px">
-        Latest updates, product launches, milestones, and official announcements from TezzCorp Pvt Ltd.
+        Latest updates, product launches, milestones, and official announcements from TEZZCORP PRIVATE LIMITED
       </p>
     </div>
   </section>

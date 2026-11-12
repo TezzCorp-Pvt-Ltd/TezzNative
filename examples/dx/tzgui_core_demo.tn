@@ -1,0 +1,181 @@
+// Interactive smoke demo for the retained tzgui core.
+// Click the buttons or use Tab/Enter/Space. Escape closes the window.
+
+import "gui"
+import "gui_win"
+import "tzgui"
+
+static let g_demo_tree:TzWidgetTree
+
+static let g_demo_running:int = 0
+static let g_demo_accent_variant:int = 0
+static let g_demo_target_enabled:int = 0
+static let g_demo_activated_id:int = 0
+static let g_demo_primary_id:int = 0
+static let g_demo_accent_id:int = 0
+static let g_demo_toggle_id:int = 0
+static let g_demo_target_id:int = 0
+static let g_demo_status_id:int = 0
+
+fn demo_add(tree:*TzWidgetTree, parent:int, kind:int, x:int, y:int, w:int, h:int, bg:int, fg:int, text:str) -> int:
+  spec:TzWidgetSpec
+  spec.parent = parent
+  spec.kind = kind
+  spec.x = x
+  spec.y = y
+  spec.w = w
+  spec.h = h
+  spec.z = 0
+  spec.visible = 1
+  spec.bg = bg
+  spec.fg = fg
+  unsafe:
+    spec.text = 0 as str
+    ret tzgui.widget_add_text(tree, &spec, text)
+
+fn demo_panel_style(tree:*TzWidgetTree, widget_id:int, bg:int, border:int) -> int:
+  style:TzWidgetStyle
+  unsafe:
+    tzgui.widget_style_init(&style, bg, 0xF8FAFC)
+    style.border_color = border
+    style.border_width = 1
+    style.radius = 12
+    style.shadow_size = 5
+    ret tzgui.widget_set_style(tree, widget_id, &style)
+
+fn demo_button_style(tree:*TzWidgetTree, widget_id:int, bg:int, bright:int) -> int:
+  style:TzWidgetStyle
+  unsafe:
+    tzgui.widget_style_init(&style, bg, 0xFFFFFF)
+    style.border_color = bright
+    style.hover_border = 0xC7D2FE
+    style.border_width = 1
+    style.radius = 9
+    style.gradient_axis = 1
+    style.gradient_color = bright
+    style.shadow_size = 3
+    style.text_scale = 2
+    style.text_bold = 1
+    ret tzgui.widget_set_style(tree, widget_id, &style)
+
+fn main() -> int:
+  unsafe:
+    surface:GuiSurface
+    ev:GuiEvent
+    g_demo_running = 1
+    g_demo_accent_variant = 0
+    g_demo_target_enabled = 0
+    g_demo_activated_id = 0
+    g_demo_primary_id = 0
+    g_demo_accent_id = 0
+    g_demo_toggle_id = 0
+    g_demo_target_id = 0
+    g_demo_status_id = 0
+    // Create the native host window before asking gui for its framebuffer.
+    if gui_win.fb_init_ex("TezzNative | Retained GUI Core", 1000, 720) != 0:
+      ret 1
+    if gui.gui_surface(&surface) != 0 || surface.addr == 0:
+      ret 2
+    tzgui.tree_init(&g_demo_tree, surface.width, surface.height)
+    tzgui.tree_set_clear_color(&g_demo_tree, 0x0A1020)
+
+    // Header
+    header_id:int = demo_add(&g_demo_tree, 0, 1, 24, 20, 952, 94, 0x111B30, 0xF8FAFC, 0 as str)
+    demo_panel_style(&g_demo_tree, header_id, 0x111B30, 0x263754)
+    demo_add(&g_demo_tree, header_id, 2, 22, 18, 900, 28, 0, 0xF8FAFC, "TezzNative Retained GUI")
+    demo_add(&g_demo_tree, header_id, 2, 22, 52, 900, 20, 0, 0x9FB1CC, "Layout, styling, focus, pointer capture, and dirty redraw in the TezzNative core")
+
+    // Three equal flex cards exercise row/column layout and child sizing.
+    content_id:int = demo_add(&g_demo_tree, 0, 1, 24, 132, 952, 326, 0x0D1628, 0xF8FAFC, 0 as str)
+    demo_panel_style(&g_demo_tree, content_id, 0x0D1628, 0x22324C)
+    row:TzWidgetLayout
+    tzgui.widget_layout_init(&row, 1)
+    row.gap = 16
+    row.pad_top = 16
+    row.pad_right = 16
+    row.pad_bottom = 16
+    row.pad_left = 16
+    row.align = 3
+    tzgui.widget_set_layout(&g_demo_tree, content_id, &row)
+
+    card1:int = demo_add(&g_demo_tree, content_id, 1, 0, 0, 288, 294, 0x131F34, 0xF8FAFC, 0 as str)
+    card2:int = demo_add(&g_demo_tree, content_id, 1, 0, 0, 288, 294, 0x131F34, 0xF8FAFC, 0 as str)
+    card3:int = demo_add(&g_demo_tree, content_id, 1, 0, 0, 288, 294, 0x131F34, 0xF8FAFC, 0 as str)
+    demo_panel_style(&g_demo_tree, card1, 0x131F34, 0x2B3D59)
+    demo_panel_style(&g_demo_tree, card2, 0x131F34, 0x2B3D59)
+    demo_panel_style(&g_demo_tree, card3, 0x131F34, 0x2B3D59)
+    tzgui.widget_set_flex(&g_demo_tree, card1, 1, 1)
+    tzgui.widget_set_flex(&g_demo_tree, card2, 1, 1)
+    tzgui.widget_set_flex(&g_demo_tree, card3, 1, 1)
+
+    col:TzWidgetLayout
+    tzgui.widget_layout_init(&col, 2)
+    col.gap = 12
+    col.pad_top = 16
+    col.pad_right = 16
+    col.pad_bottom = 16
+    col.pad_left = 16
+    col.align = 3
+    tzgui.widget_set_layout(&g_demo_tree, card1, &col)
+    tzgui.widget_set_layout(&g_demo_tree, card2, &col)
+    tzgui.widget_set_layout(&g_demo_tree, card3, &col)
+
+    demo_add(&g_demo_tree, card1, 2, 0, 0, 250, 24, 0, 0xA5B4FC, "POINTER STATES")
+    demo_add(&g_demo_tree, card1, 2, 0, 0, 250, 40, 0, 0xB5C2D8, "Press, hold, and release a button to see capture feedback.")
+    g_demo_primary_id = demo_add(&g_demo_tree, card1, 3, 0, 0, 250, 44, 0x4F46E5, 0xFFFFFF, "Run primary action")
+    demo_button_style(&g_demo_tree, g_demo_primary_id, 0x4F46E5, 0x818CF8)
+
+    demo_add(&g_demo_tree, card2, 2, 0, 0, 250, 24, 0, 0x67E8F9, "LIVE STYLE")
+    demo_add(&g_demo_tree, card2, 2, 0, 0, 250, 40, 0, 0xB5C2D8, "Switch the accent color while the UI is running.")
+    g_demo_accent_id = demo_add(&g_demo_tree, card2, 3, 0, 0, 250, 44, 0x0891B2, 0xFFFFFF, "Change accent")
+    demo_button_style(&g_demo_tree, g_demo_accent_id, 0x0891B2, 0x22D3EE)
+
+    demo_add(&g_demo_tree, card3, 2, 0, 0, 250, 24, 0, 0xFCD34D, "DISABLED STATE")
+    demo_add(&g_demo_tree, card3, 2, 0, 0, 250, 40, 0, 0xB5C2D8, "Toggle the target to check inherited input rules.")
+    g_demo_toggle_id = demo_add(&g_demo_tree, card3, 3, 0, 0, 250, 42, 0xB45309, 0xFFFFFF, "Enable / disable target")
+    g_demo_target_id = demo_add(&g_demo_tree, card3, 3, 0, 0, 250, 42, 0x334155, 0xFFFFFF, "Disabled target")
+    demo_button_style(&g_demo_tree, g_demo_toggle_id, 0xB45309, 0xF59E0B)
+    demo_button_style(&g_demo_tree, g_demo_target_id, 0x334155, 0x64748B)
+    tzgui.widget_set_enabled(&g_demo_tree, g_demo_target_id, 0)
+
+    // Status card
+    footer_id:int = demo_add(&g_demo_tree, 0, 1, 24, 478, 952, 218, 0x111B30, 0xF8FAFC, 0 as str)
+    demo_panel_style(&g_demo_tree, footer_id, 0x111B30, 0x263754)
+    demo_add(&g_demo_tree, footer_id, 2, 22, 20, 900, 24, 0, 0xA5B4FC, "KEYBOARD + RENDER CHECK")
+    g_demo_status_id = demo_add(&g_demo_tree, footer_id, 2, 22, 60, 900, 32, 0, 0xF8FAFC, "Ready. Click a button, or press Tab then Enter / Space.")
+    demo_add(&g_demo_tree, footer_id, 2, 22, 110, 900, 24, 0, 0x9FB1CC, "Escape closes the demo. The status updates are retained-tree dirty redraws.")
+    tzgui.tree_layout(&g_demo_tree)
+    while g_demo_running != 0:
+      gui.gui_pump_input()
+      while gui.gui_event_next(&ev) != 0:
+        if ev.kind == 1 && ev.key == 27:
+          g_demo_running = 0
+        if ev.kind == 7:
+          tzgui.widget_set_text(&g_demo_tree, g_demo_status_id, "Mouse wheel or precision touchpad scroll was received.")
+        if ev.kind == 8 && ev.buttons == 1:
+          tzgui.widget_set_text(&g_demo_tree, g_demo_status_id, "Touch contact received. Tap a control to activate it.")
+        g_demo_activated_id = tzgui.tree_process_event(&g_demo_tree, &ev)
+        if g_demo_activated_id == g_demo_primary_id:
+          tzgui.widget_set_text(&g_demo_tree, g_demo_status_id, "Primary action fired. Pointer and keyboard activation are working.")
+        if g_demo_activated_id == g_demo_accent_id:
+          g_demo_accent_variant = 1 - g_demo_accent_variant
+          if g_demo_accent_variant == 0:
+            demo_button_style(&g_demo_tree, g_demo_accent_id, 0x0891B2, 0x22D3EE)
+            tzgui.widget_set_text(&g_demo_tree, g_demo_status_id, "Accent changed to cyan. Style changes repaint only affected regions.")
+          else:
+            demo_button_style(&g_demo_tree, g_demo_accent_id, 0x7C3AED, 0xA78BFA)
+            tzgui.widget_set_text(&g_demo_tree, g_demo_status_id, "Accent changed to violet. Style changes repaint only affected regions.")
+        if g_demo_activated_id == g_demo_toggle_id:
+          g_demo_target_enabled = 1 - g_demo_target_enabled
+          tzgui.widget_set_enabled(&g_demo_tree, g_demo_target_id, g_demo_target_enabled)
+          if g_demo_target_enabled != 0:
+            tzgui.widget_set_text(&g_demo_tree, g_demo_status_id, "Target enabled. It now accepts focus and pointer input.")
+          else:
+            tzgui.widget_set_text(&g_demo_tree, g_demo_status_id, "Target disabled. It is skipped by hit testing and focus traversal.")
+        if g_demo_activated_id == g_demo_target_id:
+          tzgui.widget_set_text(&g_demo_tree, g_demo_status_id, "Target action fired successfully.")
+      rendered:int = tzgui.tree_present_dirty(&g_demo_tree, &surface)
+      if rendered == 0:
+        gui.gui_wait_input()
+    tzgui.tree_deinit(&g_demo_tree)
+    ret 0

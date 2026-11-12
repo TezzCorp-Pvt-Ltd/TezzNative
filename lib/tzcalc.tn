@@ -1,0 +1,575 @@
+// Small, deterministic calculator engine used by the GUI sample and CLI tests.
+// Values use four decimal places and all calculation logic stays in TezzNative.
+import "str"
+
+let TZCALC_SCALE:int = 10000
+let TZCALC_LIMIT:int = 9000000000000000000
+
+struct TzCalcState:
+  display:int
+  accumulator:int
+  entry_digits:int
+  pending:int
+  has_pending:int
+  new_entry:int
+  memory:int
+  decimal_mode:int
+  decimal_places:int
+  negative:int
+  error:int
+
+fn tzcalc_init(state:*TzCalcState) -> int:
+  if state == 0:
+    ret 0 - 1
+  state[0].display = 0
+  state[0].accumulator = 0
+  state[0].entry_digits = 0
+  state[0].pending = 0
+  state[0].has_pending = 0
+  state[0].new_entry = 0
+  state[0].memory = 0
+  state[0].decimal_mode = 0
+  state[0].decimal_places = 0
+  state[0].negative = 0
+  state[0].error = 0
+  ret 0
+
+fn _tzcalc_sync_entry(state:*TzCalcState) -> int:
+  if state == 0:
+    ret 0 - 1
+  divisor:int = 1
+  places:int = state[0].decimal_places
+  while places < 4:
+    divisor = divisor * 10
+    places = places + 1
+  value:int = state[0].entry_digits * divisor
+  if state[0].negative != 0:
+    value = 0 - value
+  state[0].display = value
+  ret 0
+
+fn tzcalc_digit(state:*TzCalcState, digit:int) -> int:
+  if state == 0 || digit < 0 || digit > 9:
+    ret 0 - 1
+  if state[0].error != 0:
+    ret 0 - 2
+  if state[0].new_entry != 0:
+    state[0].entry_digits = 0
+    state[0].decimal_mode = 0
+    state[0].decimal_places = 0
+    state[0].negative = 0
+    state[0].new_entry = 0
+  if state[0].decimal_mode != 0:
+    if state[0].decimal_places >= 4:
+      ret 0
+    state[0].entry_digits = state[0].entry_digits * 10 + digit
+    state[0].decimal_places = state[0].decimal_places + 1
+  else:
+    whole:int = state[0].entry_digits
+    places:int = state[0].decimal_places
+    while places > 0:
+      whole = whole / 10
+      places = places - 1
+    if whole >= 999999999:
+      ret 0
+    state[0].entry_digits = state[0].entry_digits * 10 + digit
+  _tzcalc_sync_entry(state)
+  ret 0
+
+fn tzcalc_decimal(state:*TzCalcState) -> int:
+  if state == 0:
+    ret 0 - 1
+  if state[0].error != 0:
+    ret 0 - 2
+  if state[0].new_entry != 0:
+    state[0].entry_digits = 0
+    state[0].decimal_places = 0
+    state[0].negative = 0
+    state[0].new_entry = 0
+  state[0].decimal_mode = 1
+  ret 0
+
+fn tzcalc_clear(state:*TzCalcState) -> int:
+  if state == 0:
+    ret 0 - 1
+  memory:int = state[0].memory
+  tzcalc_init(state)
+  state[0].memory = memory
+  ret 0
+
+fn tzcalc_clear_entry(state:*TzCalcState) -> int:
+  if state == 0:
+    ret 0 - 1
+  if state[0].error != 0:
+    ret tzcalc_clear(state)
+  state[0].display = 0
+  state[0].entry_digits = 0
+  state[0].decimal_mode = 0
+  state[0].decimal_places = 0
+  state[0].negative = 0
+  state[0].new_entry = 0
+  ret 0
+
+fn tzcalc_backspace(state:*TzCalcState) -> int:
+  if state == 0:
+    ret 0 - 1
+  if state[0].error != 0:
+    ret tzcalc_init(state)
+  if state[0].new_entry != 0:
+    state[0].entry_digits = 0
+    state[0].decimal_mode = 0
+    state[0].decimal_places = 0
+    state[0].negative = 0
+    state[0].display = 0
+    state[0].new_entry = 0
+    ret 0
+  if state[0].decimal_mode != 0 && state[0].decimal_places > 0:
+    state[0].entry_digits = state[0].entry_digits / 10
+    state[0].decimal_places = state[0].decimal_places - 1
+  else:
+    if state[0].decimal_mode != 0:
+      state[0].decimal_mode = 0
+    else:
+      state[0].entry_digits = state[0].entry_digits / 10
+  _tzcalc_sync_entry(state)
+  ret 0
+
+fn tzcalc_toggle_sign(state:*TzCalcState) -> int:
+  if state == 0:
+    ret 0 - 1
+  if state[0].error != 0:
+    ret 0 - 2
+  if state[0].new_entry != 0:
+    state[0].display = 0 - state[0].display
+    ret 0
+  state[0].negative = 1 - state[0].negative
+  _tzcalc_sync_entry(state)
+  ret 0
+
+fn tzcalc_percent(state:*TzCalcState) -> int:
+  if state == 0:
+    ret 0 - 1
+  if state[0].error != 0:
+    ret 0 - 2
+  state[0].display = state[0].display / 100
+  state[0].new_entry = 1
+  state[0].entry_digits = 0
+  state[0].decimal_mode = 0
+  state[0].decimal_places = 0
+  state[0].negative = 0
+  ret 0
+
+fn _tzcalc_apply(op:int, a:int, b:int, out:*int) -> int:
+  if out == 0:
+    ret 0 - 1
+  if op == 1:
+    if b > 0 && a > TZCALC_LIMIT - b:
+      ret 0 - 2
+    if b < 0 && a < (0 - TZCALC_LIMIT) - b:
+      ret 0 - 2
+    out[0] = a + b
+    ret 0
+  if op == 2:
+    if b < 0 && a > TZCALC_LIMIT + b:
+      ret 0 - 2
+    if b > 0 && a < (0 - TZCALC_LIMIT) + b:
+      ret 0 - 2
+    out[0] = a - b
+    ret 0
+  if op == 3:
+    negative:int = 0
+    if (a < 0 && b >= 0) || (a >= 0 && b < 0):
+      negative = 1
+    aa:int = a
+    bb:int = b
+    if aa < 0:
+      aa = 0 - aa
+    if bb < 0:
+      bb = 0 - bb
+    qa:int = aa / TZCALC_SCALE
+    ra:int = aa % TZCALC_SCALE
+    qb:int = bb / TZCALC_SCALE
+    rb:int = bb % TZCALC_SCALE
+    if qa != 0 && qb > TZCALC_LIMIT / qa:
+      ret 0 - 2
+    major:int = qa * qb
+    if major > TZCALC_LIMIT / TZCALC_SCALE:
+      ret 0 - 2
+    result:int = major * TZCALC_SCALE
+    term:int = 0
+    if qa != 0 && rb > TZCALC_LIMIT / qa:
+      ret 0 - 2
+    term = qa * rb
+    if term > TZCALC_LIMIT - result:
+      ret 0 - 2
+    result = result + term
+    if qb != 0 && ra > TZCALC_LIMIT / qb:
+      ret 0 - 2
+    term = qb * ra
+    if term > TZCALC_LIMIT - result:
+      ret 0 - 2
+    result = result + term
+    term = (ra * rb) / TZCALC_SCALE
+    if term > TZCALC_LIMIT - result:
+      ret 0 - 2
+    result = result + term
+    if negative != 0:
+      result = 0 - result
+    out[0] = result
+    ret 0
+  if op == 4:
+    if b == 0:
+      ret 0 - 3
+    negative:int = 0
+    if (a < 0 && b >= 0) || (a >= 0 && b < 0):
+      negative = 1
+    aa:int = a
+    bb:int = b
+    if aa < 0:
+      aa = 0 - aa
+    if bb < 0:
+      bb = 0 - bb
+    whole:int = aa / bb
+    if whole > TZCALC_LIMIT / TZCALC_SCALE:
+      ret 0 - 2
+    result:int = whole * TZCALC_SCALE
+    remainder:int = aa % bb
+    fraction:int = 0
+    place:int = 1000
+    decimal_index:int = 0
+    while decimal_index < 4:
+      next_remainder:int = 0
+      digit:int = 0
+      step:int = 0
+      while step < 10:
+        distance:int = bb - remainder
+        if next_remainder >= distance:
+          next_remainder = next_remainder - distance
+          digit = digit + 1
+        else:
+          next_remainder = next_remainder + remainder
+        step = step + 1
+      fraction = fraction + digit * place
+      place = place / 10
+      remainder = next_remainder
+      decimal_index = decimal_index + 1
+    if fraction > TZCALC_LIMIT - result:
+      ret 0 - 2
+    result = result + fraction
+    if negative != 0:
+      result = 0 - result
+    out[0] = result
+    ret 0
+  ret 0 - 1
+
+fn tzcalc_operator(state:*TzCalcState, op:int) -> int:
+  if state == 0 || op < 1 || op > 4:
+    ret 0 - 1
+  if state[0].error != 0:
+    ret 0 - 2
+  if state[0].has_pending != 0 && state[0].new_entry == 0:
+    result:int
+    status:int = _tzcalc_apply(state[0].pending, state[0].accumulator, state[0].display, &result)
+    if status != 0:
+      state[0].error = 1
+      ret status
+    state[0].display = result
+    state[0].accumulator = result
+  else:
+    state[0].accumulator = state[0].display
+  state[0].pending = op
+  state[0].has_pending = 1
+  state[0].new_entry = 1
+  state[0].decimal_mode = 0
+  ret 0
+
+fn tzcalc_equals(state:*TzCalcState) -> int:
+  if state == 0:
+    ret 0 - 1
+  if state[0].error != 0:
+    ret 0 - 2
+  if state[0].has_pending == 0 || state[0].new_entry != 0:
+    ret 0
+  result:int
+  status:int = _tzcalc_apply(state[0].pending, state[0].accumulator, state[0].display, &result)
+  if status != 0:
+    state[0].error = 1
+    ret status
+  state[0].display = result
+  state[0].pending = 0
+  state[0].has_pending = 0
+  state[0].new_entry = 1
+  state[0].entry_digits = 0
+  state[0].decimal_mode = 0
+  state[0].decimal_places = 0
+  state[0].negative = 0
+  ret 0
+
+fn _tzcalc_unary_result(state:*TzCalcState, value:int) -> int:
+  if state == 0:
+    ret 0 - 1
+  state[0].display = value
+  state[0].entry_digits = 0
+  state[0].new_entry = 1
+  state[0].decimal_mode = 0
+  state[0].decimal_places = 0
+  state[0].negative = 0
+  ret 0
+
+fn tzcalc_reciprocal(state:*TzCalcState) -> int:
+  if state == 0:
+    ret 0 - 1
+  if state[0].error != 0:
+    ret 0 - 2
+  if state[0].display == 0:
+    state[0].error = 1
+    ret 0 - 3
+  result:int = (TZCALC_SCALE * TZCALC_SCALE) / state[0].display
+  ret _tzcalc_unary_result(state, result)
+
+fn tzcalc_square(state:*TzCalcState) -> int:
+  if state == 0:
+    ret 0 - 1
+  if state[0].error != 0:
+    ret 0 - 2
+  value:int = state[0].display
+  if value < 0:
+    value = 0 - value
+  whole:int = value / TZCALC_SCALE
+  fraction:int = value % TZCALC_SCALE
+  if whole > 30000000:
+    state[0].error = 1
+    ret 0 - 2
+  result:int = whole * whole * TZCALC_SCALE
+  term:int = 2 * whole * fraction
+  if result > TZCALC_LIMIT - term:
+    state[0].error = 1
+    ret 0 - 2
+  result = result + term
+  term = (fraction * fraction) / TZCALC_SCALE
+  if result > TZCALC_LIMIT - term:
+    state[0].error = 1
+    ret 0 - 2
+  result = result + term
+  ret _tzcalc_unary_result(state, result)
+
+fn _tzcalc_isqrt(value:int) -> int:
+  if value <= 0:
+    ret 0
+  guess:int = value
+  if value < TZCALC_SCALE:
+    guess = TZCALC_SCALE
+  i:int = 0
+  while i < 96:
+    quotient:int = value / guess
+    remainder:int = value % guess
+    estimate:int = quotient * TZCALC_SCALE
+    place:int = 1000
+    digit_index:int = 0
+    while digit_index < 4:
+      digit:int = 0
+      next_remainder:int = 0
+      repeat:int = 0
+      while repeat < 10:
+        gap:int = guess - remainder
+        if next_remainder >= gap:
+          next_remainder = next_remainder - gap
+          digit = digit + 1
+        else:
+          next_remainder = next_remainder + remainder
+        repeat = repeat + 1
+      remainder = next_remainder
+      estimate = estimate + digit * place
+      place = place / 10
+      digit_index = digit_index + 1
+    next_guess:int = guess / 2 + estimate / 2
+    if (guess % 2 + estimate % 2) >= 2:
+      next_guess = next_guess + 1
+    if next_guess >= guess:
+      break
+    guess = next_guess
+    i = i + 1
+  ret guess
+
+fn tzcalc_sqrt(state:*TzCalcState) -> int:
+  if state == 0:
+    ret 0 - 1
+  if state[0].error != 0:
+    ret 0 - 2
+  if state[0].display < 0:
+    state[0].error = 1
+    ret 0 - 4
+  result:int = _tzcalc_isqrt(state[0].display)
+  ret _tzcalc_unary_result(state, result)
+
+fn tzcalc_memory_clear(state:*TzCalcState) -> int:
+  if state == 0:
+    ret 0 - 1
+  state[0].memory = 0
+  ret 0
+
+fn tzcalc_memory_recall(state:*TzCalcState) -> int:
+  if state == 0:
+    ret 0 - 1
+  if state[0].error != 0:
+    ret 0 - 2
+  ret _tzcalc_unary_result(state, state[0].memory)
+
+fn tzcalc_memory_store(state:*TzCalcState) -> int:
+  if state == 0:
+    ret 0 - 1
+  if state[0].error != 0:
+    ret 0 - 2
+  state[0].memory = state[0].display
+  ret 0
+
+fn tzcalc_memory_add(state:*TzCalcState) -> int:
+  if state == 0:
+    ret 0 - 1
+  if state[0].error != 0:
+    ret 0 - 2
+  result:int
+  status:int = _tzcalc_apply(1, state[0].memory, state[0].display, &result)
+  if status != 0:
+    ret status
+  state[0].memory = result
+  ret 0
+
+fn tzcalc_memory_subtract(state:*TzCalcState) -> int:
+  if state == 0:
+    ret 0 - 1
+  if state[0].error != 0:
+    ret 0 - 2
+  result:int
+  status:int = _tzcalc_apply(2, state[0].memory, state[0].display, &result)
+  if status != 0:
+    ret status
+  state[0].memory = result
+  ret 0
+
+fn tzcalc_value(state:*TzCalcState) -> int:
+  if state == 0:
+    ret 0
+  ret state[0].display
+
+fn tzcalc_set_value(state:*TzCalcState, value:int) -> int:
+  if state == 0 || value > TZCALC_LIMIT || value < (0 - TZCALC_LIMIT):
+    ret 0 - 1
+  state[0].display = value
+  state[0].accumulator = value
+  state[0].pending = 0
+  state[0].has_pending = 0
+  state[0].new_entry = 1
+  state[0].entry_digits = 0
+  state[0].decimal_mode = 0
+  state[0].decimal_places = 0
+  state[0].negative = 0
+  state[0].error = 0
+  ret 0
+
+fn tzcalc_error(state:*TzCalcState) -> int:
+  if state == 0:
+    ret 1
+  ret state[0].error
+
+fn _tzcalc_format_put(out:*char, capacity:int, pos:int, value:int) -> int:
+  if out == 0 || capacity <= 0 || pos < 0 || pos >= capacity - 1:
+    ret pos
+  out[pos] = value as char
+  ret pos + 1
+
+// Format into caller-owned memory, avoiding a new heap string on each frame.
+// Returns the number of output characters, or a negative value on bad input.
+fn tzcalc_format_into(state:*TzCalcState, out:*char, capacity:int) -> int:
+  if out == 0 || capacity <= 0:
+    ret 0 - 1
+  out[0] = 0 as char
+  pos:int = 0
+  if state == 0 || state[0].error != 0:
+    pos = _tzcalc_format_put(out, capacity, pos, 69)
+    pos = _tzcalc_format_put(out, capacity, pos, 114)
+    pos = _tzcalc_format_put(out, capacity, pos, 114)
+    pos = _tzcalc_format_put(out, capacity, pos, 111)
+    pos = _tzcalc_format_put(out, capacity, pos, 114)
+    out[pos] = 0 as char
+    ret pos
+
+  value:int = state[0].display
+  negative:int = 0
+  if value < 0:
+    negative = 1
+    value = 0 - value
+  whole:int = value / TZCALC_SCALE
+  fraction:int = value % TZCALC_SCALE
+  whole_digits:[char;24]
+  whole_count:int = 0
+  if whole == 0:
+    whole_digits[0] = 48 as char
+    whole_count = 1
+  else:
+    while whole > 0 && whole_count < 24:
+      whole_digits[whole_count] = (48 + whole % 10) as char
+      whole_count = whole_count + 1
+      whole = whole / 10
+  if negative != 0:
+    pos = _tzcalc_format_put(out, capacity, pos, 45)
+  while whole_count > 0:
+    whole_count = whole_count - 1
+    pos = _tzcalc_format_put(out, capacity, pos, whole_digits[whole_count] as int)
+  if fraction != 0:
+    fraction_digits:[char;4]
+    divisor:int = 1000
+    i:int = 0
+    while i < 4:
+      digit:int = fraction / divisor
+      fraction = fraction % divisor
+      fraction_digits[i] = (48 + digit) as char
+      divisor = divisor / 10
+      i = i + 1
+    end:int = 4
+    while end > 0 && fraction_digits[end - 1] == 48 as char:
+      end = end - 1
+    if end > 0:
+      pos = _tzcalc_format_put(out, capacity, pos, 46)
+      i = 0
+      while i < end:
+        pos = _tzcalc_format_put(out, capacity, pos, fraction_digits[i] as int)
+        i = i + 1
+  out[pos] = 0 as char
+  ret pos
+
+fn tzcalc_format(state:*TzCalcState) -> str:
+  if state == 0:
+    ret "Error"
+  if state[0].error != 0:
+    ret "Error"
+  negative:int = 0
+  value:int = state[0].display
+  if value < 0:
+    negative = 1
+    value = 0 - value
+  whole:int = value / TZCALC_SCALE
+  fraction:int = value % TZCALC_SCALE
+  whole_text:str = str.int_to_str(whole)
+  result:str = whole_text
+  if fraction != 0:
+    digits:[char;5]
+    divisor:int = 1000
+    i:int = 0
+    while i < 4:
+      digit:int = fraction / divisor
+      fraction = fraction % divisor
+      digits[i] = (48 + digit) as char
+      divisor = divisor / 10
+      i = i + 1
+    end:int = 4
+    while end > 0 && digits[end - 1] == 48 as char:
+      end = end - 1
+    digits[end] = 0 as char
+    result = str.str_cat3(whole_text, ".", &digits[0])
+    free(whole_text)
+  if negative != 0:
+    signed_result:str = str.str_cat("-", result)
+    free(result)
+    ret signed_result
+  ret result

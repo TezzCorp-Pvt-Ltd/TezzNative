@@ -342,7 +342,7 @@ function tezz_file_meta(string $root, string $relative): array
 
 function tezz_download_artifacts(string $root): array
 {
-    $version = (string)(tezz_current_version_info()['version'] ?? '1.1.0');
+    $version = (string)(tezz_current_version_info()['version'] ?? '1.0.0');
     $items = [
         [
             'key' => 'windows-sdk',
@@ -419,7 +419,7 @@ function tezz_record_download_request(?PDO $pdo, array $config, array $artifact,
 function tezz_update_payload(array $config, string $platform, string $currentVersion, string $mode = 'check'): array
 {
     $info = tezz_current_version_info();
-    $latest = (string)($info['version'] ?? '1.1.0');
+    $latest = (string)($info['version'] ?? '1.0.0');
     $channel = (string)($info['channel'] ?? 'release');
     $updateAvailable = $currentVersion === '' ? true : tezz_version_compare($currentVersion, $latest) < 0;
     $site = tezz_site_url($config);

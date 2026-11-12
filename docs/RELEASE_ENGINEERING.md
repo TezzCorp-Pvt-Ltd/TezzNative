@@ -52,6 +52,6 @@ match.
 - Generate and verify `release_manifest.json`.
 - Run stable conformance, native smoke, ABI, and release-security checks.
 - Upload archives, checksums, manifest, registry, install scripts, and SDK
-  mirror files to `tn.tezzcorp.com`.
+  mirror files to `tezznative.org`.
 - Verify public HTTPS downloads and API redirects against local hashes.
 - Push GitHub changes and wait for Actions success.

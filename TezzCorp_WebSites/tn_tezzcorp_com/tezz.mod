@@ -1,5 +1,5 @@
 name = tezznative
-version = 1.1.0
+version = 1.0.0
 module_root = lib
 registry = https://tezznative.org/registry.tnx
 registry_lib = https://tezznative.org/download/sdk/lib/
@@ -26,6 +26,7 @@ dep.tezzinstall = 0.1.0
 dep.vec = 0.1.0
 dep.arena = 0.1.0
 dep.tzgui = 0.1.0
+dep.tzcalc = 0.1.0
 dep.tezzui = 0.1.0
 dep.tzui = 0.1.0
 dep.tnui = 0.1.0
@@ -52,6 +53,19 @@ dep.tts = 0.1.0
 dep.stt = 0.1.0
 dep.tzgui_native = 0.1.0
 dep.tezzdbql = 0.1.0
+# ── GPU GUI stack (v2) ──────────────────────────────────────────────────────
+dep.gpu_render = 1.0.0
+dep.tween = 1.0.0
+dep.particle = 1.0.0
+dep.tzgpu_ui = 1.0.0
+dep.tzgpu_wm = 1.0.0
+dep.tzfont = 1.0.0
+dep.tzcss = 1.0.0
+dep.tzicon = 1.0.0
+dep.tzsvg = 1.0.0
+dep.tzvideo = 1.0.0
+dep.tzrouter = 1.0.0
+dep.tzwindow = 1.0.0
 # Optional extension groups (resolved by extension packs, not core by default)
 optdep.tensor = 0.1.0
 optdep.autodiff = 0.1.0

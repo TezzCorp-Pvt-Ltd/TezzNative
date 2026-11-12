@@ -1,0 +1,402 @@
+// tzcss.tn — TezzNative Declarative CSS Layout & Styling Engine v1.0
+//
+// Provides developers with a modern, scalable styling system:
+//  - CSS Box Model: margin, padding, borders, rounded corners (radii)
+//  - Backgrounds & Glass: solid, linear gradients (H/V), frosted glassmorphism, top sheen
+//  - Box Shadows: realistic multi-tier elevation drop shadows
+//  - Typography: font family (Poppins/Devanagari/Inter/Mono), sizes, weights, text alignment
+//  - Flexbox Layout: row/column, gap, justify-content (start/center/end/between), align-items
+//  - Preset utility classes: .card, .btn, .badge, .input, .glass, .nav-pill, .modal
+
+import "gpu_render"
+import "tzfont"
+import "tzgui"
+
+// ── Flexbox constants ─────────────────────────────────────────────────────
+
+let FLEX_ROW:int = 0
+let FLEX_COL:int = 1
+
+fn flex_row() -> int: ret 0
+fn flex_col() -> int: ret 1
+
+let JUSTIFY_START:int   = 0
+let JUSTIFY_CENTER:int  = 1
+let JUSTIFY_END:int     = 2
+let JUSTIFY_BETWEEN:int = 3
+
+fn justify_start() -> int: ret 0
+fn justify_center() -> int: ret 1
+fn justify_end() -> int: ret 2
+fn justify_between() -> int: ret 3
+
+let ALIGN_START:int   = 0
+let ALIGN_CENTER:int  = 1
+let ALIGN_END:int     = 2
+let ALIGN_STRETCH:int = 3
+
+fn align_start() -> int: ret 0
+fn align_center() -> int: ret 1
+fn align_end() -> int: ret 2
+fn align_stretch() -> int: ret 3
+
+// ── Gravity positioning system ─────────────────────────────────────────────
+// Anchors elements (cards, text, buttons, icons) inside their parent container
+let GRAVITY_TOP_LEFT:int      = 0
+let GRAVITY_TOP_CENTER:int    = 1
+let GRAVITY_TOP_RIGHT:int     = 2
+let GRAVITY_CENTER_LEFT:int   = 3
+let GRAVITY_CENTER:int        = 4
+let GRAVITY_CENTER_RIGHT:int  = 5
+let GRAVITY_BOTTOM_LEFT:int   = 6
+let GRAVITY_BOTTOM_CENTER:int = 7
+let GRAVITY_BOTTOM_RIGHT:int  = 8
+
+fn gravity_top_left() -> int: ret 0
+fn gravity_top_center() -> int: ret 1
+fn gravity_top_right() -> int: ret 2
+fn gravity_center_left() -> int: ret 3
+fn gravity_center() -> int: ret 4
+fn gravity_center_right() -> int: ret 5
+fn gravity_bottom_left() -> int: ret 6
+fn gravity_bottom_center() -> int: ret 7
+fn gravity_bottom_right() -> int: ret 8
+
+// ── TzCssStyle struct ─────────────────────────────────────────────────────
+
+struct TzCssStyle:
+  // Dimensions
+  w:int
+  h:int
+  // Box Model: Paddings
+  pad_t:int
+  pad_r:int
+  pad_b:int
+  pad_l:int
+  // Borders
+  border_w:int
+  border_c:int
+  border_radius:int
+  // Background & Glass
+  bg_c:int
+  bg_gradient_dir:int  // 0=none, 1=horizontal, 2=vertical
+  bg_c2:int
+  glass_alpha:int
+  sheen:int
+  // Drop Shadow
+  shadow_spread:int
+  shadow_c:int
+  // Typography
+  font_id:int
+  font_size:int
+  font_weight:int
+  text_c:int
+  text_align:int
+  // Flexbox & Gravity Layout
+  flex_dir:int
+  justify:int
+  align:int
+  gap:int
+  gravity:int
+  margin_t:int
+  margin_r:int
+  margin_b:int
+  margin_l:int
+  flex_grow:int
+  flex_shrink:int
+  // Interactive Hover
+  hover_bg:int
+  hover_border:int
+  active_offset:int
+
+// ── Initializer ───────────────────────────────────────────────────────────
+
+fn css_init(s:*TzCssStyle) -> int:
+  if s == 0:
+    ret (0 - 1)
+  unsafe:
+    s[0].w = 0 - 1
+    s[0].h = 0 - 1
+    s[0].pad_t = 0
+    s[0].pad_r = 0
+    s[0].pad_b = 0
+    s[0].pad_l = 0
+    s[0].border_w = 0
+    s[0].border_c = 0x223048
+    s[0].border_radius = 0
+    s[0].bg_c = 0x111A2B
+    s[0].bg_gradient_dir = 0
+    s[0].bg_c2 = 0
+    s[0].glass_alpha = 0
+    s[0].sheen = 0
+    s[0].shadow_spread = 0
+    s[0].shadow_c = 0x03060D
+    s[0].font_id = tzfont.font_poppins()
+    s[0].font_size = 1
+    s[0].font_weight = tzfont.weight_regular()
+    s[0].text_c = 0xF8FAFC
+    s[0].text_align = tzfont.align_left()
+    s[0].flex_dir = FLEX_ROW
+    s[0].justify = JUSTIFY_START
+    s[0].align = ALIGN_START
+    s[0].gap = 8
+    s[0].gravity = GRAVITY_TOP_LEFT
+    s[0].margin_t = 0
+    s[0].margin_r = 0
+    s[0].margin_b = 0
+    s[0].margin_l = 0
+    s[0].flex_grow = 0
+    s[0].flex_shrink = 1
+    s[0].hover_bg = 0 - 1
+    s[0].hover_border = 0 - 1
+    s[0].active_offset = 0
+  ret 0
+
+// ── Preset Class Utilities ────────────────────────────────────────────────
+
+fn css_class_card(s:*TzCssStyle, bg:int, border:int, radius:int) -> int:
+  css_init(s)
+  unsafe:
+    s[0].bg_c = bg
+    s[0].border_w = 1
+    s[0].border_c = border
+    s[0].border_radius = radius
+    s[0].shadow_spread = 4
+    s[0].sheen = 1
+    s[0].pad_t = 12
+    s[0].pad_r = 14
+    s[0].pad_b = 12
+    s[0].pad_l = 14
+  ret 0
+
+fn css_class_btn(s:*TzCssStyle, accent:int, is_primary:int) -> int:
+  css_init(s)
+  unsafe:
+    if is_primary != 0:
+      s[0].bg_c = accent
+      s[0].bg_gradient_dir = 1
+      s[0].bg_c2 = gpu_render.gpr_brighten(accent, 20)
+      s[0].border_w = 1
+      s[0].border_c = gpu_render.gpr_darken(accent, 15)
+      s[0].text_c = 0xFFFFFF
+      s[0].font_weight = tzfont.weight_semibold()
+      s[0].shadow_spread = 3
+    else:
+      s[0].bg_c = 0x18243A
+      s[0].border_w = 1
+      s[0].border_c = 0x24324D
+      s[0].text_c = 0xF8FAFC
+    s[0].border_radius = 6
+    s[0].sheen = 1
+    s[0].pad_t = 8
+    s[0].pad_b = 8
+    s[0].pad_l = 16
+    s[0].pad_r = 16
+    s[0].text_align = tzfont.align_center()
+    s[0].active_offset = 1
+  ret 0
+
+fn css_class_badge(s:*TzCssStyle, bg:int) -> int:
+  css_init(s)
+  unsafe:
+    s[0].bg_c = bg
+    s[0].border_w = 1
+    s[0].border_c = gpu_render.gpr_brighten(bg, 25)
+    s[0].border_radius = 999
+    s[0].sheen = 1
+    s[0].text_c = 0xFFFFFF
+    s[0].pad_t = 3
+    s[0].pad_b = 3
+    s[0].pad_l = 10
+    s[0].pad_r = 10
+    s[0].font_size = 1
+    s[0].text_align = tzfont.align_center()
+  ret 0
+
+fn css_class_glass(s:*TzCssStyle, accent:int) -> int:
+  css_init(s)
+  unsafe:
+    s[0].bg_c = 0x111A2B
+    s[0].border_w = 1
+    s[0].border_c = 0x223048
+    s[0].border_radius = 8
+    s[0].glass_alpha = 140
+    s[0].shadow_spread = 6
+    s[0].sheen = 1
+  ret 0
+
+// ── Render Box & Typography ───────────────────────────────────────────────
+
+fn css_render_box(canvas:*GpuCanvas, x:int, y:int, w:int, h:int, s:*TzCssStyle) -> int:
+  if canvas == 0 || s == 0:
+    ret (0 - 1)
+  unsafe:
+    // Drop shadow
+    if s[0].shadow_spread > 0:
+      gpu_render.gpr_shadow(canvas, x, y, w, h, s[0].shadow_spread, 140)
+
+    // Base background or gradient
+    r:int = s[0].border_radius
+    if s[0].bg_gradient_dir == 1:
+      gpu_render.gpr_gradient_h(canvas, x, y, w, h, s[0].bg_c, s[0].bg_c2)
+    else:
+      if s[0].bg_gradient_dir == 2:
+        gpu_render.gpr_gradient_v(canvas, x, y, w, h, s[0].bg_c, s[0].bg_c2)
+      else:
+        if r > 0:
+          gpu_render.gpr_rect_r(canvas, x, y, w, h, s[0].bg_c, r)
+        else:
+          gpu_render.gpr_rect(canvas, x, y, w, h, s[0].bg_c)
+
+    // Frosted glass overlay
+    if s[0].glass_alpha > 0:
+      gpu_render.gpr_blend(canvas, x, y, w, h, 0x162238, s[0].glass_alpha)
+
+    // Top highlight sheen
+    if s[0].sheen != 0:
+      sheen_c:int = gpu_render.gpr_brighten(s[0].bg_c, 35)
+      sx:int = x + r
+      sw:int = w - 2*r
+      if sw < 10:
+        sx = x
+        sw = w
+      gpu_render.gpr_sheen(canvas, sx, y, sw, sheen_c)
+
+    // Border outline
+    if s[0].border_w > 0:
+      gpu_render.gpr_outline(canvas, x, y, w, h, s[0].border_c)
+
+  ret 0
+
+fn css_render_text(canvas:*GpuCanvas, x:int, y:int, w:int, h:int, text:str, s:*TzCssStyle) -> int:
+  if canvas == 0 || s == 0 || text == 0:
+    ret (0 - 1)
+  unsafe:
+    content_x:int = x + s[0].pad_l
+    content_y:int = y + s[0].pad_t
+    content_w:int = w - s[0].pad_l - s[0].pad_r
+    if content_w < 1:
+      content_w = 1
+    tzfont.tzf_draw_text_aligned(canvas, content_x, content_y, content_w, text, s[0].font_id, s[0].font_size, s[0].font_weight, s[0].text_c, s[0].text_align)
+  ret 0
+
+// ── Flexbox Layout Computations ───────────────────────────────────────────
+
+// Computes X positions for N flex items in a row with gap and justify
+fn css_calc_flex_row_x(total_w:int, item_w:int, count:int, gap:int, justify:int, item_idx:int) -> int:
+  if count <= 0:
+    ret 0
+  total_items_w:int = count * item_w + (count - 1) * gap
+  start_x:int = 0
+  if justify == JUSTIFY_CENTER:
+    start_x = (total_w - total_items_w) / 2
+  if justify == JUSTIFY_END:
+    start_x = total_w - total_items_w
+  if justify == JUSTIFY_BETWEEN && count > 1:
+    actual_gap:int = (total_w - (count * item_w)) / (count - 1)
+    ret item_idx * (item_w + actual_gap)
+  ret start_x + item_idx * (item_w + gap)
+
+// Computes Y positions for N flex items in a column
+fn css_calc_flex_col_y(total_h:int, item_h:int, count:int, gap:int, justify:int, item_idx:int) -> int:
+  if count <= 0:
+    ret 0
+  total_items_h:int = count * item_h + (count - 1) * gap
+  start_y:int = 0
+  if justify == JUSTIFY_CENTER:
+    start_y = (total_h - total_items_h) / 2
+  if justify == JUSTIFY_END:
+    start_y = total_h - total_items_h
+  if justify == JUSTIFY_BETWEEN && count > 1:
+    actual_gap:int = (total_h - (count * item_h)) / (count - 1)
+    ret item_idx * (item_h + actual_gap)
+  ret start_y + item_idx * (item_h + gap)
+
+// ── Gravity Positioning Engine ────────────────────────────────────────────
+
+fn css_calc_gravity_x(parent_x:int, parent_w:int, item_w:int, gravity:int, margin_l:int, margin_r:int) -> int:
+  if gravity == 0 || gravity == 3 || gravity == 6:
+    ret parent_x + margin_l
+  if gravity == 1 || gravity == 4 || gravity == 7:
+    ret parent_x + (parent_w - item_w) / 2 + margin_l - margin_r
+  ret parent_x + parent_w - item_w - margin_r
+
+fn css_calc_gravity_y(parent_y:int, parent_h:int, item_h:int, gravity:int, margin_t:int, margin_b:int) -> int:
+  if gravity == 0 || gravity == 1 || gravity == 2:
+    ret parent_y + margin_t
+  if gravity == 3 || gravity == 4 || gravity == 5:
+    ret parent_y + (parent_h - item_h) / 2 + margin_t - margin_b
+  ret parent_y + parent_h - item_h - margin_b
+
+// Render box with gravity alignment inside a parent container
+fn css_render_box_gravity(canvas:*GpuCanvas, px:int, py:int, pw:int, ph:int, w:int, h:int, gravity:int, s:*TzCssStyle) -> int:
+  if canvas == 0 || s == 0:
+    ret (0 - 1)
+  gx:int = css_calc_gravity_x(px, pw, w, gravity, 0, 0)
+  gy:int = css_calc_gravity_y(py, ph, h, gravity, 0, 0)
+  ret css_render_box(canvas, gx, gy, w, h, s)
+
+// Render text with gravity alignment inside a parent container
+fn css_render_text_gravity(canvas:*GpuCanvas, px:int, py:int, pw:int, ph:int, text:str, font_id:int, scale:int, weight:int, color:int, gravity:int) -> int:
+  if canvas == 0 || text == 0:
+    ret (0 - 1)
+  tw:int = tzfont.tzf_measure_w(text, font_id, scale)
+  th:int = tzfont.tzf_measure_h(font_id, scale)
+  gx:int = css_calc_gravity_x(px, pw, tw, gravity, 0, 0)
+  gy:int = css_calc_gravity_y(py, ph, th, gravity, 0, 0)
+  ret tzfont.tzf_draw_text(canvas, gx, gy, text, font_id, scale, weight, color)
+
+// Apply the shared box, spacing, and flex properties to the retained GUI tree.
+// Typography and hover painting remain available through css_render_* calls.
+fn css_apply_widget(tree:*TzWidgetTree, widget_id:int, s:*TzCssStyle) -> int:
+  if tree == 0 || s == 0:
+    ret 0 - 1
+  core_style:TzWidgetStyle
+  tzgui.widget_style_init(&core_style, s[0].bg_c, s[0].text_c)
+  core_style.border_color = s[0].border_c
+  core_style.border_width = s[0].border_w
+  core_style.radius = s[0].border_radius
+  core_style.gradient_color = s[0].bg_c2
+  core_style.gradient_axis = 0
+  if s[0].bg_gradient_dir == 1:
+    core_style.gradient_axis = 2
+  if s[0].bg_gradient_dir == 2:
+    core_style.gradient_axis = 1
+  core_style.shadow_color = s[0].shadow_c
+  core_style.shadow_size = s[0].shadow_spread
+  core_style.text_align = s[0].text_align
+  if s[0].hover_bg >= 0:
+    core_style.hover_bg = s[0].hover_bg
+  if s[0].hover_border >= 0:
+    core_style.hover_border = s[0].hover_border
+  rc:int = tzgui.widget_set_style(tree, widget_id, &core_style)
+  if rc != 0:
+    ret rc
+  tzgui.widget_set_padding(tree, widget_id, s[0].pad_t, s[0].pad_r, s[0].pad_b, s[0].pad_l)
+  tzgui.widget_set_margin(tree, widget_id, s[0].margin_t, s[0].margin_r, s[0].margin_b, s[0].margin_l)
+  tzgui.widget_set_flex(tree, widget_id, s[0].flex_grow, s[0].flex_shrink)
+  tzgui.widget_set_preferred_size(tree, widget_id, s[0].w, s[0].h)
+  tzgui.tree_layout(tree)
+  ret 0
+
+fn css_apply_layout(tree:*TzWidgetTree, widget_id:int, s:*TzCssStyle) -> int:
+  if tree == 0 || s == 0:
+    ret 0 - 1
+  mode:int = 1
+  if s[0].flex_dir == FLEX_COL:
+    mode = 2
+  layout:TzWidgetLayout
+  if tzgui.widget_layout_init(&layout, mode) != 0:
+    ret 0 - 2
+  layout.gap = s[0].gap
+  layout.justify = s[0].justify
+  layout.align = s[0].align
+  layout.pad_top = s[0].pad_t
+  layout.pad_right = s[0].pad_r
+  layout.pad_bottom = s[0].pad_b
+  layout.pad_left = s[0].pad_l
+  rc:int = tzgui.widget_set_layout(tree, widget_id, &layout)
+  if rc != 0:
+    ret rc
+  tzgui.tree_layout(tree)
+  ret 0

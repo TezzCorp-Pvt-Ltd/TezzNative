@@ -133,7 +133,7 @@ fn gdt_init() -> int:
   // User data: 64-bit, DPL3
   _gdt_encode(&_gdt[4], 0, 0xFFFFF, 0xF2, 0xC0)
   _gdt_ptr.limit = sizeof(GdtEntry) * 5 - 1
-  _gdt_ptr.base = &_gdt[0] as int
+  _gdt_ptr.base = (&_gdt[0]) as int
   cpu_lgdt(&_gdt_ptr)
   cpu_reload_segments(GDT_KERNEL_CODE, GDT_KERNEL_DATA)
   _gdt_inited = 1
@@ -188,7 +188,7 @@ fn idt_init() -> int:
   // System call uses trap gate
   idt_set_gate(IRQ_SYSCALL, cpu_default_isr_addr(IRQ_SYSCALL), GDT_KERNEL_CODE, IDT_TRAP_GATE, 0)
   _idt_ptr.limit = sizeof(IdtEntry) * IDT_SIZE - 1
-  _idt_ptr.base = &_idt[0] as int
+  _idt_ptr.base = (&_idt[0]) as int
   cpu_lidt(&_idt_ptr)
   _idt_inited = 1
   ret KERNEL_OK
@@ -675,9 +675,7 @@ fn proc_schedule() -> int:
     _procs[old_idx].state = PROC_READY
   _procs[new_idx].state = PROC_RUNNING
   _current_pid = next_pid
-  cpu_context_switch(&_procs[old_idx].rsp, &_procs[old_idx].rip,
-                     _procs[new_idx].rsp, _procs[new_idx].rip,
-                     _procs[new_idx].cr3)
+  cpu_context_switch(&_procs[old_idx].rsp, &_procs[old_idx].rip, _procs[new_idx].rsp, _procs[new_idx].rip, _procs[new_idx].cr3)
   ret KERNEL_OK
 
 // ─────────────────────────────────────────────────────────────

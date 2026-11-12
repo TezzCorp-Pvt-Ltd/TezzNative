@@ -6,8 +6,8 @@ require_once __DIR__ . '/includes/nav.php';
 $boot = tn_boot('/about/');
 $GLOBALS['tn_config'] = $boot['config'];
 
-tn_head('About TezzNative | TezzCorp Pvt Ltd.', 'About the TezzNative language, created by Rohit Pathak at TezzCorp Pvt Ltd.', 'about', '/about/');
-tn_page_shell_start('About TezzNative', 'ENGINEERED BY TEZZCORP PVT LTD', 'TezzNative is a high-performance native systems and AI programming language created by Rohit Pathak to deliver bare-metal execution speed, native multi-dimensional tensors, and built-in asynchronous coroutines without garbage collector pauses.');
+tn_head('About TezzNative | TEZZCORP PRIVATE LIMITED', 'About the TezzNative language, created by Rohit Pathak at TEZZCORP PRIVATE LIMITED', 'about', '/about/');
+tn_page_shell_start('About TezzNative', 'ENGINEERED BY TEZZCORP PRIVATE LIMITED', 'TezzNative is a high-performance native systems and AI programming language created by Rohit Pathak to deliver bare-metal execution speed, native multi-dimensional tensors, and built-in asynchronous coroutines without garbage collector pauses.');
 ?>
   <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px; margin-top: 30px;">
     <article class="feature-card glass-panel" style="padding: 32px;">
@@ -16,7 +16,7 @@ tn_page_shell_start('About TezzNative', 'ENGINEERED BY TEZZCORP PVT LTD', 'TezzN
       </div>
       <h2 style="font-size: 1.5rem; font-weight: 700; margin-bottom: 12px; color: var(--text-primary);">Our Vision & Architecture</h2>
       <p style="color: var(--text-secondary); line-height: 1.7; margin-bottom: 16px;">
-        TezzNative was founded by <strong>Rohit Pathak</strong> at <strong>TezzCorp Pvt Ltd.</strong> to eliminate the compromise between expressive syntax and raw hardware performance.
+        TezzNative was founded by <strong>Rohit Pathak</strong> at <strong>TEZZCORP PRIVATE LIMITED</strong> to eliminate the compromise between expressive syntax and raw hardware performance.
       </p>
       <ul style="list-style: none; padding: 0; display: flex; flex-direction: column; gap: 10px; color: var(--text-secondary);">
         <li style="display: flex; align-items: center; gap: 10px;"><span style="color: #ff9933;">&#10003;</span> Compile directly to native standalone Win64 PE and Linux ELF executables.</li>
@@ -38,7 +38,7 @@ tn_page_shell_start('About TezzNative', 'ENGINEERED BY TEZZCORP PVT LTD', 'TezzN
         <div style="font-size: 0.85rem; color: #ff9933; font-weight: 700; text-transform: uppercase; margin-bottom: 6px;">Creator & Company</div>
         <div style="font-weight: 700; color: var(--text-primary); font-size: 1.1rem;">Rohit Pathak</div>
         <div style="font-size: 0.9rem; color: var(--text-secondary);">Founder & Lead Language Architect</div>
-        <div style="font-size: 0.85rem; color: var(--text-tertiary); margin-top: 4px;">TezzCorp Pvt Ltd.</div>
+        <div style="font-size: 0.85rem; color: var(--text-tertiary); margin-top: 4px;">TEZZCORP PRIVATE LIMITED</div>
       </div>
     </article>
   </div>

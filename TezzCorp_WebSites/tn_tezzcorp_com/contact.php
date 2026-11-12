@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 $page_title = 'Contact TezzCorp — Get a Quote or Book a Consultation';
-$page_desc  = 'Contact TezzCorp Pvt Ltd for software development, CRM, API platforms, or consultations. Bihar-based, India-wide delivery.';
+$page_desc  = 'Contact TEZZCORP PRIVATE LIMITED for software development, CRM, API platforms, or consultations. Bihar-based, India-wide delivery.';
 $active_nav = 'contact';
 include 'includes/header.php';
 ?>

@@ -1,0 +1,572 @@
+// TezzNative calculator: retained GUI front end plus the tzcalc core engine.
+// Mouse, touch, keyboard, and number-pad input all route to TezzNative math.
+import "gui"
+import "gui_win"
+import "tzgui"
+import "tzcalc"
+
+let CALC_DIGIT:int = 1
+let CALC_DECIMAL:int = 2
+let CALC_OPERATOR:int = 3
+let CALC_EQUALS:int = 4
+let CALC_CLEAR:int = 5
+let CALC_SIGN:int = 6
+let CALC_PERCENT:int = 7
+let CALC_BACKSPACE:int = 8
+let CALC_CLEAR_ENTRY:int = 9
+let CALC_RECIPROCAL:int = 10
+let CALC_SQUARE:int = 11
+let CALC_SQRT:int = 12
+let CALC_MEMORY_CLEAR:int = 13
+let CALC_MEMORY_RECALL:int = 14
+let CALC_MEMORY_ADD:int = 15
+let CALC_MEMORY_SUBTRACT:int = 16
+let CALC_MEMORY_STORE:int = 17
+let CALC_NAV_MENU:int = 18
+let CALC_NAV_MODE:int = 19
+let CALC_NAV_HISTORY:int = 20
+let CALC_ICON_MENU:int = 1
+let CALC_ICON_HISTORY:int = 2
+let CALC_ICON_MODE:int = 3
+let CALC_ICON_BACKSPACE:int = 4
+let CALC_ICON_CALCULATOR:int = 5
+
+static let g_calc_tree:TzWidgetTree
+static let g_calc_state:TzCalcState
+static let g_calc_running:int = 0
+static let g_calc_panel_id:int = 0
+static let g_calc_display_id:int = 0
+static let g_calc_hint_id:int = 0
+static let g_calc_mode_id:int = 0
+static let g_calc_button_count:int = 0
+static let g_calc_button_ids:[int;40]
+static let g_calc_button_actions:[int;40]
+static let g_calc_button_values:[int;40]
+static let g_calc_memory_ids:[int;6]
+static let g_calc_hint_kind:int = 0
+static let g_calc_display_buffer:*char
+static let g_calc_mode_scientific:int = 0
+static let g_calc_history:[int;8]
+static let g_calc_history_next:int = 0
+static let g_calc_history_count:int = 0
+static let g_calc_history_cursor:int = 0
+
+fn calc_add(parent:int, kind:int, x:int, y:int, w:int, h:int, bg:int, fg:int, text:str) -> int:
+  spec:TzWidgetSpec
+  spec.parent = parent
+  spec.kind = kind
+  spec.x = x
+  spec.y = y
+  spec.w = w
+  spec.h = h
+  spec.z = 0
+  spec.visible = 1
+  spec.bg = bg
+  spec.fg = fg
+  unsafe:
+    spec.text = 0 as str
+    ret tzgui.widget_add_text(&g_calc_tree, &spec, text)
+
+fn calc_add_button(parent:int, x:int, y:int, w:int, h:int, text:str, action:int, value:int) -> int:
+  bg:int = 0xFFFCFC
+  bright:int = 0xE2DCDD
+  if action == CALC_OPERATOR:
+    bg = 0xFAF7F7
+    bright = 0xE6E0E2
+  if action == CALC_CLEAR || action == CALC_CLEAR_ENTRY || action == CALC_BACKSPACE || action == CALC_PERCENT || action == CALC_SIGN || action == CALC_RECIPROCAL || action == CALC_SQUARE || action == CALC_SQRT:
+    bg = 0xF9F5F6
+    bright = 0xE3DCDD
+  if action == CALC_EQUALS:
+    bg = 0x5B2EEA
+    bright = 0x5B2EEA
+  id:int = calc_add(parent, 3, x, y, w, h, bg, 0x242124, text)
+  style:TzWidgetStyle
+  unsafe:
+    tzgui.widget_style_init(&style, bg, 0x242124)
+    style.border_color = bright
+    style.hover_border = 0xBDB4BA
+    style.border_width = 1
+    style.radius = 6
+    style.gradient_axis = 0
+    style.gradient_color = bg
+    style.shadow_size = 0
+    style.text_align = 1
+    style.font_family = "Segoe UI"
+    style.font_size = 20
+    style.font_weight = 400
+    if action == CALC_CLEAR || action == CALC_CLEAR_ENTRY || action == CALC_BACKSPACE || action == CALC_PERCENT || action == CALC_RECIPROCAL || action == CALC_SQUARE || action == CALC_SQRT:
+      style.font_size = 16
+    if action == CALC_EQUALS:
+      style.fg = 0xFFFFFF
+      style.font_weight = 600
+      style.hover_bg = 0x7045F4
+      style.pressed_bg = 0x4721C9
+    tzgui.widget_set_style(&g_calc_tree, id, &style)
+  if g_calc_button_count < 40:
+    g_calc_button_ids[g_calc_button_count] = id
+    g_calc_button_actions[g_calc_button_count] = action
+    g_calc_button_values[g_calc_button_count] = value
+    g_calc_button_count = g_calc_button_count + 1
+  ret id
+
+fn calc_add_icon_button(parent:int, x:int, y:int, size:int, icon_id:int, action:int) -> int:
+  id:int = calc_add(parent, 3, x, y, size, size, 0xF7F2F3, 0x242124, "")
+  style:TzWidgetStyle
+  unsafe:
+    tzgui.widget_style_init(&style, 0xF7F2F3, 0x242124)
+    style.border_color = 0xF7F2F3
+    style.border_width = 0
+    style.radius = size / 2
+    style.hover_bg = 0xEAE5E7
+    style.pressed_bg = 0xDCD5D8
+    style.disabled_bg = 0xF7F2F3
+    style.focus_color = 0x6B3AF2
+    tzgui.widget_set_style(&g_calc_tree, id, &style)
+    tzgui.widget_set_icon(&g_calc_tree, id, icon_id, 22, 0x222024)
+  if g_calc_button_count < 40:
+    g_calc_button_ids[g_calc_button_count] = id
+    g_calc_button_actions[g_calc_button_count] = action
+    g_calc_button_values[g_calc_button_count] = 0
+    g_calc_button_count = g_calc_button_count + 1
+  ret id
+
+fn calc_add_memory_button(parent:int, index:int, x:int, text:str, action:int) -> int:
+  id:int = calc_add_button(parent, x, 158, 48, 28, text, action, 0)
+  style:TzWidgetStyle
+  unsafe:
+    tzgui.widget_style_init(&style, 0xF7F2F3, 0x29272A)
+    style.border_color = 0xF7F2F3
+    style.border_width = 0
+    style.radius = 4
+    style.disabled_bg = 0xF7F2F3
+    style.hover_bg = 0xEAE5E7
+    style.pressed_bg = 0xDCD5D8
+    style.focus_color = 0x6B3AF2
+    style.font_size = 13
+    style.font_weight = 500
+    style.font_family = "Segoe UI"
+    tzgui.widget_set_style(&g_calc_tree, id, &style)
+  if index >= 0 && index < 6:
+    g_calc_memory_ids[index] = id
+  ret id
+
+fn calc_update_memory_buttons() -> int:
+  unsafe:
+    if g_calc_state.memory == 0:
+      tzgui.widget_set_enabled(&g_calc_tree, g_calc_memory_ids[0], 0)
+      tzgui.widget_set_enabled(&g_calc_tree, g_calc_memory_ids[1], 0)
+      tzgui.widget_set_enabled(&g_calc_tree, g_calc_memory_ids[5], 0)
+    else:
+      tzgui.widget_set_enabled(&g_calc_tree, g_calc_memory_ids[0], 1)
+      tzgui.widget_set_enabled(&g_calc_tree, g_calc_memory_ids[1], 1)
+      tzgui.widget_set_enabled(&g_calc_tree, g_calc_memory_ids[5], 1)
+  ret 0
+
+fn calc_set_hint(text:str) -> int:
+  if text == "Ready. Use the buttons, keyboard, or number pad.":
+    g_calc_hint_kind = 0
+  if text == "Addition queued. Enter the next value, then press equals.":
+    g_calc_hint_kind = 1
+  if text == "Subtraction queued. Enter the next value, then press equals.":
+    g_calc_hint_kind = 2
+  if text == "Multiplication queued. Enter the next value, then press equals.":
+    g_calc_hint_kind = 3
+  if text == "Division queued. Enter the next value, then press equals.":
+    g_calc_hint_kind = 4
+  if text == "Calculated by the TezzNative four-place arithmetic engine.":
+    g_calc_hint_kind = 5
+  if text == "Cannot divide by zero. Press AC to reset the calculation.":
+    g_calc_hint_kind = 6
+  if text == "Calculation limit reached. Press AC to start again.":
+    g_calc_hint_kind = 7
+  if text == "Entry cleared. The pending operation is still active.":
+    g_calc_hint_kind = 8
+  if text == "Memory cleared.":
+    g_calc_hint_kind = 9
+  if text == "Memory value stored.":
+    g_calc_hint_kind = 10
+  if text == "Memory value recalled.":
+    g_calc_hint_kind = 11
+  if text == "Added display to memory.":
+    g_calc_hint_kind = 12
+  if text == "Subtracted display from memory.":
+    g_calc_hint_kind = 13
+  if text == "Keyboard: digits, +, -, *, /, Enter, Backspace, C and Esc.":
+    g_calc_hint_kind = 14
+  if text == "Scientific keypad is active.":
+    g_calc_hint_kind = 15
+  if text == "Standard keypad is active.":
+    g_calc_hint_kind = 16
+  if text == "No completed calculation is in history yet.":
+    g_calc_hint_kind = 17
+  if text == "Square root needs a non-negative value.":
+    g_calc_hint_kind = 18
+  if text == "Restored an earlier result from history.":
+    g_calc_hint_kind = 19
+  ret 0
+
+fn calc_hint_text() -> str:
+  if g_calc_hint_kind == 1:
+    ret "Addition queued. Enter the next value, then press equals."
+  if g_calc_hint_kind == 2:
+    ret "Subtraction queued. Enter the next value, then press equals."
+  if g_calc_hint_kind == 3:
+    ret "Multiplication queued. Enter the next value, then press equals."
+  if g_calc_hint_kind == 4:
+    ret "Division queued. Enter the next value, then press equals."
+  if g_calc_hint_kind == 5:
+    ret "Calculated by the TezzNative four-place arithmetic engine."
+  if g_calc_hint_kind == 6:
+    ret "Cannot divide by zero. Press AC to reset the calculation."
+  if g_calc_hint_kind == 7:
+    ret "Calculation limit reached. Press AC to start again."
+  if g_calc_hint_kind == 8:
+    ret "Entry cleared. The pending operation is still active."
+  if g_calc_hint_kind == 9:
+    ret "Memory cleared."
+  if g_calc_hint_kind == 10:
+    ret "Memory value stored."
+  if g_calc_hint_kind == 11:
+    ret "Memory value recalled."
+  if g_calc_hint_kind == 12:
+    ret "Added display to memory."
+  if g_calc_hint_kind == 13:
+    ret "Subtracted display from memory."
+  if g_calc_hint_kind == 14:
+    ret "Keyboard: digits, +, -, *, /, Enter, Backspace, C and Esc."
+  if g_calc_hint_kind == 15:
+    ret "Scientific keypad is active."
+  if g_calc_hint_kind == 16:
+    ret "Standard keypad is active."
+  if g_calc_hint_kind == 17:
+    ret "No completed calculation is in history yet."
+  if g_calc_hint_kind == 18:
+    ret "Square root needs a non-negative value."
+  if g_calc_hint_kind == 19:
+    ret "Restored an earlier result from history."
+  ret "Ready. Use the buttons, keyboard, or number pad."
+
+fn calc_refresh() -> int:
+  unsafe:
+    if g_calc_display_buffer == 0:
+      ret 0 - 1
+    format_status:int = tzcalc.tzcalc_format_into(&g_calc_state, g_calc_display_buffer, 64)
+    if format_status < 0:
+      ret format_status
+    if g_calc_display_id > 0:
+      set_status:int = tzgui.widget_set_text(&g_calc_tree, g_calc_display_id, g_calc_display_buffer as str)
+      if set_status != 0:
+        ret set_status
+    if g_calc_hint_id > 0:
+      tzgui.widget_set_text(&g_calc_tree, g_calc_hint_id, calc_hint_text())
+    calc_update_memory_buttons()
+  ret 0
+
+fn calc_dispatch(action:int, value:int) -> int:
+  unsafe:
+    status:int = 0
+    if action == CALC_NAV_MENU:
+      calc_set_hint("Keyboard: digits, +, -, *, /, Enter, Backspace, C and Esc.")
+    if action == CALC_NAV_MODE:
+      g_calc_mode_scientific = 1 - g_calc_mode_scientific
+      if g_calc_mode_scientific != 0:
+        tzgui.widget_set_text(&g_calc_tree, g_calc_mode_id, "Scientific")
+        calc_set_hint("Scientific keypad is active.")
+      else:
+        tzgui.widget_set_text(&g_calc_tree, g_calc_mode_id, "Standard")
+        calc_set_hint("Standard keypad is active.")
+    if action == CALC_NAV_HISTORY:
+      if g_calc_history_count <= 0:
+        calc_set_hint("No completed calculation is in history yet.")
+      else:
+        history_slot:int = g_calc_history_next - 1 - g_calc_history_cursor
+        while history_slot < 0:
+          history_slot = history_slot + 8
+        value = g_calc_history[history_slot]
+        status = tzcalc.tzcalc_set_value(&g_calc_state, value)
+        g_calc_history_cursor = g_calc_history_cursor + 1
+        if g_calc_history_cursor >= g_calc_history_count:
+          g_calc_history_cursor = 0
+        calc_set_hint("Restored an earlier result from history.")
+    if action == CALC_DIGIT:
+      status = tzcalc.tzcalc_digit(&g_calc_state, value)
+    if action == CALC_DECIMAL:
+      status = tzcalc.tzcalc_decimal(&g_calc_state)
+    if action == CALC_OPERATOR:
+      status = tzcalc.tzcalc_operator(&g_calc_state, value)
+      if value == 1:
+        calc_set_hint("Addition queued. Enter the next value, then press equals.")
+      if value == 2:
+        calc_set_hint("Subtraction queued. Enter the next value, then press equals.")
+      if value == 3:
+        calc_set_hint("Multiplication queued. Enter the next value, then press equals.")
+      if value == 4:
+        calc_set_hint("Division queued. Enter the next value, then press equals.")
+    if action == CALC_EQUALS:
+      status = tzcalc.tzcalc_equals(&g_calc_state)
+      calc_set_hint("Calculated by the TezzNative four-place arithmetic engine.")
+    if action == CALC_CLEAR:
+      status = tzcalc.tzcalc_clear(&g_calc_state)
+      calc_set_hint("Ready. Use the buttons, keyboard, or number pad.")
+    if action == CALC_CLEAR_ENTRY:
+      status = tzcalc.tzcalc_clear_entry(&g_calc_state)
+      calc_set_hint("Entry cleared. The pending operation is still active.")
+    if action == CALC_SIGN:
+      status = tzcalc.tzcalc_toggle_sign(&g_calc_state)
+    if action == CALC_PERCENT:
+      status = tzcalc.tzcalc_percent(&g_calc_state)
+    if action == CALC_BACKSPACE:
+      status = tzcalc.tzcalc_backspace(&g_calc_state)
+    if action == CALC_RECIPROCAL:
+      status = tzcalc.tzcalc_reciprocal(&g_calc_state)
+    if action == CALC_SQUARE:
+      status = tzcalc.tzcalc_square(&g_calc_state)
+    if action == CALC_SQRT:
+      status = tzcalc.tzcalc_sqrt(&g_calc_state)
+    if action == CALC_MEMORY_CLEAR:
+      status = tzcalc.tzcalc_memory_clear(&g_calc_state)
+      calc_set_hint("Memory cleared.")
+    if action == CALC_MEMORY_RECALL:
+      status = tzcalc.tzcalc_memory_recall(&g_calc_state)
+      calc_set_hint("Memory value recalled.")
+    if action == CALC_MEMORY_ADD:
+      status = tzcalc.tzcalc_memory_add(&g_calc_state)
+      calc_set_hint("Added display to memory.")
+    if action == CALC_MEMORY_SUBTRACT:
+      status = tzcalc.tzcalc_memory_subtract(&g_calc_state)
+      calc_set_hint("Subtracted display from memory.")
+    if action == CALC_MEMORY_STORE:
+      status = tzcalc.tzcalc_memory_store(&g_calc_state)
+      calc_set_hint("Memory value stored.")
+    if status == 0 - 3:
+      calc_set_hint("Cannot divide by zero. Press AC to reset the calculation.")
+    else:
+      if status == 0 - 2:
+        calc_set_hint("Calculation limit reached. Press AC to start again.")
+      else:
+        if status == 0 - 4:
+          calc_set_hint("Square root needs a non-negative value.")
+    if action == CALC_EQUALS && status == 0 && tzcalc.tzcalc_error(&g_calc_state) == 0:
+      g_calc_history[g_calc_history_next] = tzcalc.tzcalc_value(&g_calc_state)
+      g_calc_history_next = (g_calc_history_next + 1) % 8
+      if g_calc_history_count < 8:
+        g_calc_history_count = g_calc_history_count + 1
+      g_calc_history_cursor = 0
+    calc_refresh()
+    ret status
+
+fn calc_dispatch_button(widget_id:int) -> int:
+  i:int = 0
+  while i < g_calc_button_count:
+    if g_calc_button_ids[i] == widget_id:
+      ret calc_dispatch(g_calc_button_actions[i], g_calc_button_values[i])
+    i = i + 1
+  ret 0
+
+fn calc_keyboard_event(ev:*GuiEvent, activated:int) -> int:
+  unsafe:
+    if ev == 0:
+      ret 0
+    if ev[0].kind == 1:
+      key:int = ev[0].key
+      if key == 27:
+        g_calc_running = 0
+        ret 1
+      if key == 8 || key == 127:
+        calc_dispatch(CALC_BACKSPACE, 0)
+        ret 1
+      if key == 67 || key == 99:
+        calc_dispatch(CALC_CLEAR, 0)
+        ret 1
+      if key == 13 && activated == 0:
+        calc_dispatch(CALC_EQUALS, 0)
+        ret 1
+      if key >= 96 && key <= 105:
+        calc_dispatch(CALC_DIGIT, key - 96)
+        ret 1
+      if key == 106:
+        calc_dispatch(CALC_OPERATOR, 3)
+        ret 1
+      if key == 107:
+        calc_dispatch(CALC_OPERATOR, 1)
+        ret 1
+      if key == 109:
+        calc_dispatch(CALC_OPERATOR, 2)
+        ret 1
+      if key == 111:
+        calc_dispatch(CALC_OPERATOR, 4)
+        ret 1
+    if ev[0].kind == 9:
+      ch:int = ev[0].key
+      if ch >= 48 && ch <= 57:
+        calc_dispatch(CALC_DIGIT, ch - 48)
+        ret 1
+      if ch == 46:
+        calc_dispatch(CALC_DECIMAL, 0)
+        ret 1
+      if ch == 43:
+        calc_dispatch(CALC_OPERATOR, 1)
+        ret 1
+      if ch == 45:
+        calc_dispatch(CALC_OPERATOR, 2)
+        ret 1
+      if ch == 42 || ch == 120 || ch == 88:
+        calc_dispatch(CALC_OPERATOR, 3)
+        ret 1
+      if ch == 47:
+        calc_dispatch(CALC_OPERATOR, 4)
+        ret 1
+      if ch == 37:
+        calc_dispatch(CALC_PERCENT, 0)
+        ret 1
+      if ch == 61:
+        calc_dispatch(CALC_EQUALS, 0)
+        ret 1
+    ret 0
+
+fn main() -> int:
+  unsafe:
+    surface:GuiSurface
+    ev:GuiEvent
+    g_calc_running = 1
+    g_calc_button_count = 0
+    g_calc_display_buffer = (*char)malloc(64)
+    if g_calc_display_buffer == 0:
+      ret 1
+    g_calc_history_count = 0
+    g_calc_history_next = 0
+    g_calc_history_cursor = 0
+    g_calc_mode_scientific = 0
+    if gui_win.fb_init_ex("Calculator", 340, 560) != 0:
+      ret 1
+    gui_win.fb_set_app_icon(0, 0x6231EE, 0x9A82FF)
+    if gui.gui_surface(&surface) != 0 || surface.addr == 0:
+      ret 2
+    if tzgui.tree_init(&g_calc_tree, surface.width, surface.height) != 0:
+      ret 3
+    tzgui.tree_set_clear_color(&g_calc_tree, 0xF7F2F3)
+    tzcalc.tzcalc_init(&g_calc_state)
+
+    g_calc_panel_id = calc_add(0, 1, 5, 4, 330, 552, 0xF7F2F3, 0x242124, 0 as str)
+    panel_style:TzWidgetStyle
+    tzgui.widget_style_init(&panel_style, 0xF7F2F3, 0x242124)
+    panel_style.border_color = 0xEAE4E6
+    panel_style.border_width = 1
+    panel_style.radius = 12
+    unsafe:
+      tzgui.widget_set_style(&g_calc_tree, g_calc_panel_id, &panel_style)
+
+    app_mark:int = calc_add(g_calc_panel_id, 2, 12, 8, 24, 26, 0, 0x6B3AF2, 0 as str)
+    tzgui.widget_set_icon(&g_calc_tree, app_mark, CALC_ICON_CALCULATOR, 21, 0x6B3AF2)
+    title:int = calc_add(g_calc_panel_id, 2, 43, 8, 170, 28, 0, 0x242124, "Calculator")
+    title_style:TzWidgetStyle
+    tzgui.widget_style_init(&title_style, 0, 0x242124)
+    title_style.font_size = 17
+    title_style.font_weight = 500
+    title_style.font_family = "Segoe UI"
+    unsafe:
+      tzgui.widget_set_style(&g_calc_tree, title, &title_style)
+
+    calc_add_icon_button(g_calc_panel_id, 8, 42, 36, CALC_ICON_MENU, CALC_NAV_MENU)
+    g_calc_mode_id = calc_add(g_calc_panel_id, 2, 53, 41, 142, 38, 0, 0x242124, "Standard")
+    mode_style:TzWidgetStyle
+    tzgui.widget_style_init(&mode_style, 0, 0x242124)
+    mode_style.font_size = 22
+    mode_style.font_weight = 600
+    mode_style.font_family = "Segoe UI"
+    unsafe:
+      tzgui.widget_set_style(&g_calc_tree, g_calc_mode_id, &mode_style)
+    calc_add_icon_button(g_calc_panel_id, 191, 42, 36, CALC_ICON_MODE, CALC_NAV_MODE)
+    calc_add_icon_button(g_calc_panel_id, 282, 42, 36, CALC_ICON_HISTORY, CALC_NAV_HISTORY)
+
+    g_calc_display_id = calc_add(g_calc_panel_id, 2, 13, 83, 304, 62, 0, 0x171619, "0")
+    display_style:TzWidgetStyle
+    tzgui.widget_style_init(&display_style, 0, 0x171619)
+    display_style.text_align = 2
+    display_style.font_size = 48
+    display_style.font_weight = 400
+    display_style.font_family = "Segoe UI"
+    unsafe:
+      tzgui.widget_set_style(&g_calc_tree, g_calc_display_id, &display_style)
+    g_calc_hint_id = calc_add(g_calc_panel_id, 2, 13, 519, 304, 20, 0, 0x817A80, "Ready. Use the buttons, keyboard, or number pad.")
+    hint_style:TzWidgetStyle
+    tzgui.widget_style_init(&hint_style, 0, 0x817A80)
+    hint_style.font_size = 11
+    hint_style.font_weight = 400
+    hint_style.font_family = "Segoe UI"
+    unsafe:
+      tzgui.widget_set_style(&g_calc_tree, g_calc_hint_id, &hint_style)
+
+    calc_add_memory_button(g_calc_panel_id, 0, 8, "MC", CALC_MEMORY_CLEAR)
+    calc_add_memory_button(g_calc_panel_id, 1, 60, "MR", CALC_MEMORY_RECALL)
+    calc_add_memory_button(g_calc_panel_id, 2, 112, "M+", CALC_MEMORY_ADD)
+    calc_add_memory_button(g_calc_panel_id, 3, 164, "M−", CALC_MEMORY_SUBTRACT)
+    calc_add_memory_button(g_calc_panel_id, 4, 216, "MS", CALC_MEMORY_STORE)
+    calc_add_memory_button(g_calc_panel_id, 5, 268, "M↓", CALC_MEMORY_RECALL)
+
+    gx:int = 11
+    gy:int = 188
+    gw:int = 74
+    gh:int = 50
+    gap:int = 4
+    calc_add_button(g_calc_panel_id, gx, gy, gw, gh, "%", CALC_PERCENT, 0)
+    calc_add_button(g_calc_panel_id, gx + (gw + gap), gy, gw, gh, "CE", CALC_CLEAR_ENTRY, 0)
+    calc_add_button(g_calc_panel_id, gx + (gw + gap) * 2, gy, gw, gh, "C", CALC_CLEAR, 0)
+    backspace:int = calc_add_button(g_calc_panel_id, gx + (gw + gap) * 3, gy, gw, gh, 0 as str, CALC_BACKSPACE, 0)
+    tzgui.widget_set_icon(&g_calc_tree, backspace, CALC_ICON_BACKSPACE, 22, 0x242124)
+
+    gy = gy + gh + gap
+    calc_add_button(g_calc_panel_id, gx, gy, gw, gh, "1/x", CALC_RECIPROCAL, 0)
+    calc_add_button(g_calc_panel_id, gx + (gw + gap), gy, gw, gh, "x²", CALC_SQUARE, 0)
+    calc_add_button(g_calc_panel_id, gx + (gw + gap) * 2, gy, gw, gh, "√x", CALC_SQRT, 0)
+    calc_add_button(g_calc_panel_id, gx + (gw + gap) * 3, gy, gw, gh, "÷", CALC_OPERATOR, 4)
+
+    gy = gy + gh + gap
+    calc_add_button(g_calc_panel_id, gx, gy, gw, gh, "7", CALC_DIGIT, 7)
+    calc_add_button(g_calc_panel_id, gx + (gw + gap), gy, gw, gh, "8", CALC_DIGIT, 8)
+    calc_add_button(g_calc_panel_id, gx + (gw + gap) * 2, gy, gw, gh, "9", CALC_DIGIT, 9)
+    calc_add_button(g_calc_panel_id, gx + (gw + gap) * 3, gy, gw, gh, "×", CALC_OPERATOR, 3)
+
+    gy = gy + gh + gap
+    calc_add_button(g_calc_panel_id, gx, gy, gw, gh, "4", CALC_DIGIT, 4)
+    calc_add_button(g_calc_panel_id, gx + (gw + gap), gy, gw, gh, "5", CALC_DIGIT, 5)
+    calc_add_button(g_calc_panel_id, gx + (gw + gap) * 2, gy, gw, gh, "6", CALC_DIGIT, 6)
+    calc_add_button(g_calc_panel_id, gx + (gw + gap) * 3, gy, gw, gh, "−", CALC_OPERATOR, 2)
+
+    gy = gy + gh + gap
+    calc_add_button(g_calc_panel_id, gx, gy, gw, gh, "1", CALC_DIGIT, 1)
+    calc_add_button(g_calc_panel_id, gx + (gw + gap), gy, gw, gh, "2", CALC_DIGIT, 2)
+    calc_add_button(g_calc_panel_id, gx + (gw + gap) * 2, gy, gw, gh, "3", CALC_DIGIT, 3)
+    calc_add_button(g_calc_panel_id, gx + (gw + gap) * 3, gy, gw, gh, "+", CALC_OPERATOR, 1)
+
+    gy = gy + gh + gap
+    calc_add_button(g_calc_panel_id, gx, gy, gw, gh, "±", CALC_SIGN, 0)
+    calc_add_button(g_calc_panel_id, gx + (gw + gap), gy, gw, gh, "0", CALC_DIGIT, 0)
+    calc_add_button(g_calc_panel_id, gx + (gw + gap) * 2, gy, gw, gh, ".", CALC_DECIMAL, 0)
+    calc_add_button(g_calc_panel_id, gx + (gw + gap) * 3, gy, gw, gh, "=", CALC_EQUALS, 0)
+
+    tzgui.tree_layout(&g_calc_tree)
+    g_calc_hint_kind = 0
+    calc_refresh()
+    while g_calc_running != 0:
+      resized:int = gui_win.fb_sync_resize()
+      if resized > 0:
+        if gui.gui_surface(&surface) != 0 || surface.addr == 0:
+          g_calc_running = 0
+        else:
+          resize_status:int = tzgui.tree_resize(&g_calc_tree, surface.width, surface.height)
+          if resize_status < 0:
+            g_calc_running = 0
+      gui.gui_pump_input()
+      while gui.gui_event_next(&ev) != 0:
+        activated:int = tzgui.tree_process_event(&g_calc_tree, &ev)
+        if activated > 0:
+          calc_dispatch_button(activated)
+        calc_keyboard_event(&ev, activated)
+      rendered:int = tzgui.tree_present_dirty(&g_calc_tree, &surface)
+      if rendered == 0:
+        gui.gui_wait_input()
+    tzgui.tree_deinit(&g_calc_tree)
+    free(g_calc_display_buffer)
+    g_calc_display_buffer = 0 as *char
+    ret 0

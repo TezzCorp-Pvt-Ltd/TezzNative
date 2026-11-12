@@ -23,6 +23,10 @@ let TZ_EVENT_BUTTON:int = 3
 let TZ_EVENT_CUSTOM:int = 4
 let TZ_EVENT_IME:int = 5
 let TZ_EVENT_WINDOW:int = 6
+let TZ_EVENT_SCROLL:int = 7
+let TZ_EVENT_TOUCH:int = 8
+let TZ_EVENT_TEXT:int = 9
+let TZ_EVENT_KEY_UP:int = 10
 let TZ_EVENT_QUEUE_CAP:int = 256
 
 extern fn tz_event_queue_init(q:*TzEventQueue) -> int

@@ -34,6 +34,13 @@ RewriteRule ^(checkout|fee-receipt|academy_diag|callback|careers|check-monthly-p
 # ------------------------------------------------------------
 # 2) Named-page clean URL routing (no .php extension)
 # ------------------------------------------------------------
+# /packages or /packages/ → packages.php
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^packages/?$           packages.php      [L,QSA]
+RewriteRule ^package/([a-zA-Z0-9_\-]+)/?$ package.php?name=$1 [L,QSA]
+RewriteRule ^package/?$            package.php       [L,QSA]
+
 # /community or /community/ → community.php
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d

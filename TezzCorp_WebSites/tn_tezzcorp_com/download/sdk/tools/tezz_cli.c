@@ -44,7 +44,7 @@ static void print_banner(void){
         "  T E Z Z N A T I V E   v 1 . 0 . 0\n"
         COL_RESET
         COL_GRAY "  Systems & GUI Language  " COL_BLUE "|" COL_GRAY
-        "  tn.tezzcorp.com\n" COL_RESET "\n");
+        "  tezznative.org\n" COL_RESET "\n");
 }
 
 static void print_help(void){
@@ -76,7 +76,7 @@ static void print_version(void){
     printf("  " COL_GRAY "Compiler  : " COL_GREEN "tezzc 1.0.0" COL_RESET "\n");
     printf("  " COL_GRAY "Stdlib    : " COL_GREEN "lib/ (33 modules)" COL_RESET "\n");
     printf("  " COL_GRAY "Platform  : " COL_GREEN "Windows x64" COL_RESET "\n");
-    printf("  " COL_GRAY "Website   : " COL_BLUE "tn.tezzcorp.com" COL_RESET "\n\n");
+    printf("  " COL_GRAY "Website   : " COL_BLUE "tezznative.org" COL_RESET "\n\n");
 }
 
 /* Locate tezzc.exe: beside this exe, or in PATH */

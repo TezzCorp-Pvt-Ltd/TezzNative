@@ -9,6 +9,7 @@ if ($Uninstall) {
 }
 
 $ErrorActionPreference = "Stop"
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
 
 $BaseUrl = if ($env:TEZZ_INSTALL_BASE) { $env:TEZZ_INSTALL_BASE } else { "https://tezznative.org/download" }
 $PortalUrl = if ($env:TEZZ_PORTAL_BASE) { $env:TEZZ_PORTAL_BASE.TrimEnd("/") } else { "https://tezznative.org" }
@@ -34,14 +35,14 @@ function Get-RemoteVersion {
   try {
     $local = Get-LocalVersion
     $uri = "$PortalUrl/api/update_check.php?platform=windows-x64&version=$([uri]::EscapeDataString($local))&mode=$([uri]::EscapeDataString($Mode))"
-    $json = Invoke-RestMethod -Method Get -Uri $uri
+    $json = Invoke-RestMethod -Method Get -Uri $uri -TimeoutSec 15
     if ($json -and $json.data -and $json.data.latest -and $json.data.latest.version) {
       return [string]$json.data.latest.version
     }
   } catch {
   }
   try {
-    $json = Invoke-RestMethod -Method Get -Uri "$BaseUrl/sdk/version.json"
+    $json = Invoke-RestMethod -Method Get -Uri "$BaseUrl/sdk/version.json" -TimeoutSec 15
     if ($json -and $json.version) { return [string]$json.version }
   } catch {
   }
@@ -203,6 +204,21 @@ function Configure-Env {
     }
   }
   $env:TEZZ_SDK_ROOT = $SdkRoot
+  try {
+    if (-not ("TezzNativeInstaller.EnvBroadcast" -as [type])) {
+      Add-Type -Namespace TezzNativeInstaller -Name EnvBroadcast -MemberDefinition @"
+        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode, SetLastError=true)]
+        private static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint Msg, System.IntPtr wParam, System.IntPtr lParam, uint flags, uint timeout, out System.IntPtr result);
+        public static void Notify() {
+          System.IntPtr value = System.Runtime.InteropServices.Marshal.StringToHGlobalUni("Environment");
+          try { System.IntPtr result; SendMessageTimeout(new System.IntPtr(0xffff), 0x001A, System.IntPtr.Zero, value, 0x0002, 1000, out result); }
+          finally { System.Runtime.InteropServices.Marshal.FreeHGlobal(value); }
+        }
+"@ | Out-Null
+    }
+    [TezzNativeInstaller.EnvBroadcast]::Notify()
+  } catch {
+  }
 }
 
 function Remove-Install {
@@ -258,20 +274,21 @@ function Remove-Install {
 }
 
 function Normalize-SdkLayout {
-  $binDir = Join-Path $SdkDir "bin"
+  param([string]$SdkRoot = $SdkDir)
+  $binDir = Join-Path $SdkRoot "bin"
   if (-not (Test-Path $binDir)) {
     New-Item -ItemType Directory -Force -Path $binDir | Out-Null
   }
 
   # Remove any broken tezz.exe in binDir or SdkDir
   Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $binDir "tezz.exe")
-  Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $SdkDir "tezz.exe")
+  Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $SdkRoot "tezz.exe")
 
   $preferred = Join-Path $binDir "tezzc-windows-x64.exe"
   $armPreferred = Join-Path $binDir "tezzc-windows-arm64.exe"
   $fromBin = Join-Path $binDir "tezzc.exe"
-  $fromBuild = Join-Path (Join-Path $SdkDir "build") "tezzc.exe"
-  $fromRoot = Join-Path $SdkDir "tezzc.exe"
+  $fromBuild = Join-Path (Join-Path $SdkRoot "build") "tezzc.exe"
+  $fromRoot = Join-Path $SdkRoot "tezzc.exe"
 
   if (($env:PROCESSOR_ARCHITECTURE -eq "ARM64") -and (Test-Path $armPreferred)) {
     Copy-Item -Force $armPreferred $fromBin
@@ -289,7 +306,7 @@ function Normalize-SdkLayout {
 
   # Ensure root launchers and bin launchers are synchronized
   foreach ($launcher in @("tezz.cmd", "tezz.ps1", "tezz")) {
-    $rootLauncher = Join-Path $SdkDir $launcher
+    $rootLauncher = Join-Path $SdkRoot $launcher
     $binLauncher = Join-Path $binDir $launcher
     if (-not (Test-Path $rootLauncher) -and (Test-Path $binLauncher)) {
       Copy-Item -Force $binLauncher $rootLauncher
@@ -301,14 +318,15 @@ function Normalize-SdkLayout {
 }
 
 function Assert-SdkIntegrity {
+  param([string]$SdkRoot = $SdkDir)
   $required = @(
-    (Join-Path $SdkDir "tezz.cmd"),
-    (Join-Path $SdkDir "tezz.ps1"),
-    (Join-Path $SdkDir "tezz.mod"),
-    (Join-Path (Join-Path $SdkDir "tools") "tezz.tn"),
-    (Join-Path (Join-Path $SdkDir "lib") "std.tn"),
-    (Join-Path (Join-Path $SdkDir "lib") "io.tn"),
-    (Join-Path (Join-Path $SdkDir "bin") "tezzc-windows-x64.exe")
+    (Join-Path $SdkRoot "tezz.cmd"),
+    (Join-Path $SdkRoot "tezz.ps1"),
+    (Join-Path $SdkRoot "tezz.mod"),
+    (Join-Path (Join-Path $SdkRoot "tools") "tezz.tn"),
+    (Join-Path (Join-Path $SdkRoot "lib") "std.tn"),
+    (Join-Path (Join-Path $SdkRoot "lib") "io.tn"),
+    (Join-Path (Join-Path $SdkRoot "bin") "tezzc-windows-x64.exe")
   )
   $missing = @()
   foreach ($item in $required) {
@@ -392,12 +410,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0uninstall.ps1"
 }
 
 function Smoke-TestInstall {
-  param([string]$BinDir)
-  $tezzc = Join-Path $SdkDir "bin\tezzc-windows-x64.exe"
-  if (($env:PROCESSOR_ARCHITECTURE -eq "ARM64") -and (Test-Path (Join-Path $SdkDir "bin\tezzc-windows-arm64.exe"))) {
-    $tezzc = Join-Path $SdkDir "bin\tezzc-windows-arm64.exe"
-  } elseif (Test-Path (Join-Path $SdkDir "bin\tezzc.exe")) {
-    $tezzc = Join-Path $SdkDir "bin\tezzc.exe"
+  param(
+    [string]$BinDir,
+    [string]$SdkRoot = $SdkDir,
+    [switch]$SkipShimCheck
+  )
+  $tezzc = Join-Path $SdkRoot "bin\tezzc-windows-x64.exe"
+  if (($env:PROCESSOR_ARCHITECTURE -eq "ARM64") -and (Test-Path (Join-Path $SdkRoot "bin\tezzc-windows-arm64.exe"))) {
+    $tezzc = Join-Path $SdkRoot "bin\tezzc-windows-arm64.exe"
+  } elseif (Test-Path (Join-Path $SdkRoot "bin\tezzc.exe")) {
+    $tezzc = Join-Path $SdkRoot "bin\tezzc.exe"
   }
 
   $probe = Join-Path $env:TEMP ("tezznative_smoke_" + [guid]::NewGuid().ToString() + ".tn")
@@ -408,7 +430,7 @@ fn main() -> int:
   ret 0
 "@ | Set-Content -Path $probe -Encoding ASCII
 
-  $env:PATH = "$SdkDir\bin;$SdkDir\lib;$env:PATH"
+  $env:PATH = "$SdkRoot\bin;$SdkRoot\lib;$env:PATH"
   & $tezzc buildexe $probe $probeExe | Out-Null
   $buildOk = (Test-Path $probeExe)
   Remove-Item -Force -ErrorAction SilentlyContinue $probe, $probeExe
@@ -418,7 +440,7 @@ fn main() -> int:
   }
 
   $shimCmd = Join-Path $BinDir "tezz.cmd"
-  if (Test-Path $shimCmd) {
+  if (-not $SkipShimCheck -and (Test-Path $shimCmd)) {
     $verOut = & $shimCmd --version
     if ($LASTEXITCODE -ne 0 -or ($verOut -notmatch "tezz\s+\d+\.\d+")) {
       throw "Smoke test failed: tezz --version returned exit code $($LASTEXITCODE): $verOut"
@@ -431,7 +453,7 @@ function Get-ExpectedSha256 {
 
   $shaPath = Join-Path $env:TEMP ("$FileName-" + [guid]::NewGuid().ToString() + ".sha256")
   try {
-    Invoke-WebRequest -Uri "$BaseUrl/$FileName.sha256?nocache=$CacheBust" -OutFile $shaPath
+    Invoke-WebRequest -UseBasicParsing -TimeoutSec 30 -Uri "$BaseUrl/$FileName.sha256?nocache=$CacheBust" -OutFile $shaPath
     $raw = (Get-Content -Path $shaPath -Raw).Trim()
     $parts = $raw -split '\s+'
     if ($parts.Count -lt 1 -or $parts[0] -notmatch '^[0-9A-Fa-f]{64}$') {
@@ -460,33 +482,99 @@ function Assert-ArchiveChecksum {
 function Install-Payload {
   param([string]$RemoteVersion)
 
+  $sourceUri = $null
+  if (-not [Uri]::TryCreate($BaseUrl, [UriKind]::Absolute, [ref]$sourceUri) -or $sourceUri.Scheme -ne "https" -or $sourceUri.UserInfo -or $BaseUrl -match '\s') {
+    throw "SDK downloads require a valid HTTPS source URL without credentials or whitespace."
+  }
+
   if ($InstallScope -eq "system" -and -not (Test-IsAdmin)) {
     throw "System install requires Administrator PowerShell. Re-run as admin or set TEZZ_INSTALL_SCOPE=user."
+  }
+
+  $installFullPath = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+  $driveRoot = [System.IO.Path]::GetPathRoot($installFullPath).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+  if (-not $installFullPath -or $installFullPath -eq $driveRoot) {
+    throw "Choose a dedicated folder for TezzNative; a drive root cannot be used as the install location."
+  }
+  if (Test-Path $InstallDir) {
+    if (-not (Test-Path $InstallDir -PathType Container)) {
+      throw "The install location exists and is not a folder: $InstallDir"
+    }
+    $hasInstallFiles = (Test-Path (Join-Path $SdkDir "tezz.mod")) -or (Test-Path (Join-Path $SdkDir "version.json"))
+    $hasExistingFiles = $null -ne (Get-ChildItem -LiteralPath $InstallDir -Force -ErrorAction Stop | Select-Object -First 1)
+    if ($hasExistingFiles -and -not $hasInstallFiles) {
+      throw "The folder $InstallDir contains files but is not a recognized TezzNative install. Choose an empty folder or an existing TezzNative install."
+    }
   }
 
   # Purge any legacy installations and corrupt PATH entries first
   Purge-LegacyEnvironment
 
-  Write-Host "Downloading TezzNative SDK..."
-  Invoke-WebRequest -Uri "$BaseUrl/tezznative-sdk.zip?nocache=$CacheBust" -OutFile $ZipPath
-  Assert-ArchiveChecksum -Path $ZipPath -FileName "tezznative-sdk.zip"
+  $installParent = Split-Path -Parent $InstallDir
+  if (-not $installParent) { $installParent = $InstallDir }
+  New-Item -ItemType Directory -Force -Path $installParent | Out-Null
+  $stageInstallDir = Join-Path $installParent (".TezzNative-stage-" + [guid]::NewGuid().ToString("N"))
+  $backupInstallDir = Join-Path $installParent (".TezzNative-backup-" + [guid]::NewGuid().ToString("N"))
+  $stageSdkDir = Join-Path $stageInstallDir "sdk"
+  $hadPreviousInstall = Test-Path $InstallDir
+  $promoted = $false
+  $committed = $false
+  try {
+    Write-Output "Downloading TezzNative SDK archive..."
+    Invoke-WebRequest -UseBasicParsing -TimeoutSec 600 -Uri "$BaseUrl/tezznative-sdk.zip?nocache=$CacheBust" -OutFile $ZipPath
+    Write-Output "Verifying the SDK archive checksum..."
+    Assert-ArchiveChecksum -Path $ZipPath -FileName "tezznative-sdk.zip"
 
-  if (Test-Path $InstallDir) {
-    Remove-Item -Recurse -Force $InstallDir
+    Write-Output "Extracting SDK into a temporary install folder..."
+    New-Item -ItemType Directory -Force -Path $stageSdkDir | Out-Null
+    Expand-Archive -Path $ZipPath -DestinationPath $stageSdkDir -Force
+    Normalize-SdkLayout -SdkRoot $stageSdkDir
+    Assert-SdkIntegrity -SdkRoot $stageSdkDir
+    Write-Output "Checking the downloaded compiler before switching the install..."
+    Smoke-TestInstall -BinDir (Join-Path $stageInstallDir "bin") -SdkRoot $stageSdkDir -SkipShimCheck
+
+    if ($hadPreviousInstall) {
+      Move-Item -Path $InstallDir -Destination $backupInstallDir
+    }
+    try {
+      Move-Item -Path $stageInstallDir -Destination $InstallDir
+      $promoted = $true
+    } catch {
+      if ($hadPreviousInstall -and (Test-Path $backupInstallDir)) {
+        Move-Item -Path $backupInstallDir -Destination $InstallDir
+      }
+      throw
+    }
+    Remove-Item -Force $ZipPath
+
+    Write-Output "Adding TezzNative commands and PATH entries..."
+    $binDir = Install-Shims
+    Write-OfflineUninstaller
+    $committed = $true
+  } catch {
+    $committed = $false
+    if ($promoted) {
+      Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $InstallDir
+      if ($hadPreviousInstall -and (Test-Path $backupInstallDir)) {
+        try {
+          Move-Item -Path $backupInstallDir -Destination $InstallDir
+        } catch {
+          throw "Install failed and the previous SDK could not be restored automatically. It remains at $backupInstallDir. Original error: $($_.Exception.Message)"
+        }
+      }
+    }
+    throw
+  } finally {
+    Remove-Item -Force -ErrorAction SilentlyContinue $ZipPath
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $stageInstallDir
+    if ($committed -and (Test-Path $backupInstallDir)) {
+      Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $backupInstallDir
+    }
   }
-  New-Item -ItemType Directory -Force -Path $SdkDir | Out-Null
-  Expand-Archive -Path $ZipPath -DestinationPath $SdkDir -Force
-  Remove-Item -Force $ZipPath
-
-  Normalize-SdkLayout
-  Assert-SdkIntegrity
-  $binDir = Install-Shims
-  Smoke-TestInstall -BinDir $binDir
-  Write-OfflineUninstaller
 
   # Determine display version
   $effectiveVer = if ($RemoteVersion) { $RemoteVersion } else { Get-LocalVersion }
-  if (-not $effectiveVer) { $effectiveVer = "1.1.0" }
+  if (-not $effectiveVer) { $effectiveVer = "1.0.0" }
 
   # Register in Windows Control Panel Programs (Installed Apps)
   try {
@@ -527,6 +615,9 @@ function Install-Payload {
 }
 
 $Mode = $Mode.ToLowerInvariant()
+if ($Mode -eq "install" -or $Mode -eq "update" -or $Mode -eq "reinstall") {
+  Write-Output "Checking the official TezzNative release..."
+}
 $RemoteVersion = Get-RemoteVersion
 $LocalVersion = Get-LocalVersion
 

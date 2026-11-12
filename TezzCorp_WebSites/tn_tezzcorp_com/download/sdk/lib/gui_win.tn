@@ -5,6 +5,12 @@
 // ── Window creation ────────────────────────────────────────────────
 extern fn fb_init_ex(title:str, W:int, H:int) -> int
 extern fn fb_present()       -> int
+extern fn fb_pump_events()   -> int
+// Opt-in resize synchronization may replace the logical framebuffer. Refresh
+// GuiSurface and retained layout after this function reports 1.
+extern fn fb_sync_resize()   -> int
+extern fn fb_present_rect(x:int, y:int, w:int, h:int) -> int
+extern fn fb_set_app_icon(kind:int, primary:int, accent:int) -> int
 
 // ── Framebuffer info ───────────────────────────────────────────────
 extern fn fb_addr()          -> *char
@@ -29,6 +35,8 @@ extern fn fb_blit(sx:int, sy:int, w:int, h:int, dx:int, dy:int) -> int
 extern fn fb_text(x:int, y:int, s:str, color:int) -> int
 // fb_text_ex: scale=1 (8px)..6 (48px), bold=0/1
 extern fn fb_text_ex(x:int, y:int, s:str, color:int, scale:int, bold:int) -> int
+extern fn fb_text_style(x:int, y:int, s:str, color:int, pixel_size:int, weight:int, family:str) -> int
+extern fn fb_text_measure(s:str, pixel_size:int, weight:int, family:str) -> int
 
 // ── Software cursor ────────────────────────────────────────────────
 extern fn fb_soft_cursor(x:int, y:int, color:int) -> int
@@ -46,6 +54,19 @@ extern fn mouse_dy()         -> int
 extern fn mouse_buttons()    -> int
 extern fn mouse_pos_x()      -> int
 extern fn mouse_pos_y()      -> int
+extern fn mouse_packet_x()   -> int
+extern fn mouse_packet_y()   -> int
 
-// ── Timing ─────────────────────────────────────────────────────────
+// ── Timing & Animation Synchronization ─────────────────────────────
 extern fn sleep_ms(ms:int)   -> int
+extern fn fb_time_ms()       -> int
+extern fn fb_time_us()       -> int
+extern fn fb_frame_sync(target_fps:int) -> int
+extern fn fb_vsync()         -> int
+
+// ── Accelerated Primitives ─────────────────────────────────────────
+extern fn fb_composite_rect(x:int, y:int, w:int, h:int, color:int, alpha:int) -> int
+extern fn fb_gradient_v(x:int, y:int, w:int, h:int, top:int, bottom:int) -> int
+extern fn fb_gradient_h(x:int, y:int, w:int, h:int, left:int, right:int) -> int
+extern fn fb_spring_step(current:int, target:int, vel:*int, tension:int, damping:int, dt_ms:int) -> int
+

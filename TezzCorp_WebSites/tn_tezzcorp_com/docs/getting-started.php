@@ -23,18 +23,18 @@ tn_page_shell_start('Getting Started with TezzNative', 'Install SDK, Configure I
       <div style="background: var(--code-bg); border: 1px solid var(--border-medium); border-radius: var(--radius-md); padding: 18px;">
         <h4 style="color: var(--brand-saffron); margin-bottom: 8px;">Windows (PowerShell 1-Liner)</h4>
         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px;">Fastest automated user install. No admin required.</p>
-        <pre><code style="font-family: var(--font-mono); font-size: 0.85rem; color: #10b981;">irm https://tn.tezzcorp.com/download/install.ps1 | iex</code></pre>
+        <pre><code style="font-family: var(--font-mono); font-size: 0.85rem; color: #10b981;">irm https://tezznative.org/install.ps1 | iex</code></pre>
       </div>
 
       <div style="background: var(--code-bg); border: 1px solid var(--border-medium); border-radius: var(--radius-md); padding: 18px;">
         <h4 style="color: var(--brand-saffron); margin-bottom: 8px;">Windows Command Prompt (cmd.exe)</h4>
         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px;">Fast automated cmd setup for terminal shells.</p>
-        <pre><code style="font-family: var(--font-mono); font-size: 0.85rem; color: #10b981;">curl -fsSL https://tn.tezzcorp.com/install.cmd -o install.cmd &amp;&amp; install.cmd</code></pre>
+        <pre><code style="font-family: var(--font-mono); font-size: 0.85rem; color: #10b981;">curl -fsSL https://tezznative.org/install.cmd -o install.cmd &amp;&amp; install.cmd</code></pre>
       </div>
 
       <div style="background: var(--code-bg); border: 1px solid var(--border-medium); border-radius: var(--radius-md); padding: 18px; grid-column: 1 / -1;">
         <h4 style="color: var(--brand-saffron); margin-bottom: 8px;">Linux &amp; macOS (Bash Installer)</h4>
-        <pre><code style="font-family: var(--font-mono); font-size: 0.85rem; color: #10b981;">curl -fsSL https://tn.tezzcorp.com/download/install.sh | bash</code></pre>
+        <pre><code style="font-family: var(--font-mono); font-size: 0.85rem; color: #10b981;">curl -fsSL https://tezznative.org/install.sh | bash</code></pre>
       </div>
     </div>
   </article>

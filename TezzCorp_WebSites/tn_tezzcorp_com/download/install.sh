@@ -7,6 +7,42 @@ PORTAL_URL="${PORTAL_URL%/}"
 MODE="${1:-${TEZZ_INSTALL_MODE:-install}}"
 MODE="$(printf '%s' "$MODE" | tr '[:upper:]' '[:lower:]')"
 
+if [[ "$MODE" == "gui" || "$MODE" == "--gui" ]]; then
+  case "$PORTAL_URL" in https://*) ;; *) echo "install failed: installer downloads require an HTTPS portal" >&2; exit 1 ;; esac
+  GUI_SCRIPT=""
+  GUI_TMP=""
+  if [[ -f "${BASH_SOURCE[0]:-}" ]]; then
+    GUI_SCRIPT="$(dirname "${BASH_SOURCE[0]}")/install-gui.sh"
+  fi
+  if [[ ! -f "$GUI_SCRIPT" ]]; then
+    GUI_TMP="$(mktemp "${TMPDIR:-/tmp}/tezznative-install-gui.XXXXXXXX.sh")"
+    GUI_SCRIPT="$GUI_TMP"
+    if command -v curl >/dev/null 2>&1; then
+      if ! curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 15 --max-time 60 "${PORTAL_URL}/install-gui.sh?nocache=$(date +%s)" -o "$GUI_SCRIPT"; then
+        rm -f "$GUI_TMP"
+        echo "install failed: could not download the graphical installer" >&2
+        exit 1
+      fi
+    elif command -v wget >/dev/null 2>&1; then
+      if ! wget --https-only --timeout=30 --tries=2 -qO "$GUI_SCRIPT" "${PORTAL_URL}/install-gui.sh?nocache=$(date +%s)"; then
+        rm -f "$GUI_TMP"
+        echo "install failed: could not download the graphical installer" >&2
+        exit 1
+      fi
+    else
+      rm -f "$GUI_TMP"
+      echo "install failed: curl or wget is required to download the installer GUI" >&2
+      exit 1
+    fi
+  fi
+  if [[ -n "$GUI_TMP" ]]; then
+    if bash "$GUI_SCRIPT"; then gui_rc=0; else gui_rc=$?; fi
+    rm -f "$GUI_TMP"
+    exit "$gui_rc"
+  fi
+  exec bash "$GUI_SCRIPT"
+fi
+
 INSTALL_SCOPE="${TEZZ_INSTALL_SCOPE:-user}"
 INSTALL_SCOPE="$(printf '%s' "$INSTALL_SCOPE" | tr '[:upper:]' '[:lower:]')"
 if [[ "$INSTALL_SCOPE" != "user" && "$INSTALL_SCOPE" != "system" ]]; then
@@ -21,17 +57,32 @@ DEST="${TEZZ_INSTALL_DIR:-$DEST_DEFAULT}"
 SDK_DIR="$DEST/sdk"
 BIN_DIR="${TEZZ_INSTALL_BIN:-$HOME/.local/bin}"
 TMP_ARCHIVE="${TMPDIR:-/tmp}/tezznative-sdk-linux-$RANDOM-$RANDOM.tar.gz"
-PATH_MODE="${TEZZ_INSTALL_AUTO_PATH:-user}"
+trap 'rm -f "$TMP_ARCHIVE"' EXIT
+PATH_MODE="${TEZZ_INSTALL_AUTO_PATH:-auto}"
+if [[ "$PATH_MODE" == "auto" ]]; then
+  if [[ "$INSTALL_SCOPE" == "system" ]]; then
+    PATH_MODE="system"
+  else
+    PATH_MODE="user"
+  fi
+fi
+if [[ -z "${TEZZ_INSTALL_BIN:-}" ]]; then
+  if [[ "$PATH_MODE" == "system" ]]; then
+    BIN_DIR="/usr/local/bin"
+  else
+    BIN_DIR="$HOME/.local/bin"
+  fi
+fi
 CACHE_BUST="${TEZZ_INSTALL_CACHE_BUST:-$(date +%s)-$$}"
 
 http_get() {
   local url="$1"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$url"
+    curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 30 "$url"
     return $?
   fi
   if command -v wget >/dev/null 2>&1; then
-    wget -qO- "$url"
+    wget --https-only --timeout=30 --tries=2 -qO- "$url"
     return $?
   fi
   return 1
@@ -41,11 +92,11 @@ download_file() {
   local url="$1"
   local out="$2"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$url" -o "$out"
+    curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 600 "$url" -o "$out"
     return $?
   fi
   if command -v wget >/dev/null 2>&1; then
-    wget -qO "$out" "$url"
+    wget --https-only --timeout=60 --tries=3 -qO "$out" "$url"
     return $?
   fi
   return 1
@@ -144,32 +195,33 @@ require_tools() {
 
 remove_install() {
   rm -rf "$DEST"
-  rm -rf "$HOME/.tezznative"
   rm -f "$BIN_DIR/tezz" "$BIN_DIR/tezzc"
 }
 
 normalize_sdk_layout() {
-  mkdir -p "$SDK_DIR/bin"
-  if [[ -x "$SDK_DIR/build/tezzc" && ! -x "$SDK_DIR/bin/tezzc-linux-x64" ]]; then
-    cp "$SDK_DIR/build/tezzc" "$SDK_DIR/bin/tezzc-linux-x64"
+  local sdk_root="${1:-$SDK_DIR}"
+  mkdir -p "$sdk_root/bin"
+  if [[ -x "$sdk_root/build/tezzc" && ! -x "$sdk_root/bin/tezzc-linux-x64" ]]; then
+    cp "$sdk_root/build/tezzc" "$sdk_root/bin/tezzc-linux-x64"
   fi
-  if [[ -x "$SDK_DIR/tezzc" && ! -x "$SDK_DIR/bin/tezzc-linux-x64" ]]; then
-    cp "$SDK_DIR/tezzc" "$SDK_DIR/bin/tezzc-linux-x64"
+  if [[ -x "$sdk_root/tezzc" && ! -x "$sdk_root/bin/tezzc-linux-x64" ]]; then
+    cp "$sdk_root/tezzc" "$sdk_root/bin/tezzc-linux-x64"
   fi
-  chmod +x "$SDK_DIR/tezz" 2>/dev/null || true
-  chmod +x "$SDK_DIR/bin/tezzc-linux-x64" 2>/dev/null || true
+  chmod +x "$sdk_root/tezz" 2>/dev/null || true
+  chmod +x "$sdk_root/bin/tezzc-linux-x64" 2>/dev/null || true
 }
 
 assert_sdk_integrity() {
+  local sdk_root="${1:-$SDK_DIR}"
   local missing=0
   local required=(
-    "$SDK_DIR/tezz"
-    "$SDK_DIR/tezz.mod"
-    "$SDK_DIR/tools/tezz.tn"
-    "$SDK_DIR/tools/probes/tls_connect_ex_probe.tn"
-    "$SDK_DIR/lib/std.tn"
-    "$SDK_DIR/lib/io.tn"
-    "$SDK_DIR/bin/tezzc-linux-x64"
+    "$sdk_root/tezz"
+    "$sdk_root/tezz.mod"
+    "$sdk_root/tools/tezz.tn"
+    "$sdk_root/tools/probes/tls_connect_ex_probe.tn"
+    "$sdk_root/lib/std.tn"
+    "$sdk_root/lib/io.tn"
+    "$sdk_root/bin/tezzc-linux-x64"
   )
   for item in "${required[@]}"; do
     if [[ ! -e "$item" ]]; then
@@ -185,25 +237,33 @@ assert_sdk_integrity() {
 
 write_user_profile() {
   local profile="$HOME/.profile"
-  local path_line="export PATH=\"$BIN_DIR:\$PATH\""
-  local sdk_line="export TEZZ_SDK_ROOT=\"$SDK_DIR\""
+  local temp_profile="$profile.tezznative.$$"
+  local bin_quoted sdk_quoted
+  printf -v bin_quoted '%q' "$BIN_DIR"
+  printf -v sdk_quoted '%q' "$SDK_DIR"
   mkdir -p "$(dirname "$profile")"
   touch "$profile"
-  if ! grep -Fq "$path_line" "$profile"; then
-    printf '\n%s\n' "$path_line" >> "$profile"
-  fi
-  if grep -Fq 'export TEZZ_SDK_ROOT=' "$profile"; then
-    if command -v sed >/dev/null 2>&1; then
-      sed -i "s|^export TEZZ_SDK_ROOT=.*$|$sdk_line|" "$profile" || true
-    fi
-  else
-    printf '%s\n' "$sdk_line" >> "$profile"
-  fi
+  awk '
+    $0 == "# >>> TezzNative managed environment >>>" { managed = 1; next }
+    $0 == "# <<< TezzNative managed environment <<<" { managed = 0; next }
+    !managed { print }
+  ' "$profile" > "$temp_profile"
+  {
+    printf '\n# >>> TezzNative managed environment >>>\n'
+    printf 'export PATH=%s:"$PATH"\n' "$bin_quoted"
+    printf 'export TEZZ_SDK_ROOT=%s\n' "$sdk_quoted"
+    printf '# <<< TezzNative managed environment <<<\n'
+  } >> "$temp_profile"
+  chmod --reference="$profile" "$temp_profile" 2>/dev/null || true
+  mv "$temp_profile" "$profile"
 }
 
 write_system_profile() {
   local file="/etc/profile.d/tezznative.sh"
-  local payload="export PATH=\"$BIN_DIR:\$PATH\"\nexport TEZZ_SDK_ROOT=\"$SDK_DIR\""
+  local bin_quoted sdk_quoted payload
+  printf -v bin_quoted '%q' "$BIN_DIR"
+  printf -v sdk_quoted '%q' "$SDK_DIR"
+  payload="export PATH=$bin_quoted:\$PATH\nexport TEZZ_SDK_ROOT=$sdk_quoted"
   if command -v sudo >/dev/null 2>&1; then
     printf '%b\n' "$payload" | sudo tee "$file" >/dev/null
   else
@@ -215,9 +275,7 @@ configure_path() {
   local mode="$PATH_MODE"
   case "$mode" in
     user|"") write_user_profile ;;
-    system)
-      write_system_profile || true
-      ;;
+    system) write_system_profile ;;
     none)
       ;;
     *)
@@ -227,10 +285,22 @@ configure_path() {
 }
 
 install_shims() {
-  mkdir -p "$BIN_DIR"
-  ln -sf "$SDK_DIR/tezz" "$BIN_DIR/tezz"
-  if [[ -x "$SDK_DIR/bin/tezzc-linux-x64" ]]; then
-    ln -sf "$SDK_DIR/bin/tezzc-linux-x64" "$BIN_DIR/tezzc"
+  if [[ -w "$BIN_DIR" ]]; then
+    mkdir -p "$BIN_DIR"
+    ln -sf "$SDK_DIR/tezz" "$BIN_DIR/tezz"
+    if [[ -x "$SDK_DIR/bin/tezzc-linux-x64" ]]; then
+      ln -sf "$SDK_DIR/bin/tezzc-linux-x64" "$BIN_DIR/tezzc"
+    fi
+  else
+    if ! command -v sudo >/dev/null 2>&1; then
+      echo "install failed: cannot write command links to $BIN_DIR (sudo is required)"
+      return 1
+    fi
+    sudo install -d "$BIN_DIR"
+    sudo ln -sf "$SDK_DIR/tezz" "$BIN_DIR/tezz"
+    if [[ -x "$SDK_DIR/bin/tezzc-linux-x64" ]]; then
+      sudo ln -sf "$SDK_DIR/bin/tezzc-linux-x64" "$BIN_DIR/tezzc"
+    fi
   fi
 }
 
@@ -260,37 +330,141 @@ install_payload() {
   local remote_version="$1"
   require_tools
 
-  echo "Downloading TezzNative SDK..."
+  case "$BASE_URL" in
+    https://*) ;;
+    *) echo "install failed: SDK downloads require an HTTPS source"; return 1 ;;
+  esac
+  if [[ "$BASE_URL" == *"@"* || "$BASE_URL" =~ [[:space:]] ]]; then
+    echo "install failed: SDK source URL cannot contain credentials or whitespace"
+    return 1
+  fi
+
+  local install_parent
+  install_parent="$(dirname "$DEST")"
+  local staging_dir="$install_parent/.tezznative-stage-$$-$RANDOM"
+  local backup_dir="$install_parent/.tezznative-backup-$$-$RANDOM"
+  local have_previous=0
+  local system_write=0
+  if [[ "$INSTALL_SCOPE" == "system" && ! -w "$install_parent" ]]; then
+    if ! command -v sudo >/dev/null 2>&1; then
+      echo "install failed: system scope requires sudo"
+      return 1
+    fi
+    system_write=1
+  fi
+  if [[ "$DEST" == "/" || "$DEST" == *$'\n'* || "$DEST" == *$'\r'* ]]; then
+    echo "install failed: choose a dedicated install directory without line breaks"
+    return 1
+  fi
+  if [[ -e "$DEST" ]]; then
+    if [[ ! -d "$DEST" ]]; then
+      echo "install failed: install location exists and is not a directory: $DEST"
+      return 1
+    fi
+    if [[ -n "$(find "$DEST" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]] \
+      && [[ ! -f "$SDK_DIR/tezz.mod" && ! -f "$SDK_DIR/version.json" ]]; then
+      echo "install failed: $DEST is not an existing TezzNative installation. Choose an empty folder or an existing TezzNative folder."
+      return 1
+    fi
+  fi
+
+  echo "Downloading TezzNative SDK archive..."
   download_file "$BASE_URL/tezznative-sdk-linux.tar.gz?nocache=$CACHE_BUST" "$TMP_ARCHIVE"
+  echo "Verifying the SDK archive checksum..."
   verify_archive_checksum "$TMP_ARCHIVE" "tezznative-sdk-linux.tar.gz"
 
-  if [[ "$INSTALL_SCOPE" == "system" ]]; then
-    if [[ ! -w "$(dirname "$DEST")" ]]; then
-      if ! command -v sudo >/dev/null 2>&1; then
-        echo "install failed: system scope requires sudo"
-        return 1
-      fi
-      sudo rm -rf "$DEST"
-      sudo mkdir -p "$DEST"
-      sudo tar -xzf "$TMP_ARCHIVE" -C "$DEST"
-      sudo chown -R "$USER":"$USER" "$DEST"
-    else
-      rm -rf "$DEST"
-      mkdir -p "$DEST"
-      tar -xzf "$TMP_ARCHIVE" -C "$DEST"
+  echo "Extracting into a temporary install folder..."
+  if [[ "$system_write" -eq 1 ]]; then
+    if ! sudo mkdir -p "$staging_dir" || ! sudo tar -xzf "$TMP_ARCHIVE" -C "$staging_dir"; then
+      sudo rm -rf "$staging_dir" || true
+      echo "install failed: could not extract the SDK archive"
+      return 1
+    fi
+    local install_owner="${SUDO_USER:-${USER:-root}}"
+    local install_group
+    install_group="$(id -gn "$install_owner" 2>/dev/null || printf '%s' "$install_owner")"
+    if ! sudo chown -R "$install_owner":"$install_group" "$staging_dir"; then
+      sudo rm -rf "$staging_dir" || true
+      echo "install failed: could not set install folder permissions"
+      return 1
     fi
   else
-    rm -rf "$DEST"
-    mkdir -p "$DEST"
-    tar -xzf "$TMP_ARCHIVE" -C "$DEST"
+    if ! mkdir -p "$staging_dir" || ! tar -xzf "$TMP_ARCHIVE" -C "$staging_dir"; then
+      rm -rf "$staging_dir"
+      echo "install failed: could not extract the SDK archive"
+      return 1
+    fi
+  fi
+
+  local stage_sdk="$staging_dir/sdk"
+  echo "Preparing and checking SDK files..."
+  if ! normalize_sdk_layout "$stage_sdk" || ! assert_sdk_integrity "$stage_sdk"; then
+    if [[ "$system_write" -eq 1 ]]; then sudo rm -rf "$staging_dir"; else rm -rf "$staging_dir"; fi
+    rm -f "$TMP_ARCHIVE"
+    echo "install failed: the downloaded SDK is missing required files"
+    return 1
+  fi
+
+  if [[ -e "$DEST" ]]; then
+    have_previous=1
+    if [[ "$system_write" -eq 1 ]]; then
+      if ! sudo mv "$DEST" "$backup_dir"; then
+        sudo rm -rf "$staging_dir" || true
+        echo "install failed: could not prepare the existing installation for update"
+        return 1
+      fi
+    else
+      if ! mv "$DEST" "$backup_dir"; then
+        rm -rf "$staging_dir"
+        echo "install failed: could not prepare the existing installation for update"
+        return 1
+      fi
+    fi
+  fi
+  if [[ "$system_write" -eq 1 ]]; then
+    if ! sudo mv "$staging_dir" "$DEST"; then
+      if [[ "$have_previous" -eq 1 ]]; then sudo mv "$backup_dir" "$DEST" || true; fi
+      sudo rm -rf "$staging_dir" || true
+      rm -f "$TMP_ARCHIVE"
+      return 1
+    fi
+  else
+    if ! mv "$staging_dir" "$DEST"; then
+      if [[ "$have_previous" -eq 1 ]]; then mv "$backup_dir" "$DEST" || true; fi
+      rm -rf "$staging_dir"
+      rm -f "$TMP_ARCHIVE"
+      return 1
+    fi
   fi
   rm -f "$TMP_ARCHIVE"
 
-  normalize_sdk_layout
-  assert_sdk_integrity
-  install_shims
-  configure_path
-  smoke_test_install
+  echo "Adding command links and PATH configuration..."
+  if ! install_shims || ! configure_path; then
+    echo "install failed: could not configure command links or PATH"
+    if [[ "$system_write" -eq 1 ]]; then
+      sudo rm -rf "$DEST"
+      if [[ "$have_previous" -eq 1 ]]; then sudo mv "$backup_dir" "$DEST" || true; fi
+    else
+      rm -rf "$DEST"
+      if [[ "$have_previous" -eq 1 ]]; then mv "$backup_dir" "$DEST" || true; fi
+    fi
+    return 1
+  fi
+  echo "Checking the installed compiler and launcher..."
+  if ! smoke_test_install; then
+    echo "install failed: the installed compiler or launcher did not start"
+    if [[ "$system_write" -eq 1 ]]; then
+      sudo rm -rf "$DEST"
+      if [[ "$have_previous" -eq 1 ]]; then sudo mv "$backup_dir" "$DEST" || true; fi
+    else
+      rm -rf "$DEST"
+      if [[ "$have_previous" -eq 1 ]]; then mv "$backup_dir" "$DEST" || true; fi
+    fi
+    return 1
+  fi
+  if [[ "$have_previous" -eq 1 ]]; then
+    if [[ "$system_write" -eq 1 ]]; then sudo rm -rf "$backup_dir"; else rm -rf "$backup_dir"; fi
+  fi
 
   echo ""
   echo "TezzNative installed."
@@ -313,6 +487,9 @@ install_payload() {
   fi
 }
 
+if [[ "$MODE" == "install" || "$MODE" == "update" || "$MODE" == "reinstall" ]]; then
+  echo "Checking the official TezzNative release..."
+fi
 remote_version="$(get_remote_version)"
 local_version="$(get_local_version)"
 

@@ -7,7 +7,7 @@ struct TzRect:
   h:int
 
 struct TzDamage:
-  rects:[TzRect;128]
+  rects:*TzRect
   n:int
   overflow:int
 
@@ -140,6 +140,20 @@ fn tz_rect_clip(out:*TzRect, r:*TzRect, max_w:int, max_h:int) -> int:
 fn tz_damage_reset(d:*TzDamage) -> int:
   if d == 0:
     ret 0 - 1
+  if d[0].rects == 0:
+    d[0].rects = (*TzRect)malloc(sizeof(TzRect) * TZ_DAMAGE_MAX)
+    if d[0].rects == 0:
+      ret 0 - 2
+  d[0].n = 0
+  d[0].overflow = 0
+  ret 0
+
+fn tz_damage_deinit(d:*TzDamage) -> int:
+  if d == 0:
+    ret 0 - 1
+  if d[0].rects != 0:
+    free(d[0].rects)
+    d[0].rects = 0 as *TzRect
   d[0].n = 0
   d[0].overflow = 0
   ret 0
@@ -192,6 +206,9 @@ fn _tz_damage_full_bbox(d:*TzDamage, add:*TzRect, out:*TzRect) -> int:
 fn tz_damage_add_rect(d:*TzDamage, r:*TzRect) -> int:
   if d == 0 || r == 0:
     ret 0 - 1
+  if d[0].rects == 0:
+    if tz_damage_reset(d) != 0:
+      ret 0 - 2
   if tz_rect_valid(r) == 0:
     ret 0
   merge_idx:int = 0 - 1
@@ -280,4 +297,3 @@ fn tz_damage_bbox(d:*TzDamage, out:*TzRect) -> int:
     tz_rect_union(out, out, &d[0].rects[i])
     i = i + 1
   ret 1
-

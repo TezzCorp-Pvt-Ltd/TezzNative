@@ -258,7 +258,7 @@ static void paint_sidebar(HDC dc, RECT* wr)
     /* version badge at bottom */
     SelectObject(dc,g_fontSmall);
     SetTextColor(dc,RGB(51,65,85));
-    RECT br={20,wr->bottom-30,185,wr->bottom}; DrawTextA(dc,"tn.tezzcorp.com",-1,&br,DT_LEFT|DT_TOP);
+    RECT br={20,wr->bottom-30,185,wr->bottom}; DrawTextA(dc,"tezznative.org",-1,&br,DT_LEFT|DT_TOP);
 }
 
 static void paint_main(HDC dc, RECT* wr)
@@ -329,7 +329,7 @@ static void paint_main(HDC dc, RECT* wr)
             "You can now open a new terminal and type:\n\n"
             "   tezzc run hello.tn --bc\n\n"
             "to start building native applications.\n\n"
-            "Visit tn.tezzcorp.com for documentation.",
+            "Visit tezznative.org for documentation.",
             -1,&dr,DT_LEFT|DT_TOP|DT_WORDBREAK);
 
         HPEN pen=CreatePen(PS_SOLID,1,RGB(226,232,240)); SelectObject(dc,pen);

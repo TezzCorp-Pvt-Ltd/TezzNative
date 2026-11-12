@@ -14,13 +14,13 @@ require_once __DIR__ . '/i18n.php';
           <span class="footer-brand-name">TezzNative</span>
         </div>
         <p class="footer-bio">
-          <?= __('footer_bio', 'Ultra-fast native AI, tensor arithmetic, and systems programming language founded on <strong>18 Oct 2022</strong> by <strong>Rohit Pathak</strong> at <strong>TezzCorp Pvt Ltd.</strong> Featuring zero runtime GC pauses, standalone PE/ELF binaries, first-class async/await concurrency, and native GGUF LLM inference.') ?>
+          <?= __('footer_bio', 'Ultra-fast native AI, tensor arithmetic, and systems programming language founded on <strong>18 Oct 2022</strong> by <strong>Rohit Pathak</strong> at <strong>TEZZCORP PRIVATE LIMITED</strong>. Featuring zero runtime GC pauses, standalone PE/ELF binaries, first-class async/await concurrency, and native GGUF LLM inference.') ?>
         </p>
         <div class="footer-badges">
           <span class="f-badge">Founded Oct 2022</span>
           <span class="f-badge">Zero-GC Pauses</span>
           <span class="f-badge">Native LSP v3.17</span>
-          <span class="f-badge">v1.1.0 Production</span>
+          <span class="f-badge">v1.0.0 Production</span>
         </div>
       </div>
 
@@ -41,12 +41,12 @@ require_once __DIR__ . '/i18n.php';
       <div class="footer-links-col">
         <h4 class="footer-heading">Standard Packages</h4>
         <ul class="footer-links">
-          <li><a href="/lib/#tensor"><code>tensor</code> (Tensors &amp; Matrix)</a></li>
-          <li><a href="/lib/#llm_core"><code>llm_core</code> (LLM Engine)</a></li>
-          <li><a href="/lib/#net"><code>net</code> (Async HTTP)</a></li>
-          <li><a href="/lib/#task"><code>task</code> (Async/Await Runtime)</a></li>
-          <li><a href="/lib/#tezzui"><code>tezzui</code> (Native GUI)</a></li>
-          <li><a href="/lib/">View all 40+ packages &rarr;</a></li>
+          <li><a href="/packages"><code>gui</code> (High-Performance GUI)</a></li>
+          <li><a href="/packages"><code>tensor</code> (Tensors &amp; Matrix)</a></li>
+          <li><a href="/packages"><code>llm_core</code> (LLM Engine)</a></li>
+          <li><a href="/packages"><code>net</code> (Async HTTP)</a></li>
+          <li><a href="/packages"><code>task</code> (Async/Await Runtime)</a></li>
+          <li><a href="/packages">Explore all 67+ packages &rarr;</a></li>
         </ul>
       </div>
 
@@ -54,13 +54,14 @@ require_once __DIR__ . '/i18n.php';
       <div class="footer-links-col">
         <h4 class="footer-heading">Community &amp; Downloads</h4>
         <ul class="footer-links">
+          <li><a href="/packages">Package Registry</a></li>
           <li><a href="/download/install.ps1">PowerShell Installer (.ps1)</a></li>
           <li><a href="/download/install.sh">Bash Installer (.sh)</a></li>
+          <li><a href="/install-gui.ps1">Windows Graphical Installer</a></li>
           <li><a href="/download/">SDK &amp; All Builds</a></li>
           <li><a href="/community">Developer Forum</a></li>
-          <li><a href="/support">Support</a></li>
-          <li><a href="https://github.com/TezzCorp/TezzNative" target="_blank" rel="noopener">GitHub Repository</a></li>
-          <li><a href="https://tezzcorp.com" target="_blank" rel="noopener">TezzCorp Pvt Ltd.</a></li>
+          <li><a href="https://github.com/TezzCorp-Pvt-Ltd/TezzNative" target="_blank" rel="noopener">GitHub Repository</a></li>
+          <li><a href="https://tezzcorp.com" target="_blank" rel="noopener">TEZZCORP PRIVATE LIMITED</a></li>
         </ul>
       </div>
     </div>
@@ -73,7 +74,7 @@ require_once __DIR__ . '/i18n.php';
           <div class="team-avatar" style="width: 42px; height: 42px; font-size: 1rem; margin-bottom: 6px;">RP</div>
           <div class="team-name" style="font-size: 0.98rem;">Rohit Pathak</div>
           <div class="team-role">Creator &amp; Lead Architect</div>
-          <div class="team-since">Since 18 Oct 2022 &bull; TezzNative v0.1 → v2.2.1</div>
+          <div class="team-since">Since 18 Oct 2022 &bull; TezzNative v0.1 → v1.0.0</div>
         </div>
         <div class="team-card" style="padding: 16px 18px; gap: 4px;">
           <div class="team-avatar" style="width: 42px; height: 42px; font-size: 1rem; background: linear-gradient(135deg, #0284c7, #0ea5e9); margin-bottom: 6px;">VS</div>
@@ -93,11 +94,11 @@ require_once __DIR__ . '/i18n.php';
     <!-- Bottom Copyright & Status -->
     <div class="footer-bottom">
       <div class="footer-copy">
-        &copy; <?= date('Y') ?> <strong>TezzCorp Pvt Ltd.</strong> &mdash; <?= __('footer_copyright', 'TezzNative, founded <strong>18 Oct 2022</strong> by <strong>Rohit Pathak</strong>. All rights reserved.') ?>
+        &copy; <?= date('Y') ?> <strong>TEZZCORP PRIVATE LIMITED</strong> &mdash; <?= __('footer_copyright', 'TezzNative, founded <strong>18 Oct 2022</strong> by <strong>Rohit Pathak</strong>. All rights reserved.') ?>
       </div>
       <div class="footer-status">
-        <span class="status-indicator" style="background: #ff9933; box-shadow: 0 0 8px #ff9933;"></span>
-        <span><?= __('footer_operational', 'TezzNative v1.1.0 Production Operational') ?></span>
+        <span class="status-indicator" style="background: #10b981; box-shadow: 0 0 8px #10b981;"></span>
+        <span><?= __('footer_operational', 'TezzNative v1.0.0 Production Operational') ?></span>
       </div>
     </div>
   </div>
@@ -106,6 +107,6 @@ require_once __DIR__ . '/i18n.php';
 </div> <!-- .site-wrapper -->
 
 <!-- Scripts -->
-<script src="/assets/app.js?v=2.2.7"></script>
+<script src="/assets/app.js?v=1.0.0"></script>
 </body>
 </html>
