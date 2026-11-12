@@ -3,6 +3,21 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../includes/nav.php';
 
+if (!function_exists('tn_badge')) {
+  function tn_badge(string $label, string $color = 'blue'): string {
+    $colorMap = [
+      'blue'    => 'badge-info',
+      'green'   => 'badge-success',
+      'amber'   => 'badge-warning',
+      'warning' => 'badge-warning',
+      'red'     => 'badge-danger',
+      'danger'  => 'badge-danger',
+    ];
+    $cls = $colorMap[strtolower($color)] ?? 'badge-info';
+    return '<span class="badge ' . $cls . '">' . htmlspecialchars($label) . '</span>';
+  }
+}
+
 $pages = [
     'tezzapi' => ['TezzApi', 'Beta', 'API route tables, CRUD helpers, TNXB payloads, and service contracts.', "import \"tezzapi\"\n\nfn main() -> int:\n  api:*TezzApi = tezzapi.api_new()\n  tezzapi.api_route(api, \"GET\", \"/health\", health_handler)\n  ret 0"],
     'tezzserve' => ['TezzServe', 'Beta', 'HTTP server middleware, tenant policy checks, and production service loops.', "import \"tezzserve\"\n\nfn handler(ctx:*ServeCtx):\n  tezzserve.response(ctx, 200, \"ok\")\n\nfn main():\n  tezzserve.listen(8080, handler)"],

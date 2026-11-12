@@ -2,99 +2,164 @@
 declare(strict_types=1);
 
 /**
- * TezzCRM Unified Mailer Engine (Stage 5)
- * Uses PHPMailer with database-driven SMTP configuration.
+ * config/mailer.php — Zero-Dependency Native SMTP Mailer for TezzNative
+ * Uses direct SSL socket connection to Hostinger Mail (smtp.hostinger.com:465).
  */
 
-require_once __DIR__ . '/../vendor/autoload.php';
-require_once __DIR__ . '/config.php';
+function tn_send_email(string $to, string $subject, string $htmlBody, string $plainText = ''): array {
+    $host = 'ssl://smtp.hostinger.com';
+    $port = 465;
+    $user = 'no-reply@tezznative.org';
+    $pass = 'Native#TezzByRohit@9608$';
+    $fromName = 'TezzNative Security';
+    $fromEmail = 'no-reply@tezznative.org';
 
-use PHPMailer\PHPMailer\PHPMailer;
-use PHPMailer\PHPMailer\Exception;
+    $timeout = 10;
+    $socket = @fsockopen($host, $port, $errno, $errstr, $timeout);
+    if (!$socket) {
+        return ['success' => false, 'error' => "SMTP Connection failed: {$errstr} ({$errno})"];
+    }
 
-/**
- * Sends a premium HTML email using TezzCorp SMTP settings.
- *
- * @param string $to
- * @param string $subject
- * @param string $htmlBody
- * @param string $plainText (optional)
- * @return array ['success' => bool, 'message' => string]
- */
-function sendCrmEmail(string $to, string $subject, string $htmlBody, string $plainText = ''): array
-{
+    $readResponse = function() use ($socket): string {
+        $data = '';
+        while ($line = fgets($socket, 515)) {
+            $data .= $line;
+            if (substr($line, 3, 1) === ' ') break;
+        }
+        return $data;
+    };
+
+    $sendCommand = function(string $cmd, string $expectedCode) use ($socket, $readResponse): bool {
+        fputs($socket, $cmd . "\r\n");
+        $res = $readResponse();
+        return strpos($res, $expectedCode) === 0 || strpos($res, $expectedCode) !== false;
+    };
+
     try {
-        $pdo = getDBConnection();
-        $orgId = 'be4398857eca2f2542a46ae7eae537a5'; // Correct Hostinger Org ID (Tezz Corp)
+        $readResponse(); // Greeting
 
-        // 1. Fetch SMTP settings from DB
-        $stmt = $pdo->prepare("SELECT * FROM crm_mail_settings WHERE organization_id = ? LIMIT 1");
-        $stmt->execute([$orgId]);
-        $cfg = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        if (!$cfg || empty($cfg['smtp_host'])) {
-            // Fallback to constants if DB settings missing
-            $cfg = [
-                'smtp_host'  => 'smtp.hostinger.com',
-                'smtp_port'  => 587,
-                'smtp_user'  => 'info@bthdevelopers.com',
-                'smtp_pass'  => 'Dev.Bth@845438',
-                'from_email' => 'info@bthdevelopers.com',
-                'from_name'  => 'Bth Developers'
-            ];
+        if (!$sendCommand("EHLO tezznative.org", "250")) {
+            throw new RuntimeException("EHLO failed");
         }
 
-        $mail = new PHPMailer(true);
+        if (!$sendCommand("AUTH LOGIN", "334")) {
+            throw new RuntimeException("AUTH LOGIN failed");
+        }
 
-        // Server settings
-        $mail->isSMTP();
-        $mail->Host       = $cfg['smtp_host'];
-        $mail->SMTPAuth   = true;
-        $mail->Username   = $cfg['smtp_user'];
-        $mail->Password   = $cfg['smtp_pass'];
-        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-        $mail->Port       = (int)$cfg['smtp_port'];
-        $mail->CharSet    = 'UTF-8';
+        if (!$sendCommand(base64_encode($user), "334")) {
+            throw new RuntimeException("Username rejected");
+        }
 
-        // Recipients
-        $mail->setFrom($cfg['from_email'], $cfg['from_name']);
-        $mail->addAddress($to);
+        if (!$sendCommand(base64_encode($pass), "235")) {
+            throw new RuntimeException("Password rejected");
+        }
 
-        // Content
-        $mail->isHTML(true);
-        $mail->Subject = $subject;
+        if (!$sendCommand("MAIL FROM:<{$fromEmail}>", "250")) {
+            throw new RuntimeException("MAIL FROM rejected");
+        }
+
+        if (!$sendCommand("RCPT TO:<{$to}>", "250")) {
+            throw new RuntimeException("RCPT TO rejected for {$to}");
+        }
+
+        if (!$sendCommand("DATA", "354")) {
+            throw new RuntimeException("DATA command rejected");
+        }
+
+        // Email boundary and content
+        $boundary = "----=_Part_" . bin2hex(random_bytes(8));
+        $date = date('r');
+        $headers = [];
+        $headers[] = "From: {$fromName} <{$fromEmail}>";
+        $headers[] = "To: <{$to}>";
+        $headers[] = "Subject: {$subject}";
+        $headers[] = "Date: {$date}";
+        $headers[] = "MIME-Version: 1.0";
+        $headers[] = "Content-Type: multipart/alternative; boundary=\"{$boundary}\"";
+        $headers[] = "X-Mailer: TezzNative Native Engine v1.0.0";
+
+        $body = implode("\r\n", $headers) . "\r\n\r\n";
         
-        // Wrap body in premium TezzCorp template
-        $fullHtml = "
-        <div style='background-color:#060b15; padding:40px 20px; font-family:sans-serif; color:#f2f6ff;'>
-            <div style='max-width:600px; margin:0 auto; background:rgba(10,18,35,0.84); border:1px solid rgba(148,163,184,0.28); border-radius:16px; padding:30px;'>
-                <div style='text-align:center; margin-bottom:30px;'>
-                    <img src='https://www.vspublicschool.co.in/logo.svg' alt='TezzCorp' style='height:50px;'>
-                    <h2 style='color:#60a5fa; margin-top:10px;'>TezzCorp CRM</h2>
-                </div>
-                <div style='line-height:1.6; font-size:15px;'>
-                    {$htmlBody}
-                </div>
-                <div style='margin-top:40px; padding-top:20px; border-top:1px solid rgba(148,163,184,0.2); font-size:12px; color:#c0cee8; text-align:center;'>
-                    &copy; 2026 TezzCorp Platform &bull; Intelligent ERP Solutions
-                </div>
-            </div>
-        </div>";
+        // Plaintext alternative
+        $plain = $plainText ?: strip_tags($htmlBody);
+        $body .= "--{$boundary}\r\n";
+        $body .= "Content-Type: text/plain; charset=UTF-8\r\n";
+        $body .= "Content-Transfer-Encoding: 7bit\r\n\r\n";
+        $body .= $plain . "\r\n\r\n";
 
-        $mail->Body    = $fullHtml;
-        $mail->AltBody = $plainText ?: strip_tags($htmlBody);
+        // HTML alternative
+        $body .= "--{$boundary}\r\n";
+        $body .= "Content-Type: text/html; charset=UTF-8\r\n";
+        $body .= "Content-Transfer-Encoding: 8bit\r\n\r\n";
+        $body .= $htmlBody . "\r\n\r\n";
+        $body .= "--{$boundary}--\r\n";
+        $body .= ".";
 
-        $mail->send();
+        fputs($socket, $body . "\r\n");
+        $sendRes = $readResponse();
+        
+        $sendCommand("QUIT", "221");
+        fclose($socket);
 
-        // Log delivery
-        $pdo->prepare("INSERT INTO crm_notification_deliveries (id, organization_id, type, recipient_email, subject, status) VALUES (?, ?, ?, ?, ?, ?)")
-            ->execute([bin2hex(random_bytes(16)), $orgId, 'email', $to, $subject, 'sent']);
+        if (strpos($sendRes, "250") !== false) {
+            return ['success' => true, 'message' => 'Email delivered successfully'];
+        }
+        return ['success' => false, 'error' => "Server did not acknowledge message: {$sendRes}"];
 
-        return ['success' => true, 'message' => 'Email sent successfully'];
-
-    } catch (Exception $e) {
-        return ['success' => false, 'message' => "Mailer Error: {$mail->ErrorInfo}"];
     } catch (Throwable $e) {
-        return ['success' => false, 'message' => "System Error: " . $e->getMessage()];
+        @fclose($socket);
+        return ['success' => false, 'error' => $e->getMessage()];
     }
+}
+
+/**
+ * Sends a high-contrast, responsive OTP verification email.
+ */
+function tn_send_otp_email(string $to, string $otp, string $purpose = 'Two-Factor Authentication'): array {
+    $subject = "Your {$purpose} Code: {$otp} — TezzNative";
+    $year = date('Y');
+
+    $html = <<<HTML
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{$subject}</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #060b18; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #f1f5f9;">
+  <div style="max-width: 540px; margin: 30px auto; background: #0c1427; border: 1px solid rgba(56, 189, 248, 0.28); border-radius: 16px; overflow: hidden; box-shadow: 0 16px 40px rgba(0,0,0,0.5);">
+    <div style="background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%); padding: 24px 30px; text-align: center;">
+      <h1 style="margin: 0; font-size: 24px; font-weight: 800; color: #ffffff; letter-spacing: -0.5px;">Tezz<span style="color: #67e8f9;">Native</span></h1>
+      <p style="margin: 4px 0 0; font-size: 13px; color: #e0f2fe; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Security &amp; Identity Verification</p>
+    </div>
+    
+    <div style="padding: 32px 30px;">
+      <p style="font-size: 15px; color: #94a3b8; margin: 0 0 16px; line-height: 1.6;">
+        You have requested a secure verification code for <strong>{$purpose}</strong> on the TezzNative management portal.
+      </p>
+
+      <div style="background: #060a12; border: 1px dashed rgba(56, 189, 248, 0.4); border-radius: 12px; padding: 24px; text-align: center; margin: 24px 0;">
+        <div style="font-size: 12px; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 8px;">One-Time Security Code</div>
+        <div style="font-family: 'JetBrains Mono', monospace, Consolas, Courier, monospace; font-size: 38px; font-weight: 800; letter-spacing: 10px; color: #ffffff; text-shadow: 0 0 20px rgba(14, 165, 233, 0.6); margin-left: 10px;">
+          {$otp}
+        </div>
+        <div style="font-size: 12px; color: #64748b; margin-top: 10px;">Valid for 10 minutes &bull; Do not share this code with anyone</div>
+      </div>
+
+      <p style="font-size: 13px; color: #64748b; line-height: 1.5; margin: 0;">
+        If you did not initiate this login or password reset request, please secure your account immediately or notify <a href="mailto:security@tezznative.org" style="color: #38bdf8; text-decoration: none;">security@tezznative.org</a>.
+      </p>
+    </div>
+
+    <div style="background: #070c18; padding: 18px 30px; border-top: 1px solid rgba(255, 255, 255, 0.06); text-align: center; font-size: 12px; color: #475569;">
+      &copy; {$year} TEZZCORP PRIVATE LIMITED &bull; Bettiah, Bihar, India &bull; All rights reserved.
+    </div>
+  </div>
+</body>
+</html>
+HTML;
+
+    $text = "Your TezzNative {$purpose} code is: {$otp}\n\nThis code is valid for 10 minutes.\nIf you did not request this code, please ignore this email.\n\nTEZZCORP PRIVATE LIMITED";
+
+    return tn_send_email($to, $subject, $html, $text);
 }

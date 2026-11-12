@@ -416,9 +416,9 @@ require_once __DIR__ . '/includes/nav.php';
         <p class="feature-desc">
           Write elegant indentation-based code that feels effortless to read, while enjoying compile-time type safety, exhaustive pattern matching, and zero runtime type tags.
         </p>
-        <div class="feature-code-snippet">
-          <code>fn fib(n: int) -&gt; int:<br>&nbsp;&nbsp;if n &lt;= 1: ret n<br>&nbsp;&nbsp;ret fib(n-1) + fib(n-2)</code>
-        </div>
+        <pre class="feature-code-snippet"><code><span class="kw">fn</span> <span class="fn">fib</span>(n: <span class="ty">int</span>) -&gt; <span class="ty">int</span>:
+  <span class="kw">if</span> n &lt;= <span class="num">1</span>: <span class="kw">ret</span> n
+  <span class="kw">ret</span> <span class="fn">fib</span>(n - <span class="num">1</span>) + <span class="fn">fib</span>(n - <span class="num">2</span>)</code></pre>
       </div>
 
       <!-- Feature 2 -->
@@ -430,9 +430,8 @@ require_once __DIR__ . '/includes/nav.php';
         <p class="feature-desc">
           Spawn hardware-threaded async workers and await asynchronous I/O and matrix compute non-blockingly on an integrated event loop with zero function-color baggage.
         </p>
-        <div class="feature-code-snippet">
-          <code>let task: AsyncTask = task.spawn_arg(worker, 42)<br>let result: int = await task</code>
-        </div>
+        <pre class="feature-code-snippet"><code><span class="kw">let</span> task: <span class="ty">AsyncTask</span> = task.<span class="fn">spawn_arg</span>(worker, <span class="num">42</span>)
+<span class="kw">let</span> result: <span class="ty">int</span> = <span class="kw">await</span> task</code></pre>
       </div>
 
       <!-- Feature 3 -->
@@ -444,9 +443,8 @@ require_once __DIR__ . '/includes/nav.php';
         <p class="feature-desc">
           Tensors are first-class language constructs. Execute matrix multiplications with the infix <code>@</code> operator, slice 4D tensor volumes seamlessly, and backpropagate with automatic differentiation.
         </p>
-        <div class="feature-code-snippet">
-          <code>let H = (X @ W1).relu()<br>let slice = tensor[0, 1, 10:20, 10:20]</code>
-        </div>
+        <pre class="feature-code-snippet"><code><span class="kw">let</span> H = (X @ W1).<span class="fn">relu</span>()
+<span class="kw">let</span> slice = tensor[<span class="num">0</span>, <span class="num">1</span>, <span class="num">10</span>:<span class="num">20</span>, <span class="num">10</span>:<span class="num">20</span>]</code></pre>
       </div>
 
       <!-- Feature 4 -->

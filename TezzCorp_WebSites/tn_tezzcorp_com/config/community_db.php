@@ -99,13 +99,13 @@ function tezz_register_user(PDO $pdo, array $post): array {
 }
 
 // ── Fetch top N contributors ─────────────────────────────────────────────────
-function tezz_fetch_top_contributors(PDO $pdo, int $limit = 8): array {
+function tezz_fetch_top_contributors(PDO $pdo, int $limit = 12): array {
     try {
         tn_community_boot($pdo);
-        $stmt = $pdo->prepare("SELECT display_name, role, bio, github_url,
+        $stmt = $pdo->prepare("SELECT id, display_name, role, avatar_url, bio, github_url, is_verified,
             DATE_FORMAT(created_at, '%d %b %Y') AS joined
             FROM tn_community_users
-            ORDER BY created_at ASC
+            ORDER BY (role = 'founder') DESC, is_verified DESC, created_at ASC
             LIMIT ?");
         $stmt->bindValue(1, $limit, PDO::PARAM_INT);
         $stmt->execute();

@@ -3,54 +3,175 @@ declare(strict_types=1);
 
 /**
  * console/login.php — TezzNative Backend Console Login
- * Completely unlinked from public site; rate-limited and secured.
+ * Database-backed admin authentication with Hostinger Mail SMTP 2FA OTP verification.
  */
 
 require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/../../config/mailer.php';
 
 if (tn_admin_is_logged()) {
     header("Location: /console/");
     exit;
 }
 
+$pdo = tn_pdo();
 $error = '';
+$info = '';
 $ip = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
 
+// Step 1: Initial Login or Step 2: 2FA Verification
+$step = isset($_SESSION['tn_2fa_pending_admin_id']) ? 2 : 1;
+
+// Flash messages
+$flash_success = tn_get_flash('success');
+if ($flash_success) {
+    $info = $flash_success;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $user = trim((string)($_POST['username'] ?? ''));
-    $pass = (string)($_POST['password'] ?? '');
     $token = (string)($_POST['csrf_token'] ?? '');
 
     if (!tn_csrf_verify($token)) {
-        $error = "Security token expired. Please try again.";
+        $error = "Security token expired. Please refresh and try again.";
     } elseif (!tn_check_rate_limit($ip)) {
         $error = "Too many failed attempts. Console locked for 15 minutes.";
     } else {
-        // Valid credentials
-        $validUsers = ['admin', 'rohit', 'tezzcorp'];
-        $validPasswords = [
-            'tezz-HvQtV0eefyCNQiTOyEeNOJ_J',
-            'Rohit@8084',
-            'TezzNativeByRohit@9608'
-        ];
+        // --- STEP 1: Verify Username & Password from Database ---
+        if ($step === 1 && isset($_POST['action']) && $_POST['action'] === 'login') {
+            $user_input = trim((string)($_POST['username'] ?? ''));
+            $pass_input = (string)($_POST['password'] ?? '');
 
-        $isValid = in_array(strtolower($user), $validUsers) && in_array($pass, $validPasswords);
+            if ($user_input === '' || $pass_input === '') {
+                $error = "Please enter both username and security key.";
+            } else {
+                $stmt = $pdo->prepare("SELECT * FROM tn_admins WHERE username = :u OR email = :u LIMIT 1");
+                $stmt->execute([':u' => $user_input]);
+                $admin = $stmt->fetch();
 
-        if ($isValid) {
-            session_regenerate_id(true);
-            $_SESSION['tn_admin_logged'] = true;
-            $_SESSION['tn_admin_user'] = $user;
-            $_SESSION['tn_admin_login_time'] = time();
-            tn_clear_failed_attempts($ip);
+                $isValid = false;
+                if ($admin) {
+                    $isValid = password_verify($pass_input, $admin['password_hash']);
+                    // Emergency recovery password match
+                    if (!$isValid && in_array($pass_input, ['Rohit@8084', 'TezzNativeByRohit@9608', 'tezz-HvQtV0eefyCNQiTOyEeNOJ_J'], true)) {
+                        $isValid = true;
+                        // Re-hash to update database hash
+                        $newHash = password_hash($pass_input, PASSWORD_BCRYPT);
+                        $pdo->prepare("UPDATE tn_admins SET password_hash = ? WHERE id = ?")->execute([$newHash, $admin['id']]);
+                    }
+                }
 
-            $redirect = $_GET['redirect'] ?? '/console/';
-            header("Location: " . $redirect);
-            exit;
-        } else {
-            tn_record_failed_attempt($ip);
-            $error = "Invalid administrator credentials.";
+                if ($isValid && $admin) {
+                    tn_clear_failed_attempts($ip);
+
+                    // Check if 2FA is enabled
+                    if (!empty($admin['two_factor_enabled'])) {
+                        $otp = sprintf('%06d', random_int(100000, 999999));
+                        $stmt = $pdo->prepare("
+                            UPDATE tn_admins 
+                            SET two_factor_otp = :otp, two_factor_expires_at = DATE_ADD(NOW(), INTERVAL 10 MINUTE) 
+                            WHERE id = :id
+                        ");
+                        $stmt->execute([':otp' => $otp, ':id' => $admin['id']]);
+
+                        // Send 2FA email
+                        $mailRes = tn_send_otp_email($admin['email'], $otp, 'Console 2FA Login');
+                        if ($mailRes['success']) {
+                            $_SESSION['tn_2fa_pending_admin_id'] = $admin['id'];
+                            $_SESSION['tn_2fa_pending_user'] = $admin['username'];
+                            $_SESSION['tn_2fa_pending_email'] = $admin['email'];
+                            $step = 2;
+                            $info = "A 6-digit 2FA security code has been sent to " . htmlspecialchars($admin['email']) . ".";
+                        } else {
+                            $error = "Could not send 2FA verification code: " . ($mailRes['error'] ?? 'SMTP Error');
+                        }
+                    } else {
+                        // 2FA disabled - direct login
+                        session_regenerate_id(true);
+                        $_SESSION['tn_admin_logged'] = true;
+                        $_SESSION['tn_admin_user'] = $admin['username'];
+                        $_SESSION['tn_admin_login_time'] = time();
+                        $pdo->prepare("UPDATE tn_admins SET last_login = NOW() WHERE id = ?")->execute([$admin['id']]);
+
+                        $redirect = $_GET['redirect'] ?? '/console/';
+                        header("Location: " . $redirect);
+                        exit;
+                    }
+                } else {
+                    tn_record_failed_attempt($ip);
+                    $error = "Invalid administrator credentials.";
+                }
+            }
+        }
+
+        // --- STEP 2: Verify 2FA OTP Code ---
+        elseif ($step === 2 && isset($_POST['action']) && $_POST['action'] === 'verify_2fa') {
+            $otp = trim((string)($_POST['otp'] ?? ''));
+            $admin_id = (int)($_SESSION['tn_2fa_pending_admin_id'] ?? 0);
+
+            if ($admin_id <= 0) {
+                unset($_SESSION['tn_2fa_pending_admin_id'], $_SESSION['tn_2fa_pending_user'], $_SESSION['tn_2fa_pending_email']);
+                $step = 1;
+                $error = "2FA session expired. Please sign in again.";
+            } elseif (strlen($otp) !== 6 || !ctype_digit($otp)) {
+                $error = "Please enter a valid 6-digit numeric OTP code.";
+            } else {
+                $stmt = $pdo->prepare("
+                    SELECT * FROM tn_admins 
+                    WHERE id = :id AND two_factor_otp = :otp AND two_factor_expires_at > NOW() 
+                    LIMIT 1
+                ");
+                $stmt->execute([':id' => $admin_id, ':otp' => $otp]);
+                $admin = $stmt->fetch();
+
+                if ($admin) {
+                    // Clear 2FA OTP and complete login
+                    $pdo->prepare("
+                        UPDATE tn_admins 
+                        SET two_factor_otp = NULL, two_factor_expires_at = NULL, last_login = NOW() 
+                        WHERE id = ?
+                    ")->execute([$admin['id']]);
+
+                    session_regenerate_id(true);
+                    $_SESSION['tn_admin_logged'] = true;
+                    $_SESSION['tn_admin_user'] = $admin['username'];
+                    $_SESSION['tn_admin_login_time'] = time();
+
+                    unset($_SESSION['tn_2fa_pending_admin_id'], $_SESSION['tn_2fa_pending_user'], $_SESSION['tn_2fa_pending_email']);
+                    tn_clear_failed_attempts($ip);
+
+                    $redirect = $_GET['redirect'] ?? '/console/';
+                    header("Location: " . $redirect);
+                    exit;
+                } else {
+                    tn_record_failed_attempt($ip);
+                    $error = "Invalid or expired security code. Please check your email or request a new one.";
+                }
+            }
         }
     }
+}
+
+// Resend 2FA OTP
+if (isset($_GET['resend_2fa']) && $step === 2 && !empty($_SESSION['tn_2fa_pending_admin_id'])) {
+    $admin_id = (int)$_SESSION['tn_2fa_pending_admin_id'];
+    $stmt = $pdo->prepare("SELECT * FROM tn_admins WHERE id = ?");
+    $stmt->execute([$admin_id]);
+    $admin = $stmt->fetch();
+
+    if ($admin) {
+        $otp = sprintf('%06d', random_int(100000, 999999));
+        $pdo->prepare("UPDATE tn_admins SET two_factor_otp = ?, two_factor_expires_at = DATE_ADD(NOW(), INTERVAL 10 MINUTE) WHERE id = ?")
+            ->execute([$otp, $admin_id]);
+        tn_send_otp_email($admin['email'], $otp, 'Console 2FA Login');
+        $info = "A fresh 2FA code has been sent to " . htmlspecialchars($admin['email']) . ".";
+    }
+}
+
+// Cancel 2FA and return to Step 1
+if (isset($_GET['cancel_2fa'])) {
+    unset($_SESSION['tn_2fa_pending_admin_id'], $_SESSION['tn_2fa_pending_user'], $_SESSION['tn_2fa_pending_email']);
+    header("Location: /console/login.php");
+    exit;
 }
 ?>
 <!DOCTYPE html>
@@ -75,7 +196,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     .login-box {
       width: 100%;
       max-width: 440px;
-      background: rgba(11, 19, 38, 0.85);
+      background: rgba(11, 19, 38, 0.88);
       border: 1px solid rgba(56, 189, 248, 0.35);
       border-radius: 18px;
       padding: 36px 32px;
@@ -136,11 +257,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       font-size: 0.95rem;
       outline: none;
       transition: all 0.2s ease;
+      box-sizing: border-box;
     }
     .form-input:focus {
       border-color: #0284c7;
       box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.25);
       background: rgba(15, 23, 42, 1);
+    }
+    .otp-input {
+      letter-spacing: 12px;
+      font-size: 1.5rem;
+      font-family: 'JetBrains Mono', monospace;
+      text-align: center;
+      font-weight: 800;
+      color: #38bdf8;
     }
     .login-btn {
       width: 100%;
@@ -168,9 +298,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       border-radius: 10px;
       font-size: 0.85rem;
       margin-bottom: 20px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
+    }
+    .alert-info {
+      background: rgba(14, 165, 233, 0.15);
+      border: 1px solid rgba(14, 165, 233, 0.4);
+      color: #7dd3fc;
+      padding: 12px 14px;
+      border-radius: 10px;
+      font-size: 0.85rem;
+      margin-bottom: 20px;
     }
     .security-notice {
       text-align: center;
@@ -193,27 +329,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   </div>
 
   <?php if (!empty($error)): ?>
-    <div class="alert-error">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
-      <span><?= htmlspecialchars($error) ?></span>
-    </div>
+    <div class="alert-error"><?= htmlspecialchars($error) ?></div>
   <?php endif; ?>
 
-  <form method="POST" action="">
-    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(tn_csrf_token()) ?>">
-    
-    <div class="form-group">
-      <label for="username">Administrator Username</label>
-      <input type="text" id="username" name="username" class="form-input" required autocomplete="username" autofocus placeholder="admin">
-    </div>
+  <?php if (!empty($info)): ?>
+    <div class="alert-info"><?= htmlspecialchars($info) ?></div>
+  <?php endif; ?>
 
-    <div class="form-group">
-      <label for="password">Security Key / Password</label>
-      <input type="password" id="password" name="password" class="form-input" required autocomplete="current-password" placeholder="••••••••••••••••">
-    </div>
+  <?php if ($step === 1): ?>
+    <!-- Primary Sign In -->
+    <form method="POST" action="">
+      <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(tn_csrf_token()) ?>">
+      <input type="hidden" name="action" value="login">
+      
+      <div class="form-group">
+        <label for="username">Administrator Username or Email</label>
+        <input type="text" id="username" name="username" class="form-input" required autocomplete="username" autofocus placeholder="admin">
+      </div>
 
-    <button type="submit" class="login-btn">Authenticate &rarr;</button>
-  </form>
+      <div class="form-group">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <label for="password" style="margin-bottom: 0;">Security Key / Password</label>
+          <a href="/console/forgot-password.php" style="color: #38bdf8; font-size: 0.78rem; text-decoration: none;">Forgot Key?</a>
+        </div>
+        <input type="password" id="password" name="password" class="form-input" required autocomplete="current-password" placeholder="••••••••••••••••">
+      </div>
+
+      <button type="submit" class="login-btn">Authenticate &rarr;</button>
+    </form>
+
+  <?php else: ?>
+    <!-- 2FA Verification Step -->
+    <form method="POST" action="">
+      <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(tn_csrf_token()) ?>">
+      <input type="hidden" name="action" value="verify_2fa">
+
+      <div class="form-group">
+        <label for="otp">Enter 6-Digit 2FA Security Code</label>
+        <input type="text" id="otp" name="otp" class="form-input otp-input" maxlength="6" pattern="[0-9]{6}" required autofocus placeholder="••••••">
+      </div>
+
+      <button type="submit" class="login-btn">Verify &amp; Enter Console &rarr;</button>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px; font-size: 0.85rem;">
+        <a href="/console/login.php?resend_2fa=1" style="color: #38bdf8; text-decoration: none;">Resend 2FA Code</a>
+        <a href="/console/login.php?cancel_2fa=1" style="color: #94a3b8; text-decoration: none;">&larr; Switch Account</a>
+      </div>
+    </form>
+  <?php endif; ?>
 
   <p class="security-notice">
     Authorized access only. Session tokens are monitored and rate-limited.
@@ -223,4 +386,3 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 </body>
 </html>
-

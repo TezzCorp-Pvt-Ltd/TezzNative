@@ -391,48 +391,62 @@ require_once __DIR__ . '/includes/header.php';
       <?php endif; ?>
     </article>
 
-    <!-- Core Team Section (replaces DB leaderboard) -->
+    <!-- Core Team & Community Members Section (from Database) -->
     <article class="comm-card">
-      <h2 class="comm-card-title"><svg class="inline-svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: -3px; margin-right: 6px;"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11"/></svg>Core Development Team</h2>
-      <p class="comm-card-lead">The engineers building TezzNative — the compiler, runtime, IDE tooling, and this website.</p>
+      <h2 class="comm-card-title">
+        <svg class="inline-svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: -3px; margin-right: 6px;"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11"/></svg>
+        Community Developers &amp; Team
+      </h2>
+      <p class="comm-card-lead">Verified engineers, contributors, and core maintainers shaping TezzNative.</p>
 
       <ul class="member-list">
-        <!-- Rohit Pathak -->
-        <li class="member-item">
-          <div class="member-avatar" style="background: linear-gradient(135deg, #0284c7, #00d2ff);">RP</div>
-          <div class="member-info">
-            <div class="member-name">Rohit Pathak</div>
-            <div class="member-joined">Since 18 Oct 2022 &bull; Founder</div>
-          </div>
-          <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;">
-            <span class="member-role role-founder">Creator</span>
-            <span class="member-role role-developer" style="font-size:.65rem;">Lead Architect &amp; Compiler</span>
-          </div>
-        </li>
-        <!-- Vikash Sharma -->
-        <li class="member-item">
-          <div class="member-avatar" style="background: linear-gradient(135deg, #0284c7, #0ea5e9);">VS</div>
-          <div class="member-info">
-            <div class="member-name">Vikash Sharma</div>
-            <div class="member-joined">Since 01 Jan 2025</div>
-          </div>
-          <span class="member-role role-contributor">UI &amp; UX</span>
-        </li>
-        <!-- Suman Mandal -->
-        <li class="member-item">
-          <div class="member-avatar" style="background: linear-gradient(135deg, #7c3aed, #a855f7);">SM</div>
-          <div class="member-info">
-            <div class="member-name">Suman Mandal</div>
-            <div class="member-joined">Since 21 Sep 2026</div>
-          </div>
-          <span class="member-role role-developer">Runtime &amp; SDK</span>
-        </li>
+        <?php if (empty($contributors)): ?>
+          <li class="empty-state">No members loaded yet.</li>
+        <?php else: ?>
+          <?php foreach ($contributors as $m): ?>
+          <li class="member-item">
+            <?php if (!empty($m['avatar_url'])): ?>
+              <div class="member-avatar" style="overflow: hidden; padding: 0; border: 1px solid rgba(56, 189, 248, 0.4);">
+                <img src="<?= htmlspecialchars($m['avatar_url']) ?>" alt="<?= htmlspecialchars($m['display_name']) ?>" style="width: 100%; height: 100%; object-fit: cover;">
+              </div>
+            <?php else: ?>
+              <div class="member-avatar" style="background: linear-gradient(135deg, #0284c7, #00d2ff);">
+                <?= strtoupper(substr($m['display_name'], 0, 2)) ?>
+              </div>
+            <?php endif; ?>
+
+            <div class="member-info">
+              <div class="member-name">
+                <?= htmlspecialchars($m['display_name']) ?>
+                <?php if (!empty($m['is_verified'])): ?>
+                  <span style="color: #38bdf8; font-size: 0.8rem; margin-left: 2px;" title="Verified Member">&#10003;</span>
+                <?php endif; ?>
+              </div>
+              <div class="member-joined">
+                Joined <?= htmlspecialchars($m['joined'] ?? '') ?>
+                <?php if (!empty($m['github_url'])): ?>
+                  &bull; <a href="<?= htmlspecialchars($m['github_url']) ?>" target="_blank" rel="noopener" style="color: var(--text-accent); text-decoration: none;">GitHub</a>
+                <?php endif; ?>
+              </div>
+              <?php if (!empty($m['bio'])): ?>
+                <div style="font-size: 0.76rem; color: var(--text-tertiary); margin-top: 2px;"><?= htmlspecialchars($m['bio']) ?></div>
+              <?php endif; ?>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-end;">
+              <span class="member-role role-<?= htmlspecialchars($m['role'] ?? 'developer') ?>">
+                <?= ucfirst(htmlspecialchars($m['role'] ?? 'developer')) ?>
+              </span>
+            </div>
+          </li>
+          <?php endforeach; ?>
+        <?php endif; ?>
       </ul>
 
       <div style="margin-top:20px;padding:14px;background:var(--bg-surface-raised);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);">
         <p style="font-size:.84rem;color:var(--text-secondary);margin:0;line-height:1.6;">
           <strong style="color:var(--text-primary);">Want to join the team?</strong> TezzNative is open source. Contribute on
-          <a href="https://github.com/TezzCorp/TezzNative" target="_blank" rel="noopener" style="color:var(--text-accent);">GitHub</a> and register below to appear in the community registry.
+          <a href="https://github.com/TezzCorp/TezzNative" target="_blank" rel="noopener" style="color:var(--text-accent);">GitHub</a> and register to appear in the community registry.
         </p>
       </div>
     </article>
