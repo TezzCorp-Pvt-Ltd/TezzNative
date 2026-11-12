@@ -60,40 +60,18 @@ function tn_nav(string $active = 'home'): void {
     return;
   }
   $rendered = true;
-
-  // Dynamic announcement settings with fallbacks
-  $banner_visible = true;
-  $banner_badge = __('banner_badge', 'OFFICIAL RELEASE');
-  $banner_text = __('banner_text', 'High-Performance Systems & AI Language with Native Tensors, Coroutines & Zero-GC Execution!');
-  $banner_link_text = __('banner_link', 'Get TezzNative v1.0.0');
-  $banner_link_url = '/download/';
-
-  $site_settings_file = __DIR__ . '/../config/site_settings.json';
-  if (is_file($site_settings_file)) {
-    $settings_data = @json_decode((string)file_get_contents($site_settings_file), true);
-    if (!empty($settings_data['announcement'])) {
-      $a = $settings_data['announcement'];
-      $banner_visible = !isset($a['enabled']) || !empty($a['enabled']);
-      if (!empty($a['badge'])) $banner_badge = htmlspecialchars($a['badge']);
-      if (!empty($a['text'])) $banner_text = htmlspecialchars($a['text']);
-      if (!empty($a['link_text'])) $banner_link_text = htmlspecialchars($a['link_text']);
-      if (!empty($a['link_url'])) $banner_link_url = htmlspecialchars($a['link_url']);
-    }
-  }
 ?>
-<?php if ($banner_visible): ?>
 <!-- Top Announcement Ribbon -->
 <div class="announcement-banner">
   <div class="banner-container">
-    <span class="banner-badge"><?= $banner_badge ?></span>
-    <span class="banner-text"><?= $banner_text ?></span>
-    <a href="<?= $banner_link_url ?>" class="banner-link">
-      <?= $banner_link_text ?>
+    <span class="banner-badge"><?= __('banner_badge', 'OFFICIAL RELEASE') ?></span>
+    <span class="banner-text"><?= __('banner_text', 'High-Performance Systems & AI Language with Native Tensors, Coroutines & Zero-GC Execution!') ?></span>
+    <a href="/download/" class="banner-link">
+      <?= __('banner_link', 'Get TezzNative v1.0.0') ?>
       <svg class="icon-inline" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
     </a>
   </div>
 </div>
-<?php endif; ?>
 
 <!-- Primary Navigation Header -->
 <header class="main-header" id="mainHeader">
@@ -127,7 +105,7 @@ function tn_nav(string $active = 'home'): void {
           </svg>
         </button>
         <div class="nav-dropdown-menu" id="navMoreMenu" role="menu" aria-labelledby="navMoreBtn">
-          <a href="/lib/" class="dropdown-item <?= ($active === 'packages' || $active === 'lib') ? 'active' : '' ?>" role="menuitem">
+          <a href="/packages" class="dropdown-item <?= ($active === 'packages' || $active === 'lib') ? 'active' : '' ?>" role="menuitem">
             <div class="dropdown-item-icon">
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
             </div>

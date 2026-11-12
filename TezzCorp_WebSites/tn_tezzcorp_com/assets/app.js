@@ -312,13 +312,43 @@ fn main() -> int:
     }
 
     function syntaxHL(code) {
-      // Lightweight TezzNative syntax highlighter
-      return escHtml(code)
-        .replace(/\b(import|fn|async|let|ret|defer|await|if|else|while|for|in)\b/g,
-          '<span class="kw">$1</span>')
-        .replace(/"([^"]*)"/g, '<span class="str">"$1"</span>')
-        .replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="num">$1</span>')
-        .replace(/(\/\/[^\n]*)/g, '<span class="cmt">$1</span>');
+      if (!code) return '';
+      // Token-based placeholder strategy to prevent attribute collision and comments/strings corruption
+      var placeholderIdx = 0;
+      var placeholders = {};
+
+      // 1. Extract comments first (preserving content)
+      var text = code.replace(/(\/\/[^\n]*)/g, function(match) {
+        var key = '___TZCMT_' + (placeholderIdx++) + '___';
+        placeholders[key] = '<span class="cmt">' + escHtml(match) + '</span>';
+        return key;
+      });
+
+      // 2. Extract string literals
+      text = text.replace(/"([^"\\]*(?:\\.[^"\\]*)*)"/g, function(match) {
+        var key = '___TZSTR_' + (placeholderIdx++) + '___';
+        placeholders[key] = '<span class="str">' + escHtml(match) + '</span>';
+        return key;
+      });
+
+      // 3. Escape HTML safely on remaining code tokens
+      text = escHtml(text);
+
+      // 4. Highlight keywords
+      text = text.replace(/\b(import|fn|async|let|ret|defer|await|if|else|while|for|in|say|struct|unsafe)\b/g, '<span class="kw">$1</span>');
+
+      // 5. Highlight primitive and tensor types
+      text = text.replace(/\b(int|float|str|char|bool|Tensor|Context|void)\b/g, '<span class="ty">$1</span>');
+
+      // 6. Highlight numeric literals
+      text = text.replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="num">$1</span>');
+
+      // 7. Restore placeholders
+      for (var k in placeholders) {
+        text = text.replace(k, placeholders[k]);
+      }
+
+      return text;
     }
 
     function renderDemo(key) {
@@ -329,7 +359,7 @@ fn main() -> int:
           var cls = '';
           if (line.cls === 'muted')   cls = 'style="color:#64748b"';
           if (line.cls === 'success') cls = 'style="color:#10b981"';
-          if (line.cls === 'perf')    cls = 'style="color:#ff9933"';
+          if (line.cls === 'perf')    cls = 'style="color:#00d2ff"';
           return '<div class="output-line" ' + cls + '>' + escHtml(line.text) + '</div>';
         }).join('');
       }

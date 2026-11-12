@@ -117,7 +117,7 @@ $banner = $settings['announcement'] ?? [];
       <span style="font-size: 0.85rem; color: #38bdf8; font-weight: 600; text-decoration: underline;"><?= htmlspecialchars($banner['link_text'] ?? 'Get TezzNative v1.0.0') ?> &rarr;</span>
     </div>
     <?php if (empty($banner['enabled'])): ?>
-      <div style="margin-top: 8px; font-size: 0.75rem; color: #f59e0b; font-weight: 600;">⚠️ Notice: The ribbon is currently toggled OFF and will not display publicly.</div>
+      <div style="margin-top: 8px; font-size: 0.75rem; color: #f59e0b; font-weight: 600;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: -2px; margin-right: 4px;"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Notice: The ribbon is currently toggled OFF and will not display publicly.</div>
     <?php endif; ?>
   </div>
 
@@ -257,3 +257,4 @@ $banner = $settings['announcement'] ?? [];
 </div>
 
 <?php require_once __DIR__ . '/includes/footer.php'; ?>
+

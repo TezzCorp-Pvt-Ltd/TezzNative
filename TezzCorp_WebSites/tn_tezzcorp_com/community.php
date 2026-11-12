@@ -289,37 +289,37 @@ require_once __DIR__ . '/includes/header.php';
   </div>
   <div class="comm-channels-grid">
     <div class="ch-card">
-      <div class="ch-icon">💬</div>
+      <div class="ch-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
       <h3 class="ch-title">GitHub Discussions</h3>
       <p class="ch-desc">Ask questions, share projects, post ideas, and get answers from the core TezzCorp team and community members.</p>
       <a href="https://github.com/TezzCorp/TezzNative/discussions" class="ch-link" target="_blank" rel="noopener">Open Discussions →</a>
     </div>
     <div class="ch-card">
-      <div class="ch-icon">🐛</div>
+      <div class="ch-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="6" width="8" height="14" rx="4"/><path d="m19 7-3 2"/><path d="m5 7 3 2"/><path d="m19 19-3-2"/><path d="m5 19 3-2"/><path d="M20 13h-4"/><path d="M4 13h4"/><path d="m10 4 1 2"/><path d="m14 4-1 2"/></svg></div>
       <h3 class="ch-title">GitHub Issues</h3>
       <p class="ch-desc">Found a bug? Want a new stdlib module or language feature? Open an issue and the core team will triage it promptly.</p>
       <a href="https://github.com/TezzCorp/TezzNative/issues" class="ch-link" target="_blank" rel="noopener">Report a Bug →</a>
     </div>
     <div class="ch-card">
-      <div class="ch-icon">📦</div>
+      <div class="ch-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>
       <h3 class="ch-title">GitHub Repository</h3>
       <p class="ch-desc">Browse the TezzNative compiler source, standard library, examples, and contribute pull requests to improve the language.</p>
       <a href="https://github.com/TezzCorp/TezzNative" class="ch-link" target="_blank" rel="noopener">View on GitHub →</a>
     </div>
     <div class="ch-card">
-      <div class="ch-icon">📖</div>
+      <div class="ch-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div>
       <h3 class="ch-title">Documentation</h3>
       <p class="ch-desc">The official TezzNative language reference with verified working examples for every feature, type, stdlib module, and GUI API.</p>
       <a href="/docs/" class="ch-link">Read the Docs →</a>
     </div>
     <div class="ch-card">
-      <div class="ch-icon">📝</div>
+      <div class="ch-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></div>
       <h3 class="ch-title">Changelog & Releases</h3>
       <p class="ch-desc">Stay up to date with every version release. View what changed, new stdlib additions, and breaking changes per release.</p>
       <a href="/versions/" class="ch-link">View Releases →</a>
     </div>
     <div class="ch-card">
-      <div class="ch-icon">📧</div>
+      <div class="ch-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg></div>
       <h3 class="ch-title">Direct Support</h3>
       <p class="ch-desc">For enterprise inquiries, licensing questions, or priority technical support — contact the TezzCorp engineering team.</p>
       <a href="/support.php" class="ch-link">Get Support →</a>
@@ -333,7 +333,7 @@ require_once __DIR__ . '/includes/header.php';
 
     <!-- Registration Card -->
     <article class="comm-card">
-      <h2 class="comm-card-title">🚀 Join the Official Registry</h2>
+      <h2 class="comm-card-title"><svg class="inline-svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: -3px; margin-right: 6px;"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/></svg>Join the Official Registry</h2>
       <p class="comm-card-lead">Create your TezzNative community profile. Track your contributions, appear on the leaderboard, and get notified on new releases.</p>
 
       <?php if ($notice !== ''): ?>
@@ -384,7 +384,7 @@ require_once __DIR__ . '/includes/header.php';
       </form>
       <?php else: ?>
       <div style="text-align:center;padding:32px 0;">
-        <div style="font-size:3rem;margin-bottom:16px;">🎉</div>
+        <div style="margin-bottom:16px; color:#10b981;"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
         <p style="color:var(--text-primary);font-weight:700;font-size:1.1rem;margin-bottom:8px;">You're officially registered!</p>
         <p style="color:var(--text-secondary);font-size:.9rem;">Check your email and explore the community channels above.</p>
       </div>
@@ -393,7 +393,7 @@ require_once __DIR__ . '/includes/header.php';
 
     <!-- Core Team Section (replaces DB leaderboard) -->
     <article class="comm-card">
-      <h2 class="comm-card-title">🏆 Core Development Team</h2>
+      <h2 class="comm-card-title"><svg class="inline-svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: -3px; margin-right: 6px;"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11"/></svg>Core Development Team</h2>
       <p class="comm-card-lead">The engineers building TezzNative — the compiler, runtime, IDE tooling, and this website.</p>
 
       <ul class="member-list">

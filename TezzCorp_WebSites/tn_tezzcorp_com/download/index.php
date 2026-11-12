@@ -17,7 +17,7 @@ require_once __DIR__ . '/../includes/nav.php';
     </div>
 
     <!-- Quick Installation Scripts Ribbon -->
-    <div style="background: var(--code-bg); border: 1px solid var(--code-border); border-radius: var(--radius-lg); padding: 24px; margin-bottom: 40px;">
+    <div class="install-terminal-panel">
       <div class="terminal-comment"># Windows PowerShell (Automated Setup - Adds to PATH &amp; Environment):</div>
       <div class="terminal-cmd" style="margin-bottom: 18px;">
         <code>irm https://tezznative.org/install.ps1 | iex</code>
@@ -43,9 +43,10 @@ require_once __DIR__ . '/../includes/nav.php';
       </div>
     </div>
 
-    <div style="background: var(--code-bg); border: 1px solid var(--code-border); border-radius: var(--radius-lg); padding: 24px; margin-bottom: 40px;">
-      <h2 style="margin: 0 0 8px;">Prefer a graphical installer?</h2>
-      <p class="section-desc" style="margin: 0 0 18px;">Choose the install folder, download source, and PATH setup in the wizard. Linux desktop sessions need Zenity or YAD.</p>
+    <!-- Graphical Installer Ribbon -->
+    <div class="install-terminal-panel">
+      <h2>Prefer a graphical installer?</h2>
+      <p class="section-desc">Choose the install folder, download source, and PATH setup in the wizard. Linux desktop sessions need Zenity or YAD.</p>
       <div class="terminal-comment"># Windows PowerShell:</div>
       <div class="terminal-cmd" style="margin-bottom: 18px;"><code>irm https://tezznative.org/install-gui.ps1 | iex</code></div>
       <div class="terminal-comment"># Linux desktop:</div>

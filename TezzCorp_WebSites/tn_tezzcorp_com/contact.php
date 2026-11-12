@@ -148,7 +148,7 @@ include 'includes/header.php';
           </div>
 
           <div style="background:linear-gradient(135deg,rgba(59,130,246,.08),rgba(99,102,241,.08));border:1px solid rgba(99,102,241,.2);border-radius:var(--radius-lg);padding:1.5rem;margin-top:1.25rem">
-            <h3 style="font-size:1rem;margin-bottom:.5rem">⚡ Typical response time</h3>
+            <h3 style="font-size:1rem;margin-bottom:.5rem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: -2px; margin-right: 4px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Typical response time</h3>
             <p style="font-size:.875rem;color:var(--muted)">We respond to most inquiries within 4–8 hours during business hours. For urgent projects, call us directly.</p>
           </div>
         </div>
@@ -187,7 +187,7 @@ document.getElementById('contact-form').addEventListener('submit', function(e) {
 
   // Simulate form submission (in production, use fetch/AJAX to backend)
   setTimeout(function() {
-    suc.textContent = '✓ Message sent! We\'ll get back to you within 1 business day. Thank you, ' + name + '!';
+    suc.textContent = 'Message sent! We\'ll get back to you within 1 business day. Thank you, ' + name + '!';
     suc.style.display = 'block';
     btn.innerHTML = '<i class="material-icons" aria-hidden="true" style="margin-right:0.3rem;font-size:1.1rem;vertical-align:middle">check</i> Sent!';
     document.getElementById('contact-form').reset();

@@ -93,7 +93,7 @@ function tezz_register_user(PDO $pdo, array $post): array {
 
     return [
         'ok'      => true,
-        'message' => "Welcome, {$name}! You've joined the TezzNative community. 🎉",
+        'message' => "Welcome, {$name}! You've joined the TezzNative community successfully.",
         'user_id' => (int)$pdo->lastInsertId(),
     ];
 }

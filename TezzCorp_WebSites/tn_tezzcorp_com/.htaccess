@@ -40,6 +40,7 @@ RewriteCond %{REQUEST_FILENAME} !-d
 RewriteRule ^packages/?$           packages.php      [L,QSA]
 RewriteRule ^package/([a-zA-Z0-9_\-]+)/?$ package.php?name=$1 [L,QSA]
 RewriteRule ^package/?$            package.php       [L,QSA]
+RewriteRule ^lib/?$                packages.php      [L,QSA]
 
 # /community or /community/ → community.php
 RewriteCond %{REQUEST_FILENAME} !-f
@@ -55,9 +56,6 @@ RewriteRule ^support/?$            support.php       [L,QSA]
 # /download → /download/ (directory index)
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteRule ^download/?$           download/         [L,QSA]
-
-# /console redirect to /console/ (directory index)
-RewriteRule ^console$ console/ [R=301,L]
 
 # ------------------------------------------------------------
 # 3) Pretty URLs: strip .php extension (single-segment)

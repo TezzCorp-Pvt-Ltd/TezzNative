@@ -58,9 +58,6 @@ $active_locale = tn_get_locale();
   <link rel="manifest" href="/favicon/site.webmanifest">
 
   <!-- Google Fonts: Inter & JetBrains Mono -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
 
   <!-- Core App Stylesheets -->
   <link rel="stylesheet" href="/assets/app.css?v=1.0.0">

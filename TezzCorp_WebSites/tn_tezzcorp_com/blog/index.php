@@ -8,7 +8,6 @@ include '../includes/header.php';
 $posts = [
   [
     'slug' => 'tezznative-v1-launch',
-    'emoji' => '🚀',
     'cat' => 'Language',
     'cat_c' => 'var(--blue)',
     'cat_bg' => 'rgba(59,130,246,.12)',
@@ -20,7 +19,6 @@ $posts = [
   ],
   [
     'slug' => 'tezzllm-federated-ai',
-    'emoji' => '🤖',
     'cat' => 'AI / ML',
     'cat_c' => 'var(--indigo)',
     'cat_bg' => 'rgba(99,102,241,.12)',
@@ -32,7 +30,6 @@ $posts = [
   ],
   [
     'slug' => 'school-erp-bihar',
-    'emoji' => '🏫',
     'cat' => 'Case Study',
     'cat_c' => 'var(--green)',
     'cat_bg' => 'rgba(16,185,129,.12)',
@@ -44,7 +41,6 @@ $posts = [
   ],
   [
     'slug' => 'why-zero-dependencies',
-    'emoji' => '⚡',
     'cat' => 'Engineering',
     'cat_c' => 'var(--orange)',
     'cat_bg' => 'rgba(245,158,11,.12)',
@@ -56,7 +52,6 @@ $posts = [
   ],
   [
     'slug' => 'crm-sales-automation',
-    'emoji' => '📊',
     'cat' => 'Business',
     'cat_c' => 'var(--cyan)',
     'cat_bg' => 'rgba(6,182,212,.12)',
@@ -68,7 +63,6 @@ $posts = [
   ],
   [
     'slug' => 'tezzdb-architecture',
-    'emoji' => '🗄️',
     'cat' => 'Engineering',
     'cat_c' => 'var(--purple)',
     'cat_bg' => 'rgba(139,92,246,.12)',
@@ -113,7 +107,19 @@ $posts = [
       <div class="blog-grid" id="blog-posts-grid">
         <?php foreach ($posts as $i => $p): ?>
         <article class="blog-card" id="blog-post-<?= $i + 1 ?>" aria-labelledby="blog-title-<?= $i + 1 ?>" data-title="<?= htmlspecialchars(strtolower($p['title'])) ?>">
-          <div class="blog-card-img" aria-hidden="true" style="font-size:2.5rem"><?= $p['emoji'] ?></div>
+          <div class="blog-card-img" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;color:var(--blue)">
+            <?php
+              $postIcon = match($p['slug']) {
+                'tezzllm-federated-ai'   => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>',
+                'school-erp-bihar'       => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></svg>',
+                'why-zero-dependencies'  => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+                'crm-sales-automation'   => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
+                'tezzdb-architecture'    => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>',
+                default                  => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/></svg>',
+              };
+              echo $postIcon;
+            ?>
+          </div>
           <div class="blog-card-body">
             <div class="blog-meta">
               <span class="blog-category" style="background:<?= $p['cat_bg'] ?>;color:<?= $p['cat_c'] ?>">

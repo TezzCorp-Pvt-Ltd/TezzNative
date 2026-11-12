@@ -18,3 +18,4 @@ declare(strict_types=1);
 <script src="/console/assets/console.js?v=1.0.0"></script>
 </body>
 </html>
+

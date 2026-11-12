@@ -246,21 +246,23 @@ pre {
 }
 
 .nav-container {
-  max-width: 1280px;
+  max-width: 1400px;
   margin: 0 auto;
-  padding: 14px 24px;
+  padding: 10px 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
+  gap: 12px;
+  flex-wrap: nowrap;
 }
 
 .brand-logo {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   color: var(--text-primary);
   text-decoration: none;
+  flex-shrink: 0;
 }
 
 .logo-symbol {
@@ -328,19 +330,27 @@ html.light .version-tag {
 .nav-menu {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   white-space: nowrap;
+  flex-wrap: nowrap;
+  flex-shrink: 1;
 }
 
 .nav-link {
   color: var(--text-secondary);
-  font-size: 0.92rem;
+  font-size: 0.90rem;
   font-weight: 500;
-  padding: 6px 12px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
   border-radius: var(--radius-sm);
   transition: all 0.2s ease;
   white-space: nowrap;
   text-decoration: none;
+  line-height: 1;
+  box-sizing: border-box;
 }
 
 .nav-link:hover {
@@ -364,15 +374,23 @@ html.light .version-tag {
 .nav-dropdown-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  justify-content: center;
+  gap: 4px;
   background: transparent;
   border: none;
   font-family: inherit;
-  font-size: 0.92rem;
+  font-size: 0.90rem;
   font-weight: 500;
   cursor: pointer;
-  padding: 6px 12px;
+  height: 34px;
+  padding: 0 10px;
   border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  line-height: 1;
+  box-sizing: border-box;
+}
   color: var(--text-secondary);
   transition: all 0.2s ease;
   white-space: nowrap;
@@ -1709,20 +1727,20 @@ html.light .text-gradient {
 }
 
 .ide-mockup {
-  background: var(--code-bg);
-  border: 1px solid var(--code-border);
+  background: #0b1120 !important;
+  border: 1px solid rgba(56, 189, 248, 0.25) !important;
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
+  box-shadow: 0 16px 40px rgba(2, 6, 23, 0.35);
   overflow: hidden;
 }
 
 .ide-header {
-  background: var(--bg-surface);
+  background: #0f172a !important;
   padding: 10px 16px;
   display: flex;
   align-items: center;
   gap: 12px;
-  border-bottom: 1px solid var(--code-border);
+  border-bottom: 1px solid rgba(56, 189, 248, 0.15) !important;
 }
 
 .ide-tabs {
@@ -1731,34 +1749,54 @@ html.light .text-gradient {
 }
 
 .ide-tab {
-  background: var(--code-bg);
+  background: #1e293b !important;
   padding: 4px 12px;
   border-radius: 4px;
   font-size: 0.78rem;
   font-family: var(--font-mono);
-  color: var(--text-primary);
-  border: 1px solid var(--border-subtle);
+  color: #f8fafc !important;
+  border: 1px solid rgba(56, 189, 248, 0.3) !important;
+  font-weight: 600;
 }
 
 .ide-editor-body {
+  background: #0b1120 !important;
   padding: 24px;
   position: relative;
   font-family: var(--font-mono);
   font-size: 0.88rem;
   line-height: 1.7;
+  color: #f8fafc !important;
+}
+
+.ide-editor-body pre code {
+  color: #e2e8f0 !important;
 }
 
 .lsp-hover-tooltip {
   position: absolute;
   top: 60px;
   left: 120px;
-  background: var(--bg-surface-raised);
-  border: 1px solid #38bdf8;
+  background: #0f172a !important;
+  border: 1px solid #0ea5e9 !important;
   border-radius: var(--radius-md);
   padding: 10px 14px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5), 0 0 16px rgba(14, 165, 233, 0.3) !important;
   z-index: 10;
   animation: fadeIn 0.3s ease;
+}
+
+.tooltip-type {
+  color: #38bdf8 !important;
+  font-weight: 700;
+  margin-bottom: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+.tooltip-doc {
+  font-size: 0.78rem;
+  color: #cbd5e1 !important;
 }
 
 @keyframes fadeIn {
@@ -3144,4 +3182,89 @@ html.light .team-bio {
   .support-card {
     padding: 16px 12px;
   }
+}
+
+/* ── Install Terminal Panel (Day/Night Adaptive) ─────────────── */
+.install-terminal-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  margin-bottom: 40px;
+  box-shadow: var(--shadow-sm);
+}
+
+.install-terminal-panel h2 {
+  color: var(--text-primary);
+  margin: 0 0 8px;
+  font-size: 1.5rem;
+}
+
+.install-terminal-panel .section-desc {
+  color: var(--text-secondary);
+  margin: 0 0 18px;
+  font-size: 0.95rem;
+}
+
+.install-terminal-panel .terminal-comment {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+.install-terminal-panel .terminal-cmd {
+  background: #0b1120 !important;
+  border: 1px solid rgba(56, 189, 248, 0.25) !important;
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #f8fafc !important;
+}
+
+.install-terminal-panel .terminal-cmd code {
+  color: #38bdf8 !important;
+  font-family: var(--font-mono);
+  font-size: 0.92rem;
+  font-weight: 600;
+  background: transparent !important;
+  padding: 0 !important;
+  border: none !important;
+}
+
+html.light .install-terminal-panel {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.05);
+}
+
+html.light .install-terminal-panel h2 {
+  color: #0f172a !important;
+}
+
+html.light .install-terminal-panel .section-desc {
+  color: #475569 !important;
+}
+
+html.light .install-terminal-panel .terminal-comment {
+  color: #64748b !important;
+}
+
+/* Universal Day/Night Code & Terminal Contrast Guard */
+html.light pre,
+html.light .code-view,
+html.light .code-snippet,
+html.light .terminal-cmd {
+  background: #0b1120 !important;
+  color: #f8fafc !important;
+}
+
+html.light pre code,
+html.light .code-view code,
+html.light .terminal-cmd code {
+  color: #38bdf8 !important;
 }

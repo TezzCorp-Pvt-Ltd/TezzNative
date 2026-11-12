@@ -5,10 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>API Documentation - TezzCorp</title>
     <meta name="description" content="Comprehensive documentation for TezzCorp Biometric API. Learn how to integrate our biometric attendance system into your applications.">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/atom-one-dark.min.css">
     <link rel="stylesheet" href="css/style.css?v=<?php echo time(); ?>">
     <!--<link rel="stylesheet" href="css/footer.css">-->
     <link rel="stylesheet" href="css/api-docs.css?v=<?php echo time(); ?>">
@@ -895,7 +891,6 @@ public class RecordAttendanceExample {
     <?php include 'footer.php'; ?>
 
     <!-- Scripts -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
     <script src="js/main.js?v=<?php echo time(); ?>"></script>
     <script src="js/api-docs.js?v=<?php echo time(); ?>"></script>
 </body>
