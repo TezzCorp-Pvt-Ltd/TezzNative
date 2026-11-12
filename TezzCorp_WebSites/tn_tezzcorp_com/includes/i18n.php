@@ -470,7 +470,7 @@ function tn_lang_switcher_html(string $instanceId = 'desktop'): string {
         $html .= '<span class="lang-option-flag">' . htmlspecialchars($meta['flag']) . '</span>';
         $html .= '<span class="lang-option-text">' . htmlspecialchars($meta['native']) . ' <small>(' . htmlspecialchars($meta['name']) . ')</small></span>';
         if ($isActive) {
-            $html .= '<svg class="lang-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ff9933" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>';
+            $html .= '<svg class="lang-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00d2ff" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>';
         }
         $html .= '</a>';
     }

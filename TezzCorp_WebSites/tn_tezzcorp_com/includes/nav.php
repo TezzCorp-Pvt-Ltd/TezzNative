@@ -60,18 +60,40 @@ function tn_nav(string $active = 'home'): void {
     return;
   }
   $rendered = true;
+
+  // Dynamic announcement settings with fallbacks
+  $banner_visible = true;
+  $banner_badge = __('banner_badge', 'OFFICIAL RELEASE');
+  $banner_text = __('banner_text', 'High-Performance Systems & AI Language with Native Tensors, Coroutines & Zero-GC Execution!');
+  $banner_link_text = __('banner_link', 'Get TezzNative v1.0.0');
+  $banner_link_url = '/download/';
+
+  $site_settings_file = __DIR__ . '/../config/site_settings.json';
+  if (is_file($site_settings_file)) {
+    $settings_data = @json_decode((string)file_get_contents($site_settings_file), true);
+    if (!empty($settings_data['announcement'])) {
+      $a = $settings_data['announcement'];
+      $banner_visible = !isset($a['enabled']) || !empty($a['enabled']);
+      if (!empty($a['badge'])) $banner_badge = htmlspecialchars($a['badge']);
+      if (!empty($a['text'])) $banner_text = htmlspecialchars($a['text']);
+      if (!empty($a['link_text'])) $banner_link_text = htmlspecialchars($a['link_text']);
+      if (!empty($a['link_url'])) $banner_link_url = htmlspecialchars($a['link_url']);
+    }
+  }
 ?>
+<?php if ($banner_visible): ?>
 <!-- Top Announcement Ribbon -->
 <div class="announcement-banner">
   <div class="banner-container">
-    <span class="banner-badge"><?= __('banner_badge', 'OFFICIAL RELEASE') ?></span>
-    <span class="banner-text"><?= __('banner_text', 'High-Performance Systems & AI Language with Native Tensors, Coroutines & Zero-GC Execution!') ?></span>
-    <a href="/download/" class="banner-link">
-      <?= __('banner_link', 'Get TezzNative v1.0.0') ?>
+    <span class="banner-badge"><?= $banner_badge ?></span>
+    <span class="banner-text"><?= $banner_text ?></span>
+    <a href="<?= $banner_link_url ?>" class="banner-link">
+      <?= $banner_link_text ?>
       <svg class="icon-inline" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
     </a>
   </div>
 </div>
+<?php endif; ?>
 
 <!-- Primary Navigation Header -->
 <header class="main-header" id="mainHeader">
@@ -233,6 +255,15 @@ function tn_nav(string $active = 'home'): void {
       <?= function_exists('tn_lang_switcher_html') ? tn_lang_switcher_html('mobile') : '' ?>
     </div>
 
+    <div style="padding: 10px 16px; border-bottom: 1px solid var(--border-subtle); display: flex; align-items: center; justify-content: space-between;">
+      <span style="font-size: 0.8rem; color: var(--text-tertiary); font-weight: 600; text-transform: uppercase;">Theme Mode</span>
+      <button class="theme-toggle" id="themeToggleMobile" title="Toggle Light/Dark Theme" aria-label="Toggle Theme" style="padding: 6px 12px; border-radius: 8px; display: inline-flex; align-items: center; gap: 6px; font-size: 0.82rem; font-weight: 600; cursor: pointer;">
+        <svg class="sun-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+        <svg class="moon-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+        <span>Toggle</span>
+      </button>
+    </div>
+
     <div class="sidebar-section-label" style="padding-top: 14px;">Navigation Menu</div>
     <nav class="sidebar-nav">
       <a href="/#features" class="sidebar-link <?= ($active === 'features') ? 'active' : '' ?>">
@@ -243,13 +274,13 @@ function tn_nav(string $active = 'home'): void {
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
         <span><?= __('nav_benchmarks', 'Benchmarks') ?></span>
       </a>
+      <a href="/packages" class="sidebar-link <?= ($active === 'packages') ? 'active' : '' ?>">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+        <span><?= __('nav_packages', 'Packages') ?> <span class="sidebar-badge">67+</span></span>
+      </a>
       <a href="/#playground" class="sidebar-link <?= ($active === 'playground') ? 'active' : '' ?>">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
         <span><?= __('nav_playground', 'Playground') ?></span>
-      </a>
-      <a href="/lib/" class="sidebar-link <?= ($active === 'packages' || $active === 'lib') ? 'active' : '' ?>">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
-        <span><?= __('nav_packages', 'Packages') ?> <span class="sidebar-badge">40+</span></span>
       </a>
       <a href="/docs/lsp" class="sidebar-link <?= ($active === 'lsp') ? 'active' : '' ?>">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>

@@ -14,14 +14,17 @@
     root.classList.toggle('light', stored === 'light');
     root.classList.toggle('dark',  stored !== 'light');
 
-    var btn = document.getElementById('themeToggle');
-    if (!btn) return;
-    btn.addEventListener('click', function (e) {
-      e.preventDefault();
+    function toggleMode(e) {
+      if (e) e.preventDefault();
       var isLight = root.classList.contains('light');
       root.classList.toggle('light', !isLight);
       root.classList.toggle('dark',   isLight);
       localStorage.setItem('tn_theme', isLight ? 'dark' : 'light');
+    }
+
+    var btns = document.querySelectorAll('.theme-toggle');
+    btns.forEach(function (btn) {
+      btn.addEventListener('click', toggleMode);
     });
   }
 

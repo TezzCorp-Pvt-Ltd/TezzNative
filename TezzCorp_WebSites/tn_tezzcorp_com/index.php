@@ -13,7 +13,7 @@ require_once __DIR__ . '/includes/nav.php';
     <!-- Left Hero Column -->
     <div class="hero-content">
       <div class="hero-pill-badge">
-        <span class="pulse-dot" style="background: #ff9933; box-shadow: 0 0 10px #ff9933;"></span>
+        <span class="pulse-dot" style="background: #00d2ff; box-shadow: 0 0 10px #00d2ff;"></span>
         <span><?= __('hero_badge', 'TEZZNATIVE v1.0.0 PRODUCTION RELEASE LIVE • TEZZCORP PRIVATE LIMITED') ?></span>
       </div>
 

@@ -7,5 +7,6 @@ Disallow: /config/
 Disallow: /includes/
 Disallow: /logs/
 Disallow: /storage/
+Disallow: /console/
 
 Sitemap: https://tezznative.org/sitemap.xml

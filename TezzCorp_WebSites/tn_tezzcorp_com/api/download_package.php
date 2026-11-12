@@ -47,3 +47,4 @@ header('Content-Length: ' . filesize($libFile));
 
 readfile($libFile);
 exit;
+

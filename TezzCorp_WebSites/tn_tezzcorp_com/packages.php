@@ -301,3 +301,4 @@ function copySnippet(text, btn) {
 </script>
 
 <?php require_once __DIR__ . '/includes/footer.php'; ?>
+

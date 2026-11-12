@@ -60,7 +60,7 @@ require_once __DIR__ . '/includes/header.php';
   display: inline-flex; align-items: center; gap: 8px;
   padding: 6px 16px; border-radius: var(--radius-full);
   background: rgba(255,153,51,.12); border: 1px solid rgba(255,153,51,.35);
-  font-size: .8rem; font-weight: 700; color: #ff9933;
+  font-size: .8rem; font-weight: 700; color: #00d2ff;
   letter-spacing: .5px; text-transform: uppercase; margin-bottom: 20px;
 }
 .comm-hero-title {
@@ -123,7 +123,7 @@ require_once __DIR__ . '/includes/header.php';
 .ch-link:hover {
   background: rgba(255,153,51,.1);
   border-color: var(--border-accent);
-  color: #ff9933; text-decoration: none;
+  color: #00d2ff; text-decoration: none;
 }
 
 /* ── Community Main Grid ───────────────────────────────────────────────────── */
@@ -213,7 +213,7 @@ require_once __DIR__ . '/includes/header.php';
   border-radius: var(--radius-full); flex-shrink: 0;
 }
 .role-developer { background: rgba(56,189,248,.15); color: #38bdf8; }
-.role-contributor { background: rgba(255,153,51,.15); color: #ff9933; }
+.role-contributor { background: rgba(56, 189, 248, 0.15); color: #00d2ff; }
 .role-tester { background: rgba(167,139,250,.15); color: #a78bfa; }
 .role-founder { background: rgba(16,185,129,.15); color: #10b981; }
 .empty-state {
@@ -239,7 +239,7 @@ require_once __DIR__ . '/includes/header.php';
   background: var(--bg-surface-raised); border: 1px solid var(--border-subtle);
 }
 .gl-num {
-  font-size: 1.8rem; font-weight: 900; color: #ff9933;
+  font-size: 1.8rem; font-weight: 900; color: #00d2ff;
   font-family: var(--font-mono); flex-shrink: 0; width: 36px;
   line-height: 1;
 }
@@ -399,7 +399,7 @@ require_once __DIR__ . '/includes/header.php';
       <ul class="member-list">
         <!-- Rohit Pathak -->
         <li class="member-item">
-          <div class="member-avatar" style="background: linear-gradient(135deg, #ff671f, #ff9933);">RP</div>
+          <div class="member-avatar" style="background: linear-gradient(135deg, #0284c7, #00d2ff);">RP</div>
           <div class="member-info">
             <div class="member-name">Rohit Pathak</div>
             <div class="member-joined">Since 18 Oct 2022 &bull; Founder</div>

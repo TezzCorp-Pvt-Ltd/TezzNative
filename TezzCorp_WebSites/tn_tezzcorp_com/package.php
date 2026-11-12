@@ -286,3 +286,4 @@ function copySnippet(text, btn) {
 </style>
 
 <?php require_once __DIR__ . '/includes/footer.php'; ?>
+

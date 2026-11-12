@@ -23,7 +23,7 @@ tn_page_shell_start('Frameworks', 'A language ecosystem with explicit maturity l
     <article class="feature-card glass-panel" style="padding: 28px; display: flex; flex-direction: column; justify-content: space-between;">
       <div>
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
-          <span style="font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: var(--radius-full); background: <?= $status === 'Beta' ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 153, 51, 0.15)' ?>; color: <?= $status === 'Beta' ? '#38bdf8' : '#ff9933' ?>; border: 1px solid <?= $status === 'Beta' ? 'rgba(56, 189, 248, 0.3)' : 'rgba(255, 153, 51, 0.3)' ?>;">
+          <span style="font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: var(--radius-full); background: <?= $status === 'Beta' ? 'rgba(56, 189, 248, 0.15)' : 'rgba(56, 189, 248, 0.15)' ?>; color: <?= $status === 'Beta' ? '#38bdf8' : '#00d2ff' ?>; border: 1px solid <?= $status === 'Beta' ? 'rgba(56, 189, 248, 0.3)' : 'rgba(56, 189, 248, 0.3)' ?>;">
             <?= htmlspecialchars(strtoupper($status)) ?>
           </span>
         </div>

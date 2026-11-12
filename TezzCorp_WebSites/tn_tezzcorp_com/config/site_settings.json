@@ -1,0 +1,29 @@
+{
+  "announcement": {
+    "enabled": true,
+    "badge": "OFFICIAL RELEASE",
+    "text": "High-Performance Systems & AI Language with Native Tensors, Coroutines & Zero-GC Execution!",
+    "link_text": "Get TezzNative v1.0.0",
+    "link_url": "/download/"
+  },
+  "site_version": "1.0.0",
+  "company_name": "TEZZCORP PRIVATE LIMITED",
+  "founder_name": "Rohit Pathak",
+  "founded_date": "13 Mar 2026",
+  "news": [
+    {
+      "id": 1,
+      "title": "TezzNative v1.0.0 Production Release Announced",
+      "date": "2026-11-12",
+      "category": "Release",
+      "summary": "TezzNative v1.0.0 is officially released featuring zero-GC execution, native tensor math, full LSP v3.17, and 67 standard libraries."
+    },
+    {
+      "id": 2,
+      "title": "Native MySQL Package Management System Live",
+      "date": "2026-11-12",
+      "category": "Ecosystem",
+      "summary": "Developers can now publish and consume packages directly via the TezzNative Package Registry and CLI."
+    }
+  ]
+}

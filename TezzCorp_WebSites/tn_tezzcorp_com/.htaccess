@@ -56,6 +56,9 @@ RewriteRule ^support/?$            support.php       [L,QSA]
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteRule ^download/?$           download/         [L,QSA]
 
+# /console redirect to /console/ (directory index)
+RewriteRule ^console$ console/ [R=301,L]
+
 # ------------------------------------------------------------
 # 3) Pretty URLs: strip .php extension (single-segment)
 # ------------------------------------------------------------

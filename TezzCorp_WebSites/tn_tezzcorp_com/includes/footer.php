@@ -8,8 +8,8 @@ require_once __DIR__ . '/i18n.php';
       <!-- Col 1: Brand & Bio -->
       <div class="footer-brand-col">
         <div class="footer-brand">
-          <div class="logo-symbol small" style="display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 8px; overflow: hidden; background: rgba(255, 103, 31, 0.1); border: 1px solid rgba(255, 153, 51, 0.3);">
-            <img src="/assets/logo.png" alt="TezzCorp Logo" style="width: 100%; height: 100%; object-fit: contain;" />
+          <div class="logo-symbol small" style="display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 8px; overflow: hidden; background: radial-gradient(circle at 30% 25%, #1e293b 0%, #0b1329 60%, #030712 100%); border: 1px solid rgba(56, 189, 248, 0.45); box-shadow: 0 4px 12px rgba(2, 6, 23, 0.28), inset 0 1px 1px rgba(255, 255, 255, 0.18); padding: 2px;">
+            <img src="/assets/logo.png" alt="TezzNative Official Logo" style="width: 100%; height: 100%; object-fit: contain;" />
           </div>
           <span class="footer-brand-name">TezzNative</span>
         </div>
