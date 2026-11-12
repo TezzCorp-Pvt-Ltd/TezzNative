@@ -2,8 +2,8 @@
 declare(strict_types=1);
 require_once __DIR__ . '/_common.php';
 tn_doc_boot('/docs/getting-started', 'getting-started');
-tn_head('Getting Started with TezzNative SDK v2.2', 'Complete quick start guide to installing TezzNative SDK, setting up IDE extensions, and compiling your first standalone native AI program.', 'docs', '/docs/getting-started');
-tn_page_shell_start('Getting Started with TezzNative', 'Install SDK, Configure IDE, and Build Native Apps', 'Everything you need to set up TezzNative v2.2.1 on Windows or Linux in under 60 seconds.');
+tn_head('Getting Started with TezzNative SDK v1.0.0', 'Complete quick start guide to installing TezzNative SDK, setting up IDE extensions, and compiling your first standalone native AI program.', 'docs', '/docs/getting-started');
+tn_page_shell_start('Getting Started with TezzNative', 'Install SDK, Configure IDE, and Build Native Apps', 'Everything you need to set up TezzNative v1.0.0 on Windows or Linux in under 60 seconds.');
 ?>
 
 <div style="display: flex; flex-direction: column; gap: 36px; max-width: 960px; margin: 30px auto 0;">
@@ -51,7 +51,7 @@ tn_page_shell_start('Getting Started with TezzNative', 'Install SDK, Configure I
     <div style="background: var(--code-bg); border: 1px solid var(--code-border); border-radius: var(--radius-md); padding: 18px;">
       <pre><code style="font-family: var(--font-mono); font-size: 0.88rem; color: var(--text-primary);"><span style="color:#64748b;"># Check version</span>
 tezz --version
-<span style="color:#64748b;"># Output: TezzNative v2.2.1 (x86_64 Windows) | TezzCorp Pvt Ltd. | Created by Rohit Pathak</span>
+<span style="color:#64748b;"># Output: TezzNative v1.0.0 (x86_64 Windows) | TEZZCORP PRIVATE LIMITED | Created by Rohit Pathak</span>
 
 <span style="color:#64748b;"># Run diagnostic health check</span>
 tezz doctor</code></pre>
@@ -72,8 +72,8 @@ tezz doctor</code></pre>
 <span style="color:#f43f5e;">import</span> <span style="color:#10b981;">"tts"</span>
 
 <span style="color:#f43f5e;">fn</span> <span style="color:#ff9933;">main</span>() -&gt; <span style="color:#38bdf8;">int</span>:
-  <span style="color:#ff9933;">say</span> <span style="color:#10b981;">"Hello from TezzNative v2.2.1!"</span>
-  <span style="color:#ff9933;">say</span> <span style="color:#10b981;">"Engineered by TezzCorp Pvt Ltd. | Created by Rohit Pathak"</span>
+  <span style="color:#ff9933;">say</span> <span style="color:#10b981;">"Hello from TezzNative v1.0.0!"</span>
+  <span style="color:#ff9933;">say</span> <span style="color:#10b981;">"Engineered by TEZZCORP PRIVATE LIMITED | Created by Rohit Pathak"</span>
 
   <span style="color:#64748b;">// Native speech synthesis</span>
   <span style="color:#f43f5e;">let</span> eng = tts.tts_new()

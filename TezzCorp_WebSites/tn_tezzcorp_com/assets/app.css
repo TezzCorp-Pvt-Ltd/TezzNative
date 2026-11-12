@@ -49,6 +49,77 @@
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.5);
   --shadow-glow: 0 0 30px rgba(56, 189, 248, 0.2);
+
+  /* Backward-compatibility and template variable aliases (Dark Theme) */
+  --bg: var(--bg-base);
+  --bg2: var(--bg-surface);
+  --bg3: var(--bg-surface-raised);
+  --bg4: var(--bg-surface-elevated);
+  --bg-color: var(--bg-base);
+  --bg-card: var(--bg-surface);
+  --card-bg: var(--bg-surface);
+  --bg-elevated: var(--bg-surface-elevated);
+  --home-bg: var(--bg-base);
+  --home-card: var(--bg-surface);
+  --home-border: var(--border-subtle);
+  --home-text: var(--text-primary);
+  --home-primary: var(--brand-primary);
+  --home-secondary: var(--text-secondary);
+  --home-accent: var(--brand-cyan);
+  --home-muted: var(--text-tertiary);
+
+  --text: var(--text-primary);
+  --text-color: var(--text-primary);
+  --text-muted: var(--text-secondary);
+  --text-light: var(--text-secondary);
+  --muted: var(--text-secondary);
+  --dim: var(--text-tertiary);
+  --faint: var(--text-tertiary);
+
+  --border: var(--border-subtle);
+  --border2: var(--border-medium);
+  --border-color: var(--border-subtle);
+  --line: var(--border-subtle);
+
+  --primary: var(--brand-primary);
+  --primary-color: var(--brand-primary);
+  --secondary-color: var(--text-secondary);
+  --accent-color: var(--brand-cyan);
+  --success-color: var(--success);
+
+  --cyan: #38bdf8;
+  --blue: #2563eb;
+  --indigo: #6366f1;
+  --purple: #a855f7;
+  --green: #10b981;
+  --red: #ef4444;
+  --orange: #f97316;
+  --white: #ffffff;
+  --brand-saffron: #0ea5e9;
+
+  --gradient: var(--brand-gradient);
+  --gradient-alt: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%);
+  --grad: var(--brand-gradient);
+  --grad-text: var(--brand-gradient);
+  --gradient-text: var(--brand-gradient);
+  --gradient-hover: linear-gradient(135deg, #38bdf8 0%, #2563eb 100%);
+
+  --radius: var(--radius-md);
+  --radius-pill: var(--radius-full);
+  --shadow: var(--shadow-md);
+  --shadow-color: rgba(0, 0, 0, 0.4);
+  --transition: all 0.25s ease;
+  --font: var(--font-sans);
+  --font2: var(--font-mono);
+  --font-family: var(--font-sans);
+  --heading-family: var(--font-sans);
+  --nav-h: 70px;
+  --nav-link-hover: #38bdf8;
+  --nav-link-active: #0284c7;
+  --monet-header-line: var(--border-subtle);
+  --monet-orb-a: rgba(14, 165, 233, 0.15);
+  --monet-orb-b: rgba(56, 189, 248, 0.12);
+  --monet-orb-c: rgba(37, 99, 235, 0.10);
 }
 
 /* Light Theme Overrides — High-Contrast Day Mode */
@@ -76,6 +147,52 @@ html.light {
 
   --code-bg: #0b1120;
   --code-border: rgba(15, 23, 42, 0.12);
+
+  /* Backward-compatibility and template variable aliases (Day Theme) */
+  --bg: #f8fafc;
+  --bg2: #ffffff;
+  --bg3: #f1f5f9;
+  --bg4: #e2e8f0;
+  --bg-color: #f8fafc;
+  --bg-card: #ffffff;
+  --card-bg: #ffffff;
+  --bg-elevated: #e2e8f0;
+  --home-bg: #f8fafc;
+  --home-card: #ffffff;
+  --home-border: rgba(15, 23, 42, 0.08);
+  --home-text: #0f172a;
+  --home-primary: #0284c7;
+  --home-secondary: #475569;
+  --home-accent: #0284c7;
+  --home-muted: #64748b;
+
+  --text: #0f172a;
+  --text-color: #0f172a;
+  --text-muted: #475569;
+  --text-light: #475569;
+  --muted: #475569;
+  --dim: #64748b;
+  --faint: #94a3b8;
+
+  --border: rgba(15, 23, 42, 0.08);
+  --border2: rgba(15, 23, 42, 0.14);
+  --border-color: rgba(15, 23, 42, 0.08);
+  --line: rgba(15, 23, 42, 0.08);
+
+  --primary: #0284c7;
+  --primary-color: #0284c7;
+  --secondary-color: #475569;
+  --accent-color: #0284c7;
+  --brand-saffron: #0284c7;
+
+  --shadow: 0 8px 24px rgba(15, 23, 42, 0.07);
+  --shadow-color: rgba(15, 23, 42, 0.06);
+  --nav-link-hover: #0284c7;
+  --nav-link-active: #0284c7;
+  --monet-header-line: rgba(15, 23, 42, 0.08);
+  --monet-orb-a: rgba(2, 132, 199, 0.08);
+  --monet-orb-b: rgba(14, 165, 233, 0.06);
+  --monet-orb-c: rgba(37, 99, 235, 0.04);
 }
 
 html.light .announcement-banner {
@@ -3236,35 +3353,289 @@ html.light .team-bio {
   border: none !important;
 }
 
-html.light .install-terminal-panel {
-  background: #ffffff;
-  border-color: rgba(15, 23, 42, 0.12);
-  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.05);
+/* ── Universal Cards, Panels & Components ────────────────────── */
+.card,
+.tn-card,
+.tn-panel,
+.glass-panel,
+.comm-card,
+.ch-card,
+.blog-card,
+.event-card,
+.support-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  color: var(--text-primary);
+  transition: all 0.25s ease;
 }
 
+.card:hover,
+.tn-card:hover,
+.comm-card:hover,
+.ch-card:hover,
+.blog-card:hover,
+.event-card:hover {
+  border-color: var(--border-accent);
+  box-shadow: 0 8px 30px rgba(2, 132, 199, 0.15);
+  transform: translateY(-2px);
+}
+
+.tn-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 24px;
+  margin-bottom: 30px;
+}
+
+.card-icon-wrap {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-md);
+  background: rgba(56, 189, 248, 0.12);
+  color: #38bdf8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+/* Callouts & Utility Containers */
+.info-box {
+  background: rgba(56, 189, 248, 0.08);
+  border-left: 4px solid var(--brand-cyan);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  padding: 16px 20px;
+  margin: 20px 0;
+  color: var(--text-primary);
+}
+
+.warning-box {
+  background: rgba(245, 158, 11, 0.08);
+  border-left: 4px solid var(--warning);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  padding: 16px 20px;
+  margin: 20px 0;
+  color: var(--text-primary);
+}
+
+.cta-box {
+  background: linear-gradient(135deg, rgba(2, 132, 199, 0.12) 0%, rgba(14, 165, 233, 0.06) 100%);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius-xl);
+  padding: 40px 32px;
+  text-align: center;
+  margin: 40px 0;
+}
+
+/* Universal Tables */
+.tn-table-wrap,
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-bottom: 24px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+}
+
+.tn-table,
+.params-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+  text-align: left;
+}
+
+.tn-table th,
+.params-table th {
+  background: var(--bg-surface-raised);
+  color: var(--text-primary);
+  font-weight: 700;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-medium);
+}
+
+.tn-table td,
+.params-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.tn-table tr:last-child td,
+.params-table tr:last-child td {
+  border-bottom: none;
+}
+
+.tn-table tr:hover td,
+.params-table tr:hover td {
+  background: rgba(56, 189, 248, 0.04);
+}
+
+/* ── Universal Day Mode Visual Optimization ─────────────────── */
+html.light .card,
+html.light .tn-card,
+html.light .tn-panel,
+html.light .glass-panel,
+html.light .comm-card,
+html.light .ch-card,
+html.light .blog-card,
+html.light .event-card,
+html.light .support-card,
+html.light .download-card,
+html.light .team-card,
+html.light .package-card,
+html.light .feature-card,
+html.light .hero-stat-card,
+html.light .benchmark-card,
+html.light .pkg-card,
+html.light .install-terminal-panel {
+  background: #ffffff !important;
+  border: 1px solid rgba(15, 23, 42, 0.1) !important;
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.05) !important;
+  color: #0f172a !important;
+}
+
+html.light .card:hover,
+html.light .tn-card:hover,
+html.light .comm-card:hover,
+html.light .ch-card:hover,
+html.light .blog-card:hover,
+html.light .event-card:hover,
+html.light .download-card:hover,
+html.light .team-card:hover,
+html.light .package-card:hover,
+html.light .feature-card:hover,
+html.light .pkg-card:hover {
+  border-color: rgba(2, 132, 199, 0.45) !important;
+  box-shadow: 0 10px 30px rgba(2, 132, 199, 0.12) !important;
+}
+
+/* All Headings in Day Mode */
+html.light h1,
+html.light h2,
+html.light h3,
+html.light h4,
+html.light h5,
+html.light h6,
+html.light .section-title,
+html.light .hero-title,
+html.light .download-title,
+html.light .feature-title,
+html.light .pkg-name,
+html.light .team-name,
+html.light .comm-card-title,
+html.light .comm-hero-title,
+html.light .dropdown-item-title,
 html.light .install-terminal-panel h2 {
   color: #0f172a !important;
 }
 
+/* All Paragraphs & Subtitles in Day Mode */
+html.light p,
+html.light .section-desc,
+html.light .hero-subtitle,
+html.light .download-desc,
+html.light .feature-desc,
+html.light .pkg-desc,
+html.light .team-bio,
+html.light .comm-card-lead,
+html.light .comm-hero-lead,
+html.light .dropdown-item-desc,
 html.light .install-terminal-panel .section-desc {
-  color: #475569 !important;
+  color: #334155 !important;
 }
 
+/* Comments and metadata */
+html.light .download-meta,
+html.light .pkg-author,
+html.light .pkg-date,
+html.light .news-date,
 html.light .install-terminal-panel .terminal-comment {
   color: #64748b !important;
 }
 
-/* Universal Day/Night Code & Terminal Contrast Guard */
+/* Universal Tables in Day Mode */
+html.light .tn-table-wrap,
+html.light .table-responsive {
+  border-color: rgba(15, 23, 42, 0.1) !important;
+  background: #ffffff !important;
+}
+
+html.light .tn-table th,
+html.light .params-table th,
+html.light table th {
+  background: #f1f5f9 !important;
+  color: #0f172a !important;
+  border-bottom: 2px solid rgba(15, 23, 42, 0.12) !important;
+}
+
+html.light .tn-table td,
+html.light .params-table td,
+html.light table td {
+  color: #334155 !important;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08) !important;
+}
+
+html.light .tn-table tr:hover td,
+html.light .params-table tr:hover td,
+html.light table tr:hover td {
+  background: rgba(2, 132, 199, 0.04) !important;
+}
+
+/* Universal Inputs in Day Mode */
+html.light input:not([type="checkbox"]):not([type="radio"]),
+html.light select,
+html.light textarea,
+html.light .search-input {
+  background: #ffffff !important;
+  color: #0f172a !important;
+  border: 1px solid rgba(15, 23, 42, 0.18) !important;
+}
+
+html.light input::placeholder,
+html.light textarea::placeholder,
+html.light .search-input::placeholder {
+  color: #94a3b8 !important;
+}
+
+/* Callouts in Day Mode */
+html.light .cta-box {
+  background: linear-gradient(135deg, rgba(2, 132, 199, 0.08) 0%, rgba(241, 245, 249, 0.9) 100%) !important;
+  border: 1px solid rgba(2, 132, 199, 0.25) !important;
+  color: #0f172a !important;
+}
+
+html.light .info-box {
+  background: rgba(2, 132, 199, 0.06) !important;
+  border-left-color: #0284c7 !important;
+  color: #0f172a !important;
+}
+
+html.light .warning-box {
+  background: rgba(245, 158, 11, 0.08) !important;
+  border-left-color: #d97706 !important;
+  color: #0f172a !important;
+}
+
+/* Code & Terminal Dark Contrast Guard */
 html.light pre,
 html.light .code-view,
 html.light .code-snippet,
-html.light .terminal-cmd {
+html.light .terminal-cmd,
+html.light .hero-terminal-card,
+html.light .terminal-body {
   background: #0b1120 !important;
+  border: 1px solid rgba(56, 189, 248, 0.25) !important;
   color: #f8fafc !important;
 }
 
 html.light pre code,
 html.light .code-view code,
-html.light .terminal-cmd code {
+html.light .code-snippet code,
+html.light .terminal-cmd code,
+html.light .terminal-output {
   color: #38bdf8 !important;
 }

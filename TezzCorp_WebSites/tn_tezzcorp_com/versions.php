@@ -42,12 +42,12 @@ tn_page_shell_start('Releases', 'Version registry and CLI validation reports.', 
         <h2 style="font-size: 1.4rem; font-weight: 700; color: var(--text-primary); margin-bottom: 12px;">Active Release Channel</h2>
         <div style="padding: 16px; background: var(--bg-surface-raised); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); margin-bottom: 20px;">
           <div style="font-size: 0.8rem; color: #00d2ff; font-weight: 700; text-transform: uppercase;">Production Stable</div>
-          <div style="font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin-top: 4px;">TezzNative v2.2.1</div>
-          <div style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 4px;">Created by Rohit Pathak &bull; TezzCorp Pvt Ltd.</div>
+          <div style="font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin-top: 4px;">TezzNative v1.0.0</div>
+          <div style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 4px;">Created by Rohit Pathak &bull; TEZZCORP PRIVATE LIMITED</div>
         </div>
         <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--text-primary); margin-bottom: 8px;">Automated Update Check</h3>
         <div style="background: var(--code-bg); padding: 14px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 0.85rem; color: #00d2ff; overflow-x: auto; border: 1px solid var(--border-subtle);">
-          curl "https://tezznative.org/api/update_check.php?platform=windows-x64&version=2.2.1&mode=check"
+          curl "https://tezznative.org/api/update_check.php?platform=windows-x64&amp;version=1.0.0&amp;mode=check"
         </div>
       </article>
 

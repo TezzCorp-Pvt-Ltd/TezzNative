@@ -40,7 +40,6 @@ RewriteCond %{REQUEST_FILENAME} !-d
 RewriteRule ^packages/?$           packages.php      [L,QSA]
 RewriteRule ^package/([a-zA-Z0-9_\-]+)/?$ package.php?name=$1 [L,QSA]
 RewriteRule ^package/?$            package.php       [L,QSA]
-RewriteRule ^lib/?$                packages.php      [L,QSA]
 
 # /community or /community/ → community.php
 RewriteCond %{REQUEST_FILENAME} !-f
