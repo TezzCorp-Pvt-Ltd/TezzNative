@@ -655,6 +655,22 @@ fn main() -> int:
     });
   }
 
+  // ── 14. Real-time Documentation & Card Filters ──────────────────────────────
+  function initDocFilter() {
+    var inputs = document.querySelectorAll('input[data-filter-input], input.tn-search');
+    inputs.forEach(function (input) {
+      var targetSelector = input.getAttribute('data-filter-input') || '[data-example-card]';
+      input.addEventListener('input', function () {
+        var q = input.value.trim().toLowerCase();
+        var cards = document.querySelectorAll(targetSelector);
+        cards.forEach(function (card) {
+          var text = (card.textContent || '').toLowerCase();
+          card.style.display = (!q || text.indexOf(q) !== -1) ? '' : 'none';
+        });
+      });
+    });
+  }
+
   // ── Bootstrap ────────────────────────────────────────────────────────────────
   function boot() {
     initTheme();
@@ -670,6 +686,7 @@ fn main() -> int:
     initLibFilter();
     initNavDropdown();
     initLangDropdown();
+    initDocFilter();
   }
 
   if (document.readyState === 'loading') {

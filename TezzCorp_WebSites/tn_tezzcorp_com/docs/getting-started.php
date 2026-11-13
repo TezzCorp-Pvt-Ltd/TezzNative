@@ -6,7 +6,7 @@ tn_head('Getting Started with TezzNative SDK v1.0.0', 'Complete quick start guid
 tn_page_shell_start('Getting Started with TezzNative', 'Install SDK, Configure IDE, and Build Native Apps', 'Everything you need to set up TezzNative v1.0.0 on Windows or Linux in under 60 seconds.');
 ?>
 
-<div style="display: flex; flex-direction: column; gap: 36px; max-width: 960px; margin: 30px auto 0;">
+<div style="display: flex; flex-direction: column; gap: 36px; width: 100%; margin: 30px auto 0;">
 
   <!-- Step 1: Installation -->
   <article class="glass-panel" style="padding: 28px; border-radius: var(--radius-lg);">

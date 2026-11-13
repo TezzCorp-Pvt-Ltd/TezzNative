@@ -89,7 +89,7 @@ $dlUrl = "/api/download_package.php?name=" . urlencode($pkg['name']);
 <main class="site-main">
   <!-- Package Header -->
   <section class="section" style="padding: 48px 0 28px; background: radial-gradient(circle at 50% 0%, rgba(14, 165, 233, 0.12) 0%, transparent 60%); border-bottom: 1px solid var(--border-subtle);">
-    <div class="section-container" style="max-width: 1100px; margin: 0 auto; padding: 0 20px;">
+    <div class="section-container">
       
       <!-- Breadcrumb -->
       <nav style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text-tertiary); margin-bottom: 20px;">
@@ -143,7 +143,7 @@ $dlUrl = "/api/download_package.php?name=" . urlencode($pkg['name']);
 
   <!-- Package Content & Instructions -->
   <section class="section" style="padding: 40px 0 60px;">
-    <div class="section-container" style="max-width: 1100px; margin: 0 auto; padding: 0 20px;">
+    <div class="section-container">
       <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 32px;" class="pkg-detail-grid">
         
         <!-- Left Column: Code & Documentation -->

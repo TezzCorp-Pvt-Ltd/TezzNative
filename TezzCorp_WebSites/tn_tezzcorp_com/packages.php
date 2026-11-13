@@ -47,7 +47,7 @@ $categories = [
 <main class="site-main">
   <!-- Registry Hero Banner -->
   <section class="section" style="padding: 48px 0 28px; background: radial-gradient(circle at 50% 0%, rgba(14, 165, 233, 0.12) 0%, transparent 60%);">
-    <div class="section-container" style="max-width: 1200px; margin: 0 auto; padding: 0 20px;">
+    <div class="section-container">
       <div style="text-align: center; max-width: 820px; margin: 0 auto;">
         <span class="section-pill" style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 14px; border-radius: 9999px; background: rgba(14, 165, 233, 0.12); color: #0284c7; border: 1px solid rgba(14, 165, 233, 0.3); font-size: 0.76rem; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase;">
           <span style="width: 7px; height: 7px; border-radius: 50%; background: #00d2ff; box-shadow: 0 0 8px #00d2ff;"></span>
@@ -92,7 +92,7 @@ $categories = [
 
   <!-- Categories Filter Bar -->
   <section style="border-top: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); background: var(--bg-surface); padding: 14px 0;">
-    <div class="section-container" style="max-width: 1200px; margin: 0 auto; padding: 0 20px;">
+    <div class="section-container">
       <div style="display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none;" id="categoryFilterContainer">
         <?php foreach ($categories as $catKey => $catLabel): ?>
           <button type="button" class="cat-pill <?= ($catKey === 'All') ? 'active' : '' ?>" onclick="selectCategory('<?= htmlspecialchars($catKey) ?>', this)"
@@ -106,7 +106,7 @@ $categories = [
 
   <!-- Package Grid Listing -->
   <section class="section" style="padding: 40px 0 60px;">
-    <div class="section-container" style="max-width: 1200px; margin: 0 auto; padding: 0 20px;">
+    <div class="section-container">
       
       <!-- Quick Info Bar -->
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 12px;">
@@ -190,7 +190,7 @@ $categories = [
 
   <!-- Usage & Developer Documentation Section -->
   <section class="section" style="border-top: 1px solid var(--border-subtle); background: var(--bg-surface); padding: 50px 0;">
-    <div class="section-container" style="max-width: 1000px; margin: 0 auto; padding: 0 20px;">
+    <div class="section-container">
       <div style="text-align: center; margin-bottom: 36px;">
         <h2 style="font-size: 1.8rem; font-weight: 800; margin-bottom: 8px;">How Package Management Works in TezzNative</h2>
         <p style="color: var(--text-secondary); font-size: 1rem;">Simple, deterministic, zero-friction library inclusion with SHA-256 verification.</p>

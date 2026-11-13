@@ -91,7 +91,7 @@ require_once __DIR__ . '/includes/header.php';
   border-bottom: 1px solid var(--border-subtle);
 }
 .comm-channels-grid {
-  max-width: 1200px; margin: 0 auto;
+  max-width: 1280px; margin: 0 auto;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 20px;
@@ -128,7 +128,7 @@ require_once __DIR__ . '/includes/header.php';
 
 /* ── Community Main Grid ───────────────────────────────────────────────────── */
 .comm-main-grid {
-  max-width: 1200px; margin: 0 auto;
+  max-width: 1280px; margin: 0 auto;
   padding: 56px 24px;
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -282,7 +282,7 @@ require_once __DIR__ . '/includes/header.php';
 
 <!-- Community Channels -->
 <section class="comm-channels-section">
-  <div style="max-width:1200px;margin:0 auto 36px;text-align:center;">
+  <div style="max-width:1280px;margin:0 auto 36px;text-align:center;">
     <span class="section-pill">CONNECT & CONTRIBUTE</span>
     <h2 class="section-title" style="margin-top:12px;">Community Channels</h2>
     <p class="section-desc">Multiple ways to engage — pick what works best for you.</p>
