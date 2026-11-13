@@ -375,11 +375,11 @@ function tn_page_shell_start(string $title, string $tagline = '', string $lead =
 ?>
 <section class="section page-shell-section">
   <div class="section-container">
-    <div class="section-header page-shell-header">
+    <div class="page-shell-header">
       <span class="section-pill"><?= htmlspecialchars(strtoupper($tagline ?: 'TEZZNATIVE ECOSYSTEM')) ?></span>
-      <h1 class="section-title page-shell-title"><?= htmlspecialchars($title) ?></h1>
+      <h1 class="section-title page-shell-title" style="text-align: left;"><?= htmlspecialchars($title) ?></h1>
       <?php if ($lead): ?>
-        <p class="section-desc page-shell-desc"><?= htmlspecialchars($lead) ?></p>
+        <p class="section-desc page-shell-desc" style="text-align: left;"><?= htmlspecialchars($lead) ?></p>
       <?php endif; ?>
     </div>
 <?php

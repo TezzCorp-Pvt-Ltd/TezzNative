@@ -8,10 +8,10 @@ require_once __DIR__ . '/../includes/nav.php';
 
 <section class="section">
   <div class="section-container">
-    <div class="section-header" style="text-align: left; margin-bottom: 40px;">
+    <div style="text-align: left; max-width: 820px; margin: 0 0 40px 0;">
       <span class="section-pill">DEVELOPER TOOLING</span>
-      <h1 class="section-title" style="font-size: 2.8rem;">Language Server Protocol (LSP)</h1>
-      <p class="section-desc">
+      <h1 class="section-title" style="font-size: 2.8rem; text-align: left; margin-bottom: 16px;">Language Server Protocol (LSP)</h1>
+      <p class="section-desc" style="text-align: left; max-width: 760px;">
         TezzNative includes a high-performance native Language Server daemon (<code>tezz_lsp.exe</code>) implementing the LSP v3.17 specification for full autocompletion, hover diagnostics, and definition navigation in any editor.
       </p>
       <div style="display: flex; gap: 12px; margin-top: 20px; flex-wrap: wrap;">
@@ -62,8 +62,8 @@ require_once __DIR__ . '/../includes/nav.php';
     </div>
 
     <!-- Editor Setup Instructions -->
-    <div class="section-header" style="text-align: left; margin-bottom: 24px;">
-      <h2 class="section-title" style="font-size: 2rem;">Editor Setup Instructions</h2>
+    <div style="text-align: left; margin: 0 0 24px 0;">
+      <h2 style="font-size: 2rem; font-weight: 800; letter-spacing: -0.6px; margin: 0 0 8px; text-align: left; color: var(--text-primary);">Editor Setup Instructions</h2>
     </div>
 
     <!-- Neovim Setup Box -->

@@ -229,8 +229,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: /console/cms.php');
         exit;
     }
-        exit;
-    }
 
     // 4. Toggle Status (published <-> draft)
     if ($action === 'toggle_status') {

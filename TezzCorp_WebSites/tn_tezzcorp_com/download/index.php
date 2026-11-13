@@ -8,10 +8,10 @@ require_once __DIR__ . '/../includes/nav.php';
 
 <section class="section">
   <div class="section-container">
-    <div class="section-header" style="text-align: left; margin-bottom: 40px;">
+    <div style="text-align: left; max-width: 820px; margin: 0 0 40px 0;">
       <span class="section-pill">OFFICIAL RELEASES</span>
-      <h1 class="section-title" style="font-size: 2.8rem;">Install TezzNative v1.0.0</h1>
-      <p class="section-desc">
+      <h1 class="section-title" style="font-size: 2.8rem; text-align: left; margin-bottom: 16px;">Install TezzNative v1.0.0</h1>
+      <p class="section-desc" style="text-align: left; max-width: 760px;">
         Install the complete toolchain via our fast CLI one-liners or download standalone compiler binaries, Language Server Protocol daemon, and SDK archives.
       </p>
     </div>
