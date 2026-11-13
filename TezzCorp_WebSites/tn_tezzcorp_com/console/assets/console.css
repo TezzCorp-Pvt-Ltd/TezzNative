@@ -665,6 +665,37 @@ body {
   border-radius: 10px;
 }
 
+/* Button Loading Spinner */
+@keyframes btn-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.btn-spinner {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  animation: btn-spin 0.75s linear infinite;
+  vertical-align: -0.15em;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
+.c-btn.is-loading,
+.btn.is-loading,
+button.is-loading,
+input[type="submit"].is-loading {
+  pointer-events: none !important;
+  opacity: 0.82 !important;
+  cursor: wait !important;
+  position: relative;
+}
+
+.c-btn.is-loading > svg:not(.btn-spinner),
+.btn.is-loading > svg:not(.btn-spinner) {
+  display: none !important;
+}
+
 /* Badges */
 .c-badge,
 .badge {
@@ -794,17 +825,28 @@ select.form-control option {
 .modal-card,
 .c-modal-card {
   width: 100%;
-  max-width: 620px;
+  max-width: 680px;
   background: #0d1527;
   border: 1px solid var(--c-border);
   border-radius: 16px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7), 0 0 30px rgba(14, 165, 233, 0.2);
-  max-height: 90vh;
+  max-height: 88vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   transform: scale(0.97) translateY(8px);
   transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  box-sizing: border-box;
+}
+
+.modal-card form,
+.c-modal-card form {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  margin: 0;
 }
 
 .modal-backdrop.active .modal-card,
@@ -816,11 +858,13 @@ select.form-control option {
 
 .modal-header,
 .c-modal-header {
-  padding: 20px 24px;
+  padding: 18px 24px;
   border-bottom: 1px solid var(--c-border-subtle);
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
+  background: #0d1527;
 }
 
 .modal-title,
@@ -850,9 +894,11 @@ select.form-control option {
 
 .modal-body,
 .c-modal-body {
-  padding: 24px;
+  padding: 22px 24px;
   overflow-y: auto;
-  flex-grow: 1;
+  flex: 1;
+  min-height: 0;
+  -webkit-overflow-scrolling: touch;
 }
 
 .modal-footer,
@@ -862,6 +908,19 @@ select.form-control option {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+  flex-shrink: 0;
+  background: #0d1527;
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+}
+
+html.light .modal-header,
+html.light .c-modal-header,
+html.light .modal-footer,
+html.light .c-modal-footer {
+  background: #ffffff;
+  border-color: #e2e8f0;
 }
 
 /* Flash alerts */
@@ -1024,13 +1083,17 @@ select.form-control option {
 }
 
 @media (max-width: 640px) {
+  .console-wrapper {
+    overflow-x: hidden;
+  }
+
   .kpi-grid {
     grid-template-columns: 1fr;
     gap: 14px;
   }
 
   .panel {
-    padding: 18px 14px;
+    padding: 16px 12px;
   }
 
   .panel-header {
@@ -1041,14 +1104,26 @@ select.form-control option {
 
   .panel-actions {
     width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
     justify-content: flex-start;
+  }
+
+  .panel-actions .c-btn,
+  .panel-actions .btn {
+    flex: 1 1 auto;
+    min-width: 120px;
+    min-height: 40px;
   }
 
   .modal-card,
   .c-modal-card {
-    max-width: 100%;
-    margin: 8px;
-    max-height: 95vh;
+    max-width: 95vw;
+    width: 95vw;
+    margin: 8px auto;
+    max-height: 92vh;
+    border-radius: 12px;
   }
 
   .modal-header,
@@ -1057,11 +1132,30 @@ select.form-control option {
   .c-modal-header,
   .c-modal-body,
   .c-modal-footer {
-    padding: 14px 16px;
+    padding: 12px 14px;
+  }
+
+  /* Form columns stack on mobile */
+  .modal-body .form-row,
+  .form-row,
+  .grid-2,
+  div[style*="grid-template-columns: 1fr 1fr"],
+  div[style*="grid-template-columns: repeat(2, 1fr)"] {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
   }
 
   .topbar-title {
-    font-size: 1rem;
+    font-size: 0.92rem;
+    max-width: 160px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .system-status-pill {
+    padding: 4px 8px;
+    font-size: 0.72rem;
   }
 
   .system-status-pill span:not(.pulse-dot) {
@@ -1085,10 +1179,32 @@ select.form-control option {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     width: 100%;
+    border-radius: 8px;
   }
 
-  .console-table {
+  .console-table,
+  .data-table {
     min-width: 580px;
+  }
+
+  .dataTables_wrapper .dataTables_paginate {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 4px;
+    margin-top: 12px;
+  }
+
+  .dt-controls-bar {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+  }
+
+  .dt-controls-bar input,
+  .dt-controls-bar select {
+    width: 100% !important;
+    max-width: 100% !important;
   }
 }
 

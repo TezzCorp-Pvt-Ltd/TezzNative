@@ -66,28 +66,43 @@ require_once __DIR__ . '/i18n.php';
       </div>
     </div>
 
+    <?php
+    $team_members = [];
+    try {
+        if (function_exists('tn_pdo')) {
+            $pdo = tn_pdo();
+            $team_members = $pdo->query("SELECT * FROM tn_team_members WHERE is_active = 1 ORDER BY display_order ASC, id ASC")->fetchAll(PDO::FETCH_ASSOC);
+        }
+    } catch (Throwable $e) {}
+
+    if (empty($team_members)) {
+        $team_members = [
+            ['name' => 'Rohit Pathak', 'role' => 'Creator & Lead Architect', 'since_text' => 'Since 18 Oct 2022 • TezzNative v0.1 → v1.0.0', 'avatar_url' => '/uploads/avatars/admin_1794580166_114ae9432f3e.jpg', 'initials' => 'RP', 'avatar_gradient' => 'linear-gradient(135deg, #00d2ff, #0284c7)'],
+            ['name' => 'Vikash Sharma', 'role' => 'UI & UX Designer', 'since_text' => 'Since 01 Jan 2025', 'avatar_url' => null, 'initials' => 'VS', 'avatar_gradient' => 'linear-gradient(135deg, #0284c7, #0ea5e9)'],
+            ['name' => 'Suman Mandal', 'role' => 'Runtime & SDK Engineer', 'since_text' => 'Since 21 Sep 2026 • Native Runtime', 'avatar_url' => null, 'initials' => 'SM', 'avatar_gradient' => 'linear-gradient(135deg, #7c3aed, #a855f7)'],
+        ];
+    }
+    ?>
     <!-- Active Core Development Team -->
     <div style="border-top: 1px solid var(--border-subtle); padding-top: 28px; margin-bottom: 24px;">
       <h4 style="font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-tertiary); margin-bottom: 18px;">Active Core Development Team</h4>
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px;">
+        <?php foreach ($team_members as $tm): ?>
         <div class="team-card" style="padding: 16px 18px; gap: 4px;">
-          <div class="team-avatar" style="width: 42px; height: 42px; font-size: 1rem; margin-bottom: 6px;">RP</div>
-          <div class="team-name" style="font-size: 0.98rem;">Rohit Pathak</div>
-          <div class="team-role">Creator &amp; Lead Architect</div>
-          <div class="team-since">Since 18 Oct 2022 &bull; TezzNative v0.1 → v1.0.0</div>
+          <?php if (!empty($tm['avatar_url'])): ?>
+            <div class="team-avatar" style="width: 42px; height: 42px; overflow: hidden; border-radius: 50%; padding: 0; margin-bottom: 6px; border: 1.5px solid rgba(56, 189, 248, 0.45);">
+              <img src="<?= htmlspecialchars($tm['avatar_url']) ?>" alt="<?= htmlspecialchars($tm['name']) ?>" style="width: 100%; height: 100%; object-fit: cover; display: block;">
+            </div>
+          <?php else: ?>
+            <div class="team-avatar" style="width: 42px; height: 42px; font-size: 1rem; background: <?= htmlspecialchars($tm['avatar_gradient'] ?: 'linear-gradient(135deg, #00d2ff, #0284c7)') ?>; margin-bottom: 6px;">
+              <?= htmlspecialchars($tm['initials'] ?: strtoupper(substr($tm['name'], 0, 2))) ?>
+            </div>
+          <?php endif; ?>
+          <div class="team-name" style="font-size: 0.98rem;"><?= htmlspecialchars($tm['name']) ?></div>
+          <div class="team-role"><?= htmlspecialchars($tm['role']) ?></div>
+          <div class="team-since"><?= htmlspecialchars($tm['since_text']) ?></div>
         </div>
-        <div class="team-card" style="padding: 16px 18px; gap: 4px;">
-          <div class="team-avatar" style="width: 42px; height: 42px; font-size: 1rem; background: linear-gradient(135deg, #0284c7, #0ea5e9); margin-bottom: 6px;">VS</div>
-          <div class="team-name" style="font-size: 0.98rem;">Vikash Sharma</div>
-          <div class="team-role">UI &amp; UX Designer</div>
-          <div class="team-since">Since 01 Jan 2025</div>
-        </div>
-        <div class="team-card" style="padding: 16px 18px; gap: 4px;">
-          <div class="team-avatar" style="width: 42px; height: 42px; font-size: 1rem; background: linear-gradient(135deg, #7c3aed, #a855f7); margin-bottom: 6px;">SM</div>
-          <div class="team-name" style="font-size: 0.98rem;">Suman Mandal</div>
-          <div class="team-role">Runtime &amp; SDK Engineer</div>
-          <div class="team-since">Since 21 Sep 2026 &bull; Native Runtime</div>
-        </div>
+        <?php endforeach; ?>
       </div>
     </div>
 

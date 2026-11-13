@@ -99,6 +99,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
+    // Helper for article image upload
+    $handleArticleImageUpload = function(): ?string {
+        if (!isset($_FILES['article_image']) || $_FILES['article_image']['error'] !== UPLOAD_ERR_OK) {
+            return null;
+        }
+        $file = $_FILES['article_image'];
+        $maxBytes = 6 * 1024 * 1024; // 6MB
+        if ($file['size'] > $maxBytes) {
+            return null;
+        }
+        $finfo = new finfo(FILEINFO_MIME_TYPE);
+        $mime = $finfo->file($file['tmp_name']);
+        $allowed = ['image/jpeg' => '.jpg', 'image/png' => '.png', 'image/webp' => '.webp', 'image/svg+xml' => '.svg'];
+        if (!isset($allowed[$mime])) {
+            return null;
+        }
+        $uploadDir = dirname(__DIR__) . '/uploads/articles';
+        if (!is_dir($uploadDir)) {
+            @mkdir($uploadDir, 0755, true);
+        }
+        $ext = $allowed[$mime];
+        $filename = 'art_' . time() . '_' . bin2hex(random_bytes(6)) . $ext;
+        $dest = $uploadDir . '/' . $filename;
+        if (move_uploaded_file($file['tmp_name'], $dest)) {
+            return '/uploads/articles/' . $filename;
+        }
+        return null;
+    };
+
     // 2. Create Article (Blog or News)
     if ($action === 'create_article') {
         $type       = in_array($_POST['type'] ?? '', ['blog', 'news'], true) ? $_POST['type'] : 'blog';
@@ -113,6 +142,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $featured   = !empty($_POST['featured']) ? 1 : 0;
         $excerpt    = trim((string)($_POST['excerpt'] ?? ''));
         $content    = trim((string)($_POST['content'] ?? ''));
+
+        $uploadedImg = $handleArticleImageUpload();
+        $imageUrl    = $uploadedImg ?: trim((string)($_POST['image_url'] ?? ''));
 
         if ($title === '') {
             tn_set_flash('error', 'Article title cannot be empty.');
@@ -130,10 +162,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $stmt = $pdo->prepare("
                 INSERT INTO tn_articles 
-                (`type`, `title`, `slug`, `category`, `excerpt`, `content`, `author`, `read_time`, `tags`, `status`, `featured`, `published_at`, `created_at`, `updated_at`)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())
+                (`type`, `title`, `slug`, `category`, `image_url`, `excerpt`, `content`, `author`, `read_time`, `tags`, `status`, `featured`, `published_at`, `created_at`, `updated_at`)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())
             ");
-            $stmt->execute([$type, $title, $slug, $category, $excerpt, $content, $author, $read_time, $tags, $status, $featured]);
+            $stmt->execute([$type, $title, $slug, $category, $imageUrl ?: null, $excerpt, $content, $author, $read_time, $tags, $status, $featured]);
             tn_set_flash('success', ucfirst($type) . " article '{$title}' created successfully.");
         } catch (Throwable $e) {
             tn_set_flash('error', 'Database error: ' . $e->getMessage());
@@ -158,6 +190,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $excerpt    = trim((string)($_POST['excerpt'] ?? ''));
         $content    = trim((string)($_POST['content'] ?? ''));
 
+        $uploadedImg = $handleArticleImageUpload();
+        $manualUrl   = trim((string)($_POST['image_url'] ?? ''));
+
         if ($id <= 0 || $title === '') {
             tn_set_flash('error', 'Invalid article ID or title.');
             header('Location: /console/cms.php');
@@ -172,17 +207,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $slug .= '-' . $id;
             }
 
-            $stmt = $pdo->prepare("
-                UPDATE tn_articles 
-                SET `type` = ?, `title` = ?, `slug` = ?, `category` = ?, `excerpt` = ?, `content` = ?, `author` = ?, `read_time` = ?, `tags` = ?, `status` = ?, `featured` = ?, `updated_at` = NOW()
-                WHERE `id` = ?
-            ");
-            $stmt->execute([$type, $title, $slug, $category, $excerpt, $content, $author, $read_time, $tags, $status, $featured, $id]);
+            if ($uploadedImg) {
+                $stmt = $pdo->prepare("
+                    UPDATE tn_articles 
+                    SET `type` = ?, `title` = ?, `slug` = ?, `category` = ?, `image_url` = ?, `excerpt` = ?, `content` = ?, `author` = ?, `read_time` = ?, `tags` = ?, `status` = ?, `featured` = ?, `updated_at` = NOW()
+                    WHERE `id` = ?
+                ");
+                $stmt->execute([$type, $title, $slug, $category, $uploadedImg, $excerpt, $content, $author, $read_time, $tags, $status, $featured, $id]);
+            } else {
+                $stmt = $pdo->prepare("
+                    UPDATE tn_articles 
+                    SET `type` = ?, `title` = ?, `slug` = ?, `category` = ?, `image_url` = COALESCE(NULLIF(?, ''), `image_url`), `excerpt` = ?, `content` = ?, `author` = ?, `read_time` = ?, `tags` = ?, `status` = ?, `featured` = ?, `updated_at` = NOW()
+                    WHERE `id` = ?
+                ");
+                $stmt->execute([$type, $title, $slug, $category, $manualUrl, $excerpt, $content, $author, $read_time, $tags, $status, $featured, $id]);
+            }
             tn_set_flash('success', "Article #{$id} '{$title}' updated successfully.");
         } catch (Throwable $e) {
             tn_set_flash('error', 'Database error: ' . $e->getMessage());
         }
         header('Location: /console/cms.php');
+        exit;
+    }
         exit;
     }
 
@@ -476,8 +522,8 @@ require_once __DIR__ . '/includes/header.php';
       <h3 class="modal-title" id="articleModalTitle">Create New Article</h3>
       <button type="button" class="modal-close" onclick="closeModal('articleModal')">&times;</button>
     </div>
-    <form method="POST" id="articleForm">
-      <div class="modal-body" style="max-height: 75vh; overflow-y: auto;">
+    <form method="POST" id="articleForm" enctype="multipart/form-data">
+      <div class="modal-body">
         <input type="hidden" name="csrf_token" value="<?= tn_csrf_token() ?>">
         <input type="hidden" name="action" id="articleFormAction" value="create_article">
         <input type="hidden" name="article_id" id="articleFormId" value="0">
@@ -523,6 +569,24 @@ require_once __DIR__ . '/includes/header.php';
               <option value="draft">Draft / Hidden</option>
               <option value="archived">Archived</option>
             </select>
+          </div>
+        </div>
+
+        <!-- Banner Image Upload / Remote URL -->
+        <div style="background: rgba(14, 165, 233, 0.04); border: 1px solid var(--c-border-subtle); border-radius: 12px; padding: 16px; margin-bottom: 14px;">
+          <label class="form-label" style="margin-bottom: 8px;">Featured Banner Image (Blog &amp; News)</label>
+          <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 10px;">
+            <div id="art_image_preview" style="width: 88px; height: 56px; border-radius: 8px; overflow: hidden; background: #0f172a; border: 1.5px solid var(--c-primary); display: flex; align-items: center; justify-content: center; font-size: 0.72rem; color: #64748b; flex-shrink: 0;">
+              No image
+            </div>
+            <div style="flex: 1;">
+              <input type="file" name="article_image" id="art_image_file" accept="image/*" class="form-control" style="padding: 6px;" onchange="previewArticleImage(this)">
+              <div style="font-size: 0.74rem; color: var(--c-text-tertiary); margin-top: 4px;">Upload JPG, PNG, or WebP file (Max 6MB)</div>
+            </div>
+          </div>
+          <div>
+            <label class="form-label" style="font-size: 0.78rem;">Or Remote Image URL</label>
+            <input type="url" id="art_image_url" name="image_url" class="form-control" placeholder="https://..." oninput="previewArticleUrl(this.value)">
           </div>
         </div>
 
@@ -583,6 +647,9 @@ function openNewArticleModal() {
   document.getElementById('art_author').value = 'Rohit Pathak';
   document.getElementById('art_read_time').value = '5 min';
   document.getElementById('art_status').value = 'published';
+  document.getElementById('art_image_url').value = '';
+  document.getElementById('art_image_file').value = '';
+  document.getElementById('art_image_preview').innerHTML = 'No image';
   isManualSlug = false;
   openModal('articleModal');
 }
@@ -605,8 +672,36 @@ function openEditArticleModal(data) {
   document.getElementById('art_content').value = data.content || '';
   document.getElementById('art_featured').checked = (parseInt(data.featured) === 1);
   
+  document.getElementById('art_image_url').value = data.image_url || '';
+  document.getElementById('art_image_file').value = '';
+  var prev = document.getElementById('art_image_preview');
+  if (data.image_url) {
+    prev.innerHTML = '<img src="' + data.image_url + '" style="width: 100%; height: 100%; object-fit: cover;">';
+  } else {
+    prev.innerHTML = 'No image';
+  }
+
   isManualSlug = true;
   openModal('articleModal');
+}
+
+function previewArticleImage(input) {
+  if (input.files && input.files[0]) {
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      document.getElementById('art_image_preview').innerHTML = '<img src="' + e.target.result + '" style="width: 100%; height: 100%; object-fit: cover;">';
+    };
+    reader.readAsDataURL(input.files[0]);
+  }
+}
+
+function previewArticleUrl(url) {
+  var prev = document.getElementById('art_image_preview');
+  if (url && url.length > 5) {
+    prev.innerHTML = '<img src="' + url + '" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.parentNode.innerHTML=\'Invalid\'">';
+  } else {
+    prev.innerHTML = 'No image';
+  }
 }
 
 // Client-side filtering by tab

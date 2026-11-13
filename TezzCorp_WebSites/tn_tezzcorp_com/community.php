@@ -42,15 +42,17 @@ require_once __DIR__ . '/includes/header.php';
 <style>
 /* ── Community Page Styles ─────────────────────────────────────────────────── */
 .community-hero {
-  text-align: center;
-  padding: 72px 24px 56px;
+  text-align: left;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 64px 24px 48px;
   position: relative;
   overflow: hidden;
 }
 .community-hero::before {
   content: '';
   position: absolute;
-  top: -80px; left: 50%; transform: translateX(-50%);
+  top: -80px; left: 0;
   width: 700px; height: 400px;
   background: radial-gradient(circle, rgba(255,153,51,.18) 0%, rgba(255,103,31,.08) 50%, transparent 70%);
   filter: blur(50px); pointer-events: none; z-index: 0;
@@ -70,13 +72,13 @@ require_once __DIR__ . '/includes/header.php';
 }
 .comm-hero-lead {
   color: var(--text-secondary); font-size: 1.1rem;
-  max-width: 640px; margin: 0 auto 36px; line-height: 1.7;
+  max-width: 640px; margin: 0 0 36px; line-height: 1.7;
 }
 .comm-stats-row {
-  display: flex; align-items: center; justify-content: center;
+  display: flex; align-items: center; justify-content: flex-start;
   flex-wrap: wrap; gap: 32px; margin-bottom: 0;
 }
-.comm-stat { display: flex; flex-direction: column; align-items: center; }
+.comm-stat { display: flex; flex-direction: column; align-items: flex-start; }
 .comm-stat-val {
   font-size: 2rem; font-weight: 900; color: var(--text-primary);
   font-variant-numeric: tabular-nums;
@@ -231,7 +233,7 @@ require_once __DIR__ . '/includes/header.php';
   padding: 56px 24px;
 }
 .guidelines-inner { max-width: 860px; margin: 0 auto; }
-.gl-header { text-align: center; margin-bottom: 40px; }
+.gl-header { text-align: left; margin-bottom: 40px; }
 .gl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 20px; }
 .gl-item {
   display: flex; gap: 16px;
@@ -282,7 +284,7 @@ require_once __DIR__ . '/includes/header.php';
 
 <!-- Community Channels -->
 <section class="comm-channels-section">
-  <div style="max-width:1280px;margin:0 auto 36px;text-align:center;">
+  <div style="max-width:1280px;margin:0 auto 36px;text-align:left;">
     <span class="section-pill">CONNECT & CONTRIBUTE</span>
     <h2 class="section-title" style="margin-top:12px;">Community Channels</h2>
     <p class="section-desc">Multiple ways to engage — pick what works best for you.</p>

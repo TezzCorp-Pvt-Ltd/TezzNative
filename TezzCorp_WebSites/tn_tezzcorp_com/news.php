@@ -105,6 +105,7 @@ try {
                 'title'     => $item['title'],
                 'excerpt'   => $item['excerpt'] ?: substr(strip_tags($item['content']), 0, 240) . '...',
                 'link'      => !empty($item['slug']) ? '/blog/?slug=' . urlencode($item['slug']) : '#',
+                'image_url' => $item['image_url'] ?? '',
             ];
         }
     }
@@ -147,16 +148,20 @@ include __DIR__ . '/includes/header.php';
           
           <!-- Left Side Visual Showcase -->
           <div class="article-visual-side">
-            <div class="article-banner-graphic">
-              <div class="banner-glow-orb"></div>
-              <div class="banner-badge-tag" style="background: <?= $item['cat_bg'] ?>; color: <?= $item['cat_color'] ?>; border-color: rgba(56, 189, 248, 0.25);">
-                <?= htmlspecialchars($item['category']) ?>
+            <?php if (!empty($item['image_url'])): ?>
+              <img src="<?= htmlspecialchars($item['image_url']) ?>" alt="<?= htmlspecialchars($item['title']) ?>" class="article-banner-img">
+            <?php else: ?>
+              <div class="article-banner-graphic">
+                <div class="banner-glow-orb"></div>
+                <div class="banner-badge-tag" style="background: <?= $item['cat_bg'] ?>; color: <?= $item['cat_color'] ?>; border-color: rgba(56, 189, 248, 0.25);">
+                  <?= htmlspecialchars($item['category']) ?>
+                </div>
+                <div class="banner-icon-showcase">
+                  <?= $iconSvg ?>
+                </div>
+                <div class="banner-news-headline"><?= htmlspecialchars($item['date']) ?></div>
               </div>
-              <div class="banner-icon-showcase">
-                <?= $iconSvg ?>
-              </div>
-              <div class="banner-news-headline"><?= htmlspecialchars($item['date']) ?></div>
-            </div>
+            <?php endif; ?>
           </div>
 
           <!-- Right Side Content Details -->

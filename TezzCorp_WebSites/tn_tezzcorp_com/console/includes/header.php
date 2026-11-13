@@ -17,21 +17,29 @@ $flash_error = tn_get_flash('error');
 
 // Package count & admin details
 $pkg_count = 67;
-$admin_avatar = null;
-$admin_full_name = 'Administrator';
+$admin_avatar = $_SESSION['tn_admin_avatar'] ?? null;
+$admin_full_name = $_SESSION['tn_admin_name'] ?? 'Rohit Pathak';
 try {
     $pdo = tn_pdo();
     $pkg_count = (int)$pdo->query("SELECT count(*) FROM tn_package_registry")->fetchColumn();
     $admin_id = $_SESSION['tn_admin_id'] ?? null;
+    $admin_uname = $_SESSION['tn_admin_user'] ?? 'admin';
     if ($admin_id) {
         $aStmt = $pdo->prepare("SELECT full_name, avatar_url FROM tn_admins WHERE id = ?");
         $aStmt->execute([$admin_id]);
-        $aData = $aStmt->fetch(PDO::FETCH_ASSOC);
-        if ($aData) {
-            $admin_avatar = $aData['avatar_url'] ?? null;
-            if (!empty($aData['full_name'])) {
-                $admin_full_name = $aData['full_name'];
-            }
+    } else {
+        $aStmt = $pdo->prepare("SELECT full_name, avatar_url FROM tn_admins WHERE username = ? LIMIT 1");
+        $aStmt->execute([$admin_uname]);
+    }
+    $aData = $aStmt->fetch(PDO::FETCH_ASSOC);
+    if ($aData) {
+        if (!empty($aData['avatar_url'])) {
+            $admin_avatar = $aData['avatar_url'];
+            $_SESSION['tn_admin_avatar'] = $admin_avatar;
+        }
+        if (!empty($aData['full_name'])) {
+            $admin_full_name = $aData['full_name'];
+            $_SESSION['tn_admin_name'] = $admin_full_name;
         }
     }
 } catch (Throwable $e) {}
@@ -108,6 +116,11 @@ try {
         <span>Announcement &amp; CMS</span>
       </a>
 
+      <a href="/console/team" class="sidebar-item <?= ($active_nav === 'team') ? 'active' : '' ?>">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="6"></circle><path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11"></path></svg>
+        <span>Core Dev Team</span>
+      </a>
+
       <div class="sidebar-section-title">Infrastructure &amp; Security</div>
       <a href="/console/database" class="sidebar-item <?= ($active_nav === 'database') ? 'active' : '' ?>">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
@@ -124,12 +137,12 @@ try {
     <div class="sidebar-footer">
       <a href="/console/profile" class="admin-profile" title="Edit Admin Profile &amp; Settings" style="text-decoration: none; color: inherit; display: flex; align-items: center; gap: 10px;">
         <?php if (!empty($admin_avatar)): ?>
-          <img src="<?= htmlspecialchars($admin_avatar) ?>" alt="<?= $admin_user ?>" class="admin-avatar-img" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover; border: 1px solid rgba(56, 189, 248, 0.4); flex-shrink: 0; display: block;">
+          <img src="<?= htmlspecialchars($admin_avatar) ?>" alt="<?= htmlspecialchars($admin_full_name) ?>" class="admin-avatar-img" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover; border: 1px solid rgba(56, 189, 248, 0.4); flex-shrink: 0; display: block;">
         <?php else: ?>
-          <div class="admin-avatar"><?= strtoupper(substr($admin_user, 0, 2)) ?></div>
+          <div class="admin-avatar"><?= strtoupper(substr($admin_full_name, 0, 2)) ?></div>
         <?php endif; ?>
         <div style="overflow: hidden; max-width: 140px;">
-          <div class="admin-name" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><?= $admin_user ?></div>
+          <div class="admin-name" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><?= htmlspecialchars($admin_full_name ?: 'Rohit Pathak') ?></div>
           <div class="admin-role">TEZZCORP ADMIN</div>
         </div>
       </a>

@@ -46,9 +46,9 @@ $categories = [
 
 <main class="site-main">
   <!-- Registry Hero Banner -->
-  <section class="section" style="padding: 48px 0 28px; background: radial-gradient(circle at 50% 0%, rgba(14, 165, 233, 0.12) 0%, transparent 60%);">
+  <section class="section" style="padding: 48px 0 28px; background: radial-gradient(circle at 10% 0%, rgba(14, 165, 233, 0.12) 0%, transparent 60%);">
     <div class="section-container">
-      <div style="text-align: center; max-width: 820px; margin: 0 auto;">
+      <div style="text-align: left; max-width: 860px; margin: 0 0 28px;">
         <span class="section-pill" style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 14px; border-radius: 9999px; background: rgba(14, 165, 233, 0.12); color: #0284c7; border: 1px solid rgba(14, 165, 233, 0.3); font-size: 0.76rem; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase;">
           <span style="width: 7px; height: 7px; border-radius: 50%; background: #00d2ff; box-shadow: 0 0 8px #00d2ff;"></span>
           Official TezzNative Package Ecosystem &bull; v1.0.0
@@ -56,28 +56,28 @@ $categories = [
         <h1 style="font-size: clamp(2rem, 5vw, 3rem); font-weight: 800; letter-spacing: -0.8px; margin: 18px 0 12px; line-height: 1.15;">
           Discover &amp; Install <span style="background: var(--brand-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">TezzNative Packages</span>
         </h1>
-        <p style="font-size: 1.05rem; color: var(--text-secondary); line-height: 1.6; margin-bottom: 24px;">
+        <p style="font-size: 1.05rem; color: var(--text-secondary); line-height: 1.6; margin-bottom: 24px; max-width: 760px;">
           Explore <?= $total_packages ?> high-performance, zero-overhead native libraries engineered for GUI, AI tensors, hardware control, and systems software by <strong>TEZZCORP PRIVATE LIMITED</strong>.
         </p>
 
         <!-- Registry Stats Row -->
-        <div style="display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; margin-bottom: 32px;">
-          <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); padding: 12px 24px; border-radius: 12px; text-align: center;">
+        <div style="display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 20px; margin-bottom: 32px;">
+          <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); padding: 12px 24px; border-radius: 12px; text-align: left;">
             <div style="font-size: 1.5rem; font-weight: 800; color: #0284c7;"><?= $total_packages ?></div>
             <div style="font-size: 0.78rem; color: var(--text-tertiary); text-transform: uppercase; font-weight: 600;">Verified Packages</div>
           </div>
-          <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); padding: 12px 24px; border-radius: 12px; text-align: center;">
+          <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); padding: 12px 24px; border-radius: 12px; text-align: left;">
             <div style="font-size: 1.5rem; font-weight: 800; color: #10b981;"><?= number_format($total_downloads) ?>+</div>
             <div style="font-size: 0.78rem; color: var(--text-tertiary); text-transform: uppercase; font-weight: 600;">Package Downloads</div>
           </div>
-          <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); padding: 12px 24px; border-radius: 12px; text-align: center;">
+          <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); padding: 12px 24px; border-radius: 12px; text-align: left;">
             <div style="font-size: 1.5rem; font-weight: 800; color: #f59e0b;">v1.0.0</div>
             <div style="font-size: 0.78rem; color: var(--text-tertiary); text-transform: uppercase; font-weight: 600;">Stable API Baseline</div>
           </div>
         </div>
 
         <!-- Live Search Input -->
-        <div style="position: relative; max-width: 640px; margin: 0 auto;">
+        <div style="position: relative; max-width: 640px; margin: 0;">
           <input type="text" id="pkgSearchInput" placeholder="Search by library name, category, or keyword (e.g. gui, tensor, net, font)..." 
                  style="width: 100%; padding: 14px 48px 14px 18px; border-radius: 12px; background: var(--bg-surface); border: 1px solid var(--border-medium); color: var(--text-primary); font-size: 1rem; box-shadow: var(--shadow-sm); outline: none; transition: border-color 0.2s;"
                  onfocus="this.style.borderColor='rgba(14, 165, 233, 0.7)'" onblur="this.style.borderColor='var(--border-medium)'" oninput="filterPackages()">
@@ -191,7 +191,7 @@ $categories = [
   <!-- Usage & Developer Documentation Section -->
   <section class="section" style="border-top: 1px solid var(--border-subtle); background: var(--bg-surface); padding: 50px 0;">
     <div class="section-container">
-      <div style="text-align: center; margin-bottom: 36px;">
+      <div style="text-align: left; margin-bottom: 36px;">
         <h2 style="font-size: 1.8rem; font-weight: 800; margin-bottom: 8px;">How Package Management Works in TezzNative</h2>
         <p style="color: var(--text-secondary); font-size: 1rem;">Simple, deterministic, zero-friction library inclusion with SHA-256 verification.</p>
       </div>

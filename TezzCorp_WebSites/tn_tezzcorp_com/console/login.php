@@ -90,6 +90,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $_SESSION['tn_admin_logged'] = true;
                         $_SESSION['tn_admin_id'] = (int)$admin['id'];
                         $_SESSION['tn_admin_user'] = $admin['username'];
+                        $_SESSION['tn_admin_name'] = !empty($admin['full_name']) ? $admin['full_name'] : 'Rohit Pathak';
                         $_SESSION['tn_admin_email'] = $admin['email'];
                         $_SESSION['tn_admin_avatar'] = $admin['avatar_url'] ?? '';
                         $_SESSION['tn_admin_login_time'] = time();
@@ -138,6 +139,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['tn_admin_logged'] = true;
                     $_SESSION['tn_admin_id'] = (int)$admin['id'];
                     $_SESSION['tn_admin_user'] = $admin['username'];
+                    $_SESSION['tn_admin_name'] = !empty($admin['full_name']) ? $admin['full_name'] : 'Rohit Pathak';
                     $_SESSION['tn_admin_email'] = $admin['email'];
                     $_SESSION['tn_admin_avatar'] = $admin['avatar_url'] ?? '';
                     $_SESSION['tn_admin_login_time'] = time();

@@ -120,6 +120,58 @@ document.addEventListener('DOMContentLoaded', function () {
       });
     });
   });
+
+  // 5. Button Loaders for Console Forms & Submissions
+  document.addEventListener('submit', function (e) {
+    const form = e.target;
+    if (!form || form.tagName !== 'FORM') return;
+
+    if (typeof form.checkValidity === 'function' && !form.checkValidity()) {
+      return;
+    }
+
+    const btn = form.querySelector('button[type="submit"], input[type="submit"], .btn-submit, button:not([type="button"]):not([type="reset"])');
+    if (!btn || btn.classList.contains('is-loading')) return;
+
+    btn.classList.add('is-loading');
+
+    if (!btn.querySelector('.btn-spinner')) {
+      const spinner = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      spinner.setAttribute('class', 'btn-spinner');
+      spinner.setAttribute('width', '16');
+      spinner.setAttribute('height', '16');
+      spinner.setAttribute('viewBox', '0 0 24 24');
+      spinner.setAttribute('fill', 'none');
+      spinner.setAttribute('stroke', 'currentColor');
+      spinner.setAttribute('stroke-width', '2.5');
+      spinner.innerHTML = '<path d="M21 12a9 9 0 1 1-6.219-8.56"/>';
+
+      if (btn.tagName === 'INPUT') {
+        btn.dataset.origVal = btn.value;
+        btn.value = 'Processing...';
+      } else {
+        btn.insertBefore(spinner, btn.firstChild);
+      }
+    }
+  });
+
+  document.addEventListener('click', function (e) {
+    const trigger = e.target.closest('[data-loading], .btn-action-load');
+    if (!trigger || trigger.classList.contains('is-loading')) return;
+    trigger.classList.add('is-loading');
+    if (!trigger.querySelector('.btn-spinner')) {
+      const sp = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      sp.setAttribute('class', 'btn-spinner');
+      sp.setAttribute('width', '16');
+      sp.setAttribute('height', '16');
+      sp.setAttribute('viewBox', '0 0 24 24');
+      sp.setAttribute('fill', 'none');
+      sp.setAttribute('stroke', 'currentColor');
+      sp.setAttribute('stroke-width', '2.5');
+      sp.innerHTML = '<path d="M21 12a9 9 0 1 1-6.219-8.56"/>';
+      trigger.insertBefore(sp, trigger.firstChild);
+    }
+  });
 });
 
 /**

@@ -1217,6 +1217,31 @@ body.sidebar-locked {
   border-radius: var(--radius-md);
 }
 
+/* Button Loading Spinner */
+@keyframes btn-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.btn-spinner {
+  display: inline-block;
+  animation: btn-spin 0.75s linear infinite;
+  vertical-align: -2px;
+  flex-shrink: 0;
+}
+
+.btn.is-loading,
+button[type="submit"].is-loading {
+  position: relative;
+  pointer-events: none !important;
+  opacity: 0.88;
+  cursor: wait !important;
+}
+
+.btn.is-loading > svg:not(.btn-spinner) {
+  display: none !important;
+}
+
 .icon-inline,
 .btn-icon {
   flex-shrink: 0;
