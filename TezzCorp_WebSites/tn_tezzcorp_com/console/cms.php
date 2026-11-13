@@ -253,7 +253,7 @@ require_once __DIR__ . '/includes/header.php';
   <div class="kpi-card">
     <div class="kpi-header">
       <span class="kpi-title">Total Articles</span>
-      <div class="kpi-icon-badge" style="background: rgba(14, 165, 233, 0.15); color: #38bdf8;">
+      <div class="kpi-icon-badge" style="color: #38bdf8;">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
       </div>
     </div>
@@ -264,7 +264,7 @@ require_once __DIR__ . '/includes/header.php';
   <div class="kpi-card">
     <div class="kpi-header">
       <span class="kpi-title">Published Blog Posts</span>
-      <div class="kpi-icon-badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981;">
+      <div class="kpi-icon-badge" style="color: #10b981;">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
       </div>
     </div>
@@ -275,18 +275,18 @@ require_once __DIR__ . '/includes/header.php';
   <div class="kpi-card">
     <div class="kpi-header">
       <span class="kpi-title">Published News Items</span>
-      <div class="kpi-icon-badge" style="background: rgba(245, 158, 11, 0.15); color: #f59e0b;">
+      <div class="kpi-icon-badge" style="color: #f59e0b;">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"></path><path d="M18 14h-8"></path><path d="M15 18h-5"></path><path d="M10 6h8v4h-8V6Z"></path></svg>
       </div>
     </div>
     <div class="kpi-value" style="color: #f59e0b;"><?= number_format($stats['news']) ?></div>
-    <div class="kpi-footer">Live on <code>tezznative.org/news.php</code></div>
+    <div class="kpi-footer">Live on <code>tezznative.org/news</code></div>
   </div>
 
   <div class="kpi-card">
     <div class="kpi-header">
       <span class="kpi-title">Drafts &amp; In-Review</span>
-      <div class="kpi-icon-badge" style="background: rgba(148, 163, 184, 0.15); color: #94a3b8;">
+      <div class="kpi-icon-badge" style="color: #94a3b8;">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
       </div>
     </div>

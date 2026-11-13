@@ -150,7 +150,7 @@ function tn_nav(string $active = 'home'): void {
               <div class="dropdown-item-desc">Architecture, deep dives & benchmarks</div>
             </div>
           </a>
-          <a href="/news.php" class="dropdown-item <?= ($active === 'news') ? 'active' : '' ?>" role="menuitem">
+          <a href="/news" class="dropdown-item <?= ($active === 'news') ? 'active' : '' ?>" role="menuitem">
             <div class="dropdown-item-icon">
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 20H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v1m2 13a2 2 0 0 1-2-2V7m2 13a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"/></svg>
             </div>
@@ -169,13 +169,22 @@ function tn_nav(string $active = 'home'): void {
               <div class="dropdown-item-desc">TezzCorp Pvt Ltd & Language Origin</div>
             </div>
           </a>
-          <a href="/community/" class="dropdown-item <?= ($active === 'community') ? 'active' : '' ?>" role="menuitem">
+          <a href="/community" class="dropdown-item <?= ($active === 'community') ? 'active' : '' ?>" role="menuitem">
             <div class="dropdown-item-icon">
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
             </div>
             <div class="dropdown-item-content">
               <div class="dropdown-item-title">Community</div>
               <div class="dropdown-item-desc">Developer forum & release updates</div>
+            </div>
+          </a>
+          <a href="/profile" class="dropdown-item <?= ($active === 'profile') ? 'active' : '' ?>" role="menuitem">
+            <div class="dropdown-item-icon">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            </div>
+            <div class="dropdown-item-content">
+              <div class="dropdown-item-title">Developer Profile</div>
+              <div class="dropdown-item-desc">Avatar, credentials &amp; community bio</div>
             </div>
           </a>
         </div>
@@ -303,11 +312,15 @@ function tn_nav(string $active = 'home'): void {
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
         <span><?= __('nav_about', 'About') ?></span>
       </a>
-      <a href="/community/" class="sidebar-link <?= ($active === 'community') ? 'active' : '' ?>">
+      <a href="/community" class="sidebar-link <?= ($active === 'community') ? 'active' : '' ?>">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         <span>Community</span>
       </a>
-      <a href="/support.php" class="sidebar-link <?= ($active === 'support') ? 'active' : '' ?>">
+      <a href="/profile" class="sidebar-link <?= ($active === 'profile') ? 'active' : '' ?>">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <span>Developer Profile</span>
+      </a>
+      <a href="/support" class="sidebar-link <?= ($active === 'support') ? 'active' : '' ?>">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
         <span>Support</span>
       </a>
@@ -315,7 +328,7 @@ function tn_nav(string $active = 'home'): void {
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
         <span>Engineering Blog</span>
       </a>
-      <a href="/news.php" class="sidebar-link <?= ($active === 'news') ? 'active' : '' ?>">
+      <a href="/news" class="sidebar-link <?= ($active === 'news') ? 'active' : '' ?>">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 20H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v1m2 13a2 2 0 0 1-2-2V7m2 13a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"/></svg>
         <span>News &amp; Releases</span>
       </a>

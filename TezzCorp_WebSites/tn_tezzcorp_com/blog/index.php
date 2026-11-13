@@ -208,47 +208,70 @@ include __DIR__ . '/../includes/header.php';
     </div>
   </section>
 
-  <!-- Posts Grid Section -->
+  <!-- Posts List Section -->
   <section class="section" aria-labelledby="blog-page-heading" style="padding: 3.5rem 0 5rem;">
     <div class="container">
-      <div class="blog-grid" id="blog-posts-grid">
+      <div class="article-horizontal-list" id="blog-posts-grid">
         <?php foreach ($posts as $i => $p): ?>
-        <article class="blog-card" id="blog-post-<?= $i + 1 ?>" data-title="<?= htmlspecialchars(strtolower($p['title'])) ?>">
-          <div class="blog-card-img" aria-hidden="true" style="display: flex; align-items: center; justify-content: center; color: var(--blue);">
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+        <article class="article-horizontal-card" id="blog-post-<?= $i + 1 ?>" data-title="<?= htmlspecialchars(strtolower($p['title'])) ?>">
+          
+          <!-- Left Side Visual / Graphic Banner -->
+          <div class="article-visual-side">
+            <?php if (!empty($p['image_url'])): ?>
+              <img src="<?= htmlspecialchars($p['image_url']) ?>" alt="<?= htmlspecialchars($p['title']) ?>" class="article-banner-img">
+            <?php else: ?>
+              <div class="article-banner-graphic">
+                <div class="banner-glow-orb"></div>
+                <div class="banner-badge-tag"><?= htmlspecialchars($p['category'] ?? 'Engineering') ?></div>
+                <div class="banner-brand-watermark">
+                  <img src="/assets/logo.png" alt="TezzNative" class="banner-logo-img">
+                  <div class="banner-title-preview">TezzNative &bull; Architecture</div>
+                </div>
+              </div>
+            <?php endif; ?>
           </div>
-          <div class="blog-card-body">
-            <div class="blog-meta" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 0.75rem;">
-              <span class="blog-category" style="background: rgba(14, 165, 233, 0.12); color: #0284c7; font-weight: 700; font-size: 0.72rem; padding: 2px 8px; border-radius: 4px; text-transform: uppercase;">
-                <?= htmlspecialchars($p['category'] ?? 'Engineering') ?>
-              </span>
-              <span class="blog-date" style="font-size: 0.8rem; color: var(--dim);">
-                <?= date('M d, Y', strtotime($p['published_at'] ?? 'now')) ?>
-              </span>
-              <span class="blog-date" style="font-size: 0.8rem; color: var(--dim);">
-                &bull; <?= htmlspecialchars($p['read_time'] ?? '5 min') ?>
-              </span>
+
+          <!-- Right Side Content & Metadata -->
+          <div class="article-content-side">
+            <div>
+              <div class="article-meta-row" style="margin-bottom: 0.65rem;">
+                <span class="article-category-badge">
+                  <?= htmlspecialchars($p['category'] ?? 'Engineering') ?>
+                </span>
+                <span class="article-date">
+                  <?= date('M d, Y', strtotime($p['published_at'] ?? 'now')) ?>
+                </span>
+                <span class="article-dot">&bull;</span>
+                <span class="article-read-time">
+                  <?= htmlspecialchars($p['read_time'] ?? '6 min read') ?>
+                </span>
+              </div>
+
+              <h2 class="article-title" id="blog-title-<?= $i + 1 ?>">
+                <a href="/blog/?slug=<?= urlencode($p['slug']) ?>"><?= htmlspecialchars($p['title']) ?></a>
+              </h2>
+
+              <p class="article-excerpt">
+                <?= htmlspecialchars($p['excerpt'] ?? '') ?>
+              </p>
             </div>
 
-            <h3 id="blog-title-<?= $i + 1 ?>" style="font-size: 1.15rem; font-weight: 700; color: var(--text); line-height: 1.4; margin-bottom: 0.6rem;">
-              <?= htmlspecialchars($p['title']) ?>
-            </h3>
+            <div class="article-footer-row">
+              <div class="article-author">
+                <div class="article-author-avatar">RP</div>
+                <div>
+                  <div class="article-author-name"><?= htmlspecialchars($p['author'] ?? 'Rohit Pathak') ?></div>
+                  <div class="article-author-role">Founder, TEZZCORP</div>
+                </div>
+              </div>
 
-            <p style="font-size: 0.88rem; color: var(--muted); line-height: 1.5; margin-bottom: 1.25rem;">
-              <?= htmlspecialchars($p['excerpt'] ?? '') ?>
-            </p>
-
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 1rem; border-top: 1px solid var(--border); flex-wrap: wrap; gap: 0.5rem;">
-              <span style="font-size: 0.81rem; color: var(--dim); display: inline-flex; align-items: center; gap: 4px;">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-                <?= htmlspecialchars($p['author'] ?? 'Rohit Pathak') ?>
-              </span>
-              <a href="/blog/?slug=<?= urlencode($p['slug']) ?>" class="blog-card-link" style="display: inline-flex; align-items: center; gap: 4px; color: var(--blue); font-size: 0.85rem; font-weight: 600; text-decoration: none;">
-                Read Article
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+              <a href="/blog/?slug=<?= urlencode($p['slug']) ?>" class="article-read-btn">
+                <span>Read Full Article</span>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
               </a>
             </div>
           </div>
+
         </article>
         <?php endforeach; ?>
       </div>

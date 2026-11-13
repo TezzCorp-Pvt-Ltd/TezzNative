@@ -7,7 +7,7 @@ declare(strict_types=1);
  */
 
 require_once __DIR__ . '/includes/auth.php';
-require_once __DIR__ . '/../config/mailer.php';
+require_once dirname(__DIR__) . '/config/mailer.php';
 
 if (tn_admin_is_logged()) {
     header("Location: /console/");
@@ -29,8 +29,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     } elseif ($identity === '') {
         $error = "Please enter your administrator username or email.";
     } else {
-        $stmt = $pdo->prepare("SELECT * FROM tn_admins WHERE username = :u OR email = :e LIMIT 1");
-        $stmt->execute([':u' => $identity, ':e' => $identity]);
+        $stmt = $pdo->prepare("SELECT * FROM tn_admins WHERE username = :id OR email = :id LIMIT 1");
+        $stmt->execute([':id' => $identity]);
         $admin = $stmt->fetch();
 
         if ($admin) {
@@ -324,3 +324,4 @@ if (isset($_GET['resend']) && $step === 2 && !empty($_SESSION['tn_reset_admin_id
 
 </body>
 </html>
+

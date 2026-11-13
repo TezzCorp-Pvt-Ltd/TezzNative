@@ -132,48 +132,72 @@ include __DIR__ . '/includes/header.php';
   <!-- News List -->
   <section class="section" aria-labelledby="news-page-heading" style="padding: 3.5rem 0 5rem;">
     <div class="container">
-      <div style="max-width: 840px; margin: 0 auto; display: flex; flex-direction: column; gap: 2rem;">
+      <div class="article-horizontal-list">
         <?php foreach ($news_items as $i => $item): ?>
-        <article
-          class="card"
-          id="news-item-<?= $i + 1 ?>"
-          aria-labelledby="news-title-<?= $i + 1 ?>"
-          style="display: flex; gap: 1.75rem; align-items: flex-start; flex-wrap: wrap; padding: 2rem; border-radius: 14px; background: var(--bg2); border: 1px solid var(--border);"
-        >
-          <!-- Icon -->
-          <div style="width: 56px; height: 56px; min-width: 56px; border-radius: 14px; background: var(--bg3); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; color: var(--text-accent);">
-            <?php
-              $iconSvg = match($item['icon']) {
-                'ai'      => '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>',
-                'company' => '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></svg>',
-                'db'      => '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>',
-                'gui'     => '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
-                default   => '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/></svg>',
-              };
-              echo $iconSvg;
-            ?>
-          </div>
-          <!-- Body -->
-          <div style="flex: 1; min-width: 220px;">
-            <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.65rem; flex-wrap: wrap;">
-              <span style="font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; padding: 0.2rem 0.55rem; border-radius: 4px; background: <?= $item['cat_bg'] ?>; color: <?= $item['cat_color'] ?>;">
+        <?php
+          $iconSvg = match($item['icon']) {
+            'ai'      => '<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>',
+            'company' => '<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></svg>',
+            'db'      => '<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#06b6d4" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>',
+            'gui'     => '<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
+            default   => '<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/></svg>',
+          };
+        ?>
+        <article class="article-horizontal-card" id="news-item-<?= $i + 1 ?>" aria-labelledby="news-title-<?= $i + 1 ?>">
+          
+          <!-- Left Side Visual Showcase -->
+          <div class="article-visual-side">
+            <div class="article-banner-graphic">
+              <div class="banner-glow-orb"></div>
+              <div class="banner-badge-tag" style="background: <?= $item['cat_bg'] ?>; color: <?= $item['cat_color'] ?>; border-color: rgba(56, 189, 248, 0.25);">
                 <?= htmlspecialchars($item['category']) ?>
-              </span>
-              <span style="font-size: 0.81rem; color: var(--dim);"><?= htmlspecialchars($item['date']) ?></span>
+              </div>
+              <div class="banner-icon-showcase">
+                <?= $iconSvg ?>
+              </div>
+              <div class="banner-news-headline"><?= htmlspecialchars($item['date']) ?></div>
             </div>
-            <h2 id="news-title-<?= $i + 1 ?>" style="font-size: 1.2rem; margin-bottom: 0.625rem; font-weight: 700; color: var(--text); line-height: 1.4;">
-              <?= htmlspecialchars($item['title']) ?>
-            </h2>
-            <p style="font-size: 0.92rem; color: var(--muted); margin-bottom: 1rem; line-height: 1.6;">
-              <?= htmlspecialchars($item['excerpt']) ?>
-            </p>
-            <a href="<?= htmlspecialchars($item['link']) ?>"
-               <?= str_starts_with($item['link'], 'http') ? 'target="_blank" rel="noopener"' : '' ?>
-               style="display: inline-flex; align-items: center; gap: 4px; color: var(--blue); font-size: 0.88rem; font-weight: 600; text-decoration: none;">
-              Read Full Notice
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
-            </a>
           </div>
+
+          <!-- Right Side Content Details -->
+          <div class="article-content-side">
+            <div>
+              <div class="article-meta-row" style="margin-bottom: 0.65rem;">
+                <span class="article-category-badge" style="background: <?= $item['cat_bg'] ?>; color: <?= $item['cat_color'] ?>; border-color: transparent;">
+                  <?= htmlspecialchars($item['category']) ?>
+                </span>
+                <span class="article-date"><?= htmlspecialchars($item['date']) ?></span>
+                <span class="article-dot">&bull;</span>
+                <span class="article-read-time">Official Dispatch</span>
+              </div>
+
+              <h2 class="article-title" id="news-title-<?= $i + 1 ?>">
+                <a href="<?= htmlspecialchars($item['link']) ?>" <?= str_starts_with($item['link'], 'http') ? 'target="_blank" rel="noopener"' : '' ?>>
+                  <?= htmlspecialchars($item['title']) ?>
+                </a>
+              </h2>
+
+              <p class="article-excerpt">
+                <?= htmlspecialchars($item['excerpt']) ?>
+              </p>
+            </div>
+
+            <div class="article-footer-row">
+              <div class="article-author">
+                <div class="article-author-avatar">TC</div>
+                <div>
+                  <div class="article-author-name">TEZZCORP PRIVATE LIMITED</div>
+                  <div class="article-author-role">Corporate Announcement</div>
+                </div>
+              </div>
+
+              <a href="<?= htmlspecialchars($item['link']) ?>" <?= str_starts_with($item['link'], 'http') ? 'target="_blank" rel="noopener"' : '' ?> class="article-read-btn">
+                <span>Read Full Notice</span>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
+              </a>
+            </div>
+          </div>
+
         </article>
         <?php endforeach; ?>
       </div>

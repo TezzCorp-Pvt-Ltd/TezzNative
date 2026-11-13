@@ -90,14 +90,30 @@ document.addEventListener('DOMContentLoaded', function () {
     }
   });
 
-  // 3. Dynamic Real-time Table Filter
-  const filterInputs = document.querySelectorAll('#tableSearchInput, input[name="q"], .table-filter-input');
+  // 3. Theme Toggle (Day / Night Mode)
+  const themeToggle = document.getElementById('consoleThemeToggle');
+  if (themeToggle) {
+    themeToggle.addEventListener('click', function () {
+      const isLight = document.documentElement.classList.contains('light');
+      if (isLight) {
+        document.documentElement.classList.remove('light');
+        document.documentElement.classList.add('dark');
+        localStorage.setItem('tn-theme', 'dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+        document.documentElement.classList.add('light');
+        localStorage.setItem('tn-theme', 'light');
+      }
+    });
+  }
+
+  // 4. Dynamic Real-time Table Filter (fallback for simple tables)
+  const filterInputs = document.querySelectorAll('.table-filter-input:not([data-managed-dt])');
   filterInputs.forEach(function (input) {
     input.addEventListener('input', function () {
       const query = input.value.trim().toLowerCase();
       const rows = document.querySelectorAll('.filterable-row, .data-table tbody tr, .console-table tbody tr');
       rows.forEach(function (row) {
-        // Skip empty message rows
         if (row.cells && row.cells.length === 1 && row.cells[0].colSpan > 1) return;
         const text = row.innerText.toLowerCase();
         row.style.display = text.includes(query) ? '' : 'none';
@@ -105,6 +121,157 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   });
 });
+
+/**
+ * Native DataTable Engine (Zero External CDN Dependency)
+ * Provides client-side search, category filter, sorting, and pagination.
+ */
+window.initConsoleDataTable = function (config) {
+  const table = document.getElementById(config.tableId);
+  if (!table) return;
+
+  const tbody = table.querySelector('tbody');
+  if (!tbody) return;
+
+  const allRows = Array.from(tbody.querySelectorAll('tr'));
+  let filteredRows = [...allRows];
+  let currentPage = 1;
+  let pageSize = parseInt(config.defaultPageSize || 10, 10);
+  let sortColIndex = -1;
+  let sortAsc = true;
+
+  const searchInput = config.searchId ? document.getElementById(config.searchId) : null;
+  const categorySelect = config.categoryId ? document.getElementById(config.categoryId) : null;
+  const pageSizeSelect = config.pageSizeId ? document.getElementById(config.pageSizeId) : null;
+  const paginationContainer = config.paginationId ? document.getElementById(config.paginationId) : null;
+  const infoContainer = config.infoId ? document.getElementById(config.infoId) : null;
+
+  function filterAndSort() {
+    const query = searchInput ? searchInput.value.trim().toLowerCase() : '';
+    const cat = categorySelect ? categorySelect.value.trim().toLowerCase() : '';
+
+    filteredRows = allRows.filter(function (row) {
+      if (row.cells.length === 1 && row.cells[0].colSpan > 1) return false;
+      const text = row.innerText.toLowerCase();
+      const matchesSearch = !query || text.includes(query);
+      const rowCategory = (row.getAttribute('data-category') || row.cells[2]?.innerText || '').toLowerCase();
+      const matchesCat = !cat || rowCategory.includes(cat);
+      return matchesSearch && matchesCat;
+    });
+
+    if (sortColIndex >= 0) {
+      filteredRows.sort(function (a, b) {
+        let valA = a.cells[sortColIndex]?.getAttribute('data-sort') || a.cells[sortColIndex]?.innerText.trim() || '';
+        let valB = b.cells[sortColIndex]?.getAttribute('data-sort') || b.cells[sortColIndex]?.innerText.trim() || '';
+        const numA = parseFloat(valA.replace(/[^0-9.-]/g, ''));
+        const numB = parseFloat(valB.replace(/[^0-9.-]/g, ''));
+        if (!isNaN(numA) && !isNaN(numB)) {
+          return sortAsc ? numA - numB : numB - numA;
+        }
+        return sortAsc ? valA.localeCompare(valB) : valB.localeCompare(valA);
+      });
+    }
+
+    currentPage = 1;
+    render();
+  }
+
+  function render() {
+    const total = filteredRows.length;
+    const isAll = pageSize <= 0;
+    const totalPages = isAll ? 1 : Math.ceil(total / pageSize);
+
+    if (currentPage > totalPages) currentPage = Math.max(1, totalPages);
+
+    const start = isAll ? 0 : (currentPage - 1) * pageSize;
+    const end = isAll ? total : Math.min(start + pageSize, total);
+
+    // Hide all rows
+    allRows.forEach(r => r.style.display = 'none');
+
+    // Show current page slice
+    filteredRows.slice(start, end).forEach(r => r.style.display = '');
+
+    // Update info
+    if (infoContainer) {
+      if (total === 0) {
+        infoContainer.innerText = 'No matching entries found';
+      } else {
+        infoContainer.innerText = `Showing ${start + 1} to ${end} of ${total} entries` + (total !== allRows.length ? ` (filtered from ${allRows.length} total)` : '');
+      }
+    }
+
+    // Render pagination buttons
+    if (paginationContainer) {
+      paginationContainer.innerHTML = '';
+      if (totalPages <= 1) return;
+
+      const prevBtn = document.createElement('button');
+      prevBtn.className = 'page-btn';
+      prevBtn.innerHTML = '&lsaquo; Prev';
+      prevBtn.disabled = (currentPage === 1);
+      prevBtn.onclick = () => { if (currentPage > 1) { currentPage--; render(); } };
+      paginationContainer.appendChild(prevBtn);
+
+      for (let p = 1; p <= totalPages; p++) {
+        if (p === 1 || p === totalPages || (p >= currentPage - 2 && p <= currentPage + 2)) {
+          const btn = document.createElement('button');
+          btn.className = 'page-btn' + (p === currentPage ? ' active' : '');
+          btn.innerText = p;
+          btn.onclick = () => { currentPage = p; render(); };
+          paginationContainer.appendChild(btn);
+        } else if (p === currentPage - 3 || p === currentPage + 3) {
+          const ellipsis = document.createElement('span');
+          ellipsis.className = 'pagination-ellipsis';
+          ellipsis.innerText = '…';
+          ellipsis.style.padding = '0 4px';
+          paginationContainer.appendChild(ellipsis);
+        }
+      }
+
+      const nextBtn = document.createElement('button');
+      nextBtn.className = 'page-btn';
+      nextBtn.innerHTML = 'Next &rsaquo;';
+      nextBtn.disabled = (currentPage === totalPages);
+      nextBtn.onclick = () => { if (currentPage < totalPages) { currentPage++; render(); } };
+      paginationContainer.appendChild(nextBtn);
+    }
+  }
+
+  // Column header sorting
+  const headers = table.querySelectorAll('thead th[data-sortable]');
+  headers.forEach((th, idx) => {
+    th.classList.add('sortable-th');
+    const actualColIndex = th.cellIndex;
+    th.innerHTML = th.innerHTML + '<span class="sort-icon">&varr;</span>';
+    th.addEventListener('click', () => {
+      if (sortColIndex === actualColIndex) {
+        sortAsc = !sortAsc;
+      } else {
+        sortColIndex = actualColIndex;
+        sortAsc = true;
+      }
+      headers.forEach(h => {
+        h.classList.remove('sort-asc', 'sort-desc');
+        const icon = h.querySelector('.sort-icon');
+        if (icon) icon.innerHTML = '&varr;';
+      });
+      th.classList.add(sortAsc ? 'sort-asc' : 'sort-desc');
+      const curIcon = th.querySelector('.sort-icon');
+      if (curIcon) curIcon.innerHTML = sortAsc ? '&uarr;' : '&darr;';
+      filterAndSort();
+    });
+  });
+
+  if (searchInput) searchInput.addEventListener('input', filterAndSort);
+  if (categorySelect) categorySelect.addEventListener('change', filterAndSort);
+  if (pageSizeSelect) pageSizeSelect.addEventListener('change', () => {
+    pageSize = parseInt(pageSizeSelect.value, 10);
+    filterAndSort();
+  });
+
+  filterAndSort();
+};
 
 // Global Modal Functions
 window.openModal = function (modalId) {

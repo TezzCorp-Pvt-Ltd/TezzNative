@@ -7,7 +7,7 @@ declare(strict_types=1);
  */
 
 require_once __DIR__ . '/includes/auth.php';
-require_once __DIR__ . '/../config/mailer.php';
+require_once dirname(__DIR__) . '/config/mailer.php';
 
 if (tn_admin_is_logged()) {
     header("Location: /console/");
@@ -44,8 +44,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($user_input === '' || $pass_input === '') {
                 $error = "Please enter both username and security key.";
             } else {
-                $stmt = $pdo->prepare("SELECT * FROM tn_admins WHERE username = :u OR email = :e LIMIT 1");
-                $stmt->execute([':u' => $user_input, ':e' => $user_input]);
+                $stmt = $pdo->prepare("SELECT * FROM tn_admins WHERE username = ? OR email = ? LIMIT 1");
+                $stmt->execute([$user_input, $user_input]);
                 $admin = $stmt->fetch();
 
                 $isValid = false;
@@ -88,7 +88,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         // 2FA disabled - direct login
                         session_regenerate_id(true);
                         $_SESSION['tn_admin_logged'] = true;
+                        $_SESSION['tn_admin_id'] = (int)$admin['id'];
                         $_SESSION['tn_admin_user'] = $admin['username'];
+                        $_SESSION['tn_admin_email'] = $admin['email'];
+                        $_SESSION['tn_admin_avatar'] = $admin['avatar_url'] ?? '';
                         $_SESSION['tn_admin_login_time'] = time();
                         $pdo->prepare("UPDATE tn_admins SET last_login = NOW() WHERE id = ?")->execute([$admin['id']]);
 
@@ -133,7 +136,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     session_regenerate_id(true);
                     $_SESSION['tn_admin_logged'] = true;
+                    $_SESSION['tn_admin_id'] = (int)$admin['id'];
                     $_SESSION['tn_admin_user'] = $admin['username'];
+                    $_SESSION['tn_admin_email'] = $admin['email'];
+                    $_SESSION['tn_admin_avatar'] = $admin['avatar_url'] ?? '';
                     $_SESSION['tn_admin_login_time'] = time();
 
                     unset($_SESSION['tn_2fa_pending_admin_id'], $_SESSION['tn_2fa_pending_user'], $_SESSION['tn_2fa_pending_email']);

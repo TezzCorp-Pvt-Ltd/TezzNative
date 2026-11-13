@@ -39,7 +39,7 @@ function tn_handle_avatar_upload(?array $file): ?string {
         default      => 'jpg',
     };
 
-    $uploadDir = __DIR__ . '/../../uploads/avatars';
+    $uploadDir = dirname(__DIR__) . '/uploads/avatars';
     if (!is_dir($uploadDir)) {
         @mkdir($uploadDir, 0755, true);
     }
@@ -264,7 +264,7 @@ require_once __DIR__ . '/includes/header.php';
   <div class="kpi-card">
     <div class="kpi-header">
       <span class="kpi-title">Community Members</span>
-      <div class="kpi-icon-badge" style="background: rgba(14, 165, 233, 0.15); color: #38bdf8;">
+      <div class="kpi-icon-badge" style="color: #38bdf8;">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
       </div>
     </div>
@@ -275,7 +275,7 @@ require_once __DIR__ . '/includes/header.php';
   <div class="kpi-card">
     <div class="kpi-header">
       <span class="kpi-title">Verified Developers</span>
-      <div class="kpi-icon-badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981;">
+      <div class="kpi-icon-badge" style="color: #10b981;">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
       </div>
     </div>
@@ -286,7 +286,7 @@ require_once __DIR__ . '/includes/header.php';
   <div class="kpi-card">
     <div class="kpi-header">
       <span class="kpi-title">Forum Threads</span>
-      <div class="kpi-icon-badge" style="background: rgba(245, 158, 11, 0.15); color: #f59e0b;">
+      <div class="kpi-icon-badge" style="color: #f59e0b;">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
       </div>
     </div>
@@ -297,7 +297,7 @@ require_once __DIR__ . '/includes/header.php';
   <div class="kpi-card">
     <div class="kpi-header">
       <span class="kpi-title">Total Thread Upvotes</span>
-      <div class="kpi-icon-badge" style="background: rgba(168, 85, 247, 0.15); color: #c084fc;">
+      <div class="kpi-icon-badge" style="color: #c084fc;">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>
       </div>
     </div>
@@ -311,7 +311,7 @@ require_once __DIR__ . '/includes/header.php';
   <div class="panel-header">
     <div>
       <h3 class="panel-title">Community Registry</h3>
-      <p style="font-size: 0.82rem; color: #94a3b8; margin-top: 4px;">Manage accounts, roles, verified badges, and avatar photos displayed publicly on <code>/community.php</code>.</p>
+      <p style="font-size: 0.82rem; color: #94a3b8; margin-top: 4px;">Manage accounts, roles, verified badges, and avatar photos displayed publicly on <code>/community</code>.</p>
     </div>
     <button type="button" class="btn btn-primary" onclick="openModal('addUserModal')">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>

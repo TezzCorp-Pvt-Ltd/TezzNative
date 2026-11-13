@@ -23,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!tn_csrf_verify($token)) {
         tn_set_flash('error', 'CSRF verification failed. Please try again.');
-        header("Location: /console/packages.php");
+        header("Location: /console/packages");
         exit;
     }
 
@@ -46,7 +46,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (empty($cleanName)) {
             tn_set_flash('error', 'Package name is required.');
-            header("Location: /console/packages.php");
+            header("Location: /console/packages");
             exit;
         }
 
@@ -66,7 +66,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt->execute([$cleanName]);
                     if ($stmt->fetch()) {
                         tn_set_flash('error', "Package '{$cleanName}' already exists. Use edit instead.");
-                        header("Location: /console/packages.php");
+                        header("Location: /console/packages");
                         exit;
                     }
 
@@ -106,7 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             tn_set_flash('error', 'Database connection not available.');
         }
 
-        header("Location: /console/packages.php");
+        header("Location: /console/packages");
         exit;
     } elseif ($action === 'delete') {
         $cleanName = preg_replace('/[^a-z0-9_]/', '', strtolower(trim((string)($_POST['name'] ?? ''))));
@@ -119,7 +119,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 tn_set_flash('error', 'Delete error: ' . $e->getMessage());
             }
         }
-        header("Location: /console/packages.php");
+        header("Location: /console/packages");
         exit;
     }
 }
@@ -167,7 +167,6 @@ require_once __DIR__ . '/includes/header.php';
     </div>
 
     <div class="panel-actions">
-      <input type="text" id="tableSearchInput" class="c-input" placeholder="Filter packages..." style="width: 220px; padding: 7px 12px; font-size: 0.84rem;">
       <button type="button" class="c-btn c-btn-primary" data-modal-open="addPackageModal">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
         <span>Add Package</span>
@@ -175,21 +174,45 @@ require_once __DIR__ . '/includes/header.php';
     </div>
   </div>
 
+  <!-- Interactive DataTable Controls -->
+  <div class="datatable-controls">
+    <div class="datatable-left">
+      <input type="text" id="tableSearchInput" class="c-input" placeholder="Search packages, tags..." style="width: 220px; padding: 7px 12px; font-size: 0.84rem;">
+      <select id="tableCategorySelect" class="c-input" style="width: 170px; padding: 7px 12px; font-size: 0.84rem;">
+        <option value="">All Categories</option>
+        <?php foreach ($categories as $cat): ?>
+          <option value="<?= htmlspecialchars($cat) ?>"><?= htmlspecialchars($cat) ?></option>
+        <?php endforeach; ?>
+      </select>
+    </div>
+    <div class="datatable-right">
+      <label style="font-size: 0.8rem; color: var(--c-text-muted); display: flex; align-items: center; gap: 6px;">
+        <span>Rows:</span>
+        <select id="tablePageSizeSelect" class="c-input" style="width: 110px; padding: 6px 10px; font-size: 0.82rem;">
+          <option value="10" selected>10 / page</option>
+          <option value="25">25 / page</option>
+          <option value="50">50 / page</option>
+          <option value="0">All</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
   <div class="table-wrapper">
-    <table class="console-table">
+    <table id="packagesTable" class="console-table">
       <thead>
         <tr>
-          <th>Name</th>
-          <th>Version</th>
-          <th>Category</th>
-          <th>Downloads</th>
+          <th data-sortable>Name</th>
+          <th data-sortable>Version</th>
+          <th data-sortable>Category</th>
+          <th data-sortable>Downloads</th>
           <th>SHA-256 Checksum</th>
           <th>Actions</th>
         </tr>
       </thead>
       <tbody>
         <?php foreach ($packages as $pkg): ?>
-          <tr class="filterable-row">
+          <tr class="filterable-row" data-category="<?= htmlspecialchars($pkg['category'] ?? '') ?>">
             <td>
               <a href="/package?name=<?= urlencode($pkg['name']) ?>" target="_blank" style="font-weight: 700; color: #38bdf8; text-decoration: none; display: flex; align-items: center; gap: 4px;">
                 <code><?= htmlspecialchars($pkg['name']) ?></code>
@@ -205,7 +228,7 @@ require_once __DIR__ . '/includes/header.php';
               </span>
             </td>
             <td><span style="font-size: 0.82rem; color: var(--c-text-secondary);"><?= htmlspecialchars($pkg['category'] ?? 'Core') ?></span></td>
-            <td><strong style="color: #10b981;"><?= number_format((int)($pkg['downloads'] ?? 0)) ?></strong></td>
+            <td data-sort="<?= (int)($pkg['downloads'] ?? 0) ?>"><strong style="color: #10b981;"><?= number_format((int)($pkg['downloads'] ?? 0)) ?></strong></td>
             <td>
               <?php if (!empty($pkg['checksum'])): ?>
                 <span title="<?= htmlspecialchars($pkg['checksum']) ?>" style="font-family: var(--font-mono); font-size: 0.74rem; color: var(--c-text-muted);">
@@ -233,6 +256,12 @@ require_once __DIR__ . '/includes/header.php';
         <?php endforeach; ?>
       </tbody>
     </table>
+  </div>
+
+  <!-- Interactive Pagination Footer -->
+  <div class="datatable-pagination">
+    <div id="tableInfo">Showing entries...</div>
+    <div id="tablePagination" class="pagination-pages"></div>
   </div>
 </div>
 
@@ -357,6 +386,23 @@ function openEditModal(pkg) {
   document.getElementById('editPkgExample').value = pkg.example_code || '';
   document.getElementById('editPackageModal').classList.add('active');
 }
+
+document.addEventListener('DOMContentLoaded', function () {
+  if (window.initConsoleDataTable) {
+    window.initConsoleDataTable({
+      tableId: 'packagesTable',
+      searchId: 'tableSearchInput',
+      categoryId: 'tableCategorySelect',
+      pageSizeId: 'tablePageSizeSelect',
+      paginationId: 'tablePagination',
+      infoId: 'tableInfo',
+      defaultPageSize: 10
+    });
+  }
+  if (window.location.hash === '#add') {
+    window.openModal('addPackageModal');
+  }
+});
 </script>
 
 <?php require_once __DIR__ . '/includes/footer.php'; ?>

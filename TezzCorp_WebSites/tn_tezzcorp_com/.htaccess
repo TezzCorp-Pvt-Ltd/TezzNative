@@ -32,6 +32,23 @@ RewriteRule ^ https://tezznative.org%{REQUEST_URI} [R=301,L]
 RewriteRule ^(checkout|fee-receipt|academy_diag|callback|careers|check-monthly-payments|phpinfo_test2|portfolio|services|software)\.php$ - [G,L]
 
 # ------------------------------------------------------------
+# 1c) 301 Redirect direct browser requests from .php to clean URL
+#     Keeps address bar clean in production across site & console
+# ------------------------------------------------------------
+# Redirect /index.php -> /
+RewriteCond %{THE_REQUEST} ^[A-Z]{3,}\s/index\.php [NC]
+RewriteRule ^ / [R=301,L]
+
+# Redirect /path/index.php -> /path/
+RewriteCond %{THE_REQUEST} ^[A-Z]{3,}\s/(.+)/index\.php [NC]
+RewriteRule ^ /%1/ [R=301,L]
+
+# Redirect any direct GET request for *.php to clean extensionless URL
+RewriteCond %{REQUEST_METHOD} !^POST$ [NC]
+RewriteCond %{THE_REQUEST} ^[A-Z]{3,}\s/([^?]+)\.php [NC]
+RewriteRule ^ /%1 [R=301,L]
+
+# ------------------------------------------------------------
 # 2) Named-page clean URL routing (no .php extension)
 # ------------------------------------------------------------
 # /packages or /packages/ → packages.php
@@ -47,6 +64,11 @@ RewriteCond %{REQUEST_FILENAME} !-d
 RewriteRule ^community/?$          community.php     [L,QSA]
 RewriteRule ^community/index\.php$ community.php     [L,QSA]
 
+# /profile or /profile/ → profile.php
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^profile/?$            profile.php       [L,QSA]
+
 # /support → support.php
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
@@ -57,31 +79,11 @@ RewriteCond %{REQUEST_FILENAME} !-f
 RewriteRule ^download/?$           download/         [L,QSA]
 
 # ------------------------------------------------------------
-# 3) Pretty URLs: strip .php extension (single-segment)
+# 3) Pretty URLs: strip .php extension (single & multi-segment)
 # ------------------------------------------------------------
 RewriteCond %{REQUEST_FILENAME} !-d
 RewriteCond %{REQUEST_FILENAME}.php -f
-RewriteRule ^([^/]+)$ $1.php [L,QSA]
-
-# Also handle /path/ → /path.php for single-segment paths
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{DOCUMENT_ROOT}/%1.php -f
-RewriteRule ^([^/]+)/?$ $1.php [L,QSA]
-
-# ------------------------------------------------------------
-# 3b) Pretty URLs: subdirectory .php stripping (e.g. /docs/lsp)
-# ------------------------------------------------------------
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{DOCUMENT_ROOT}/%{REQUEST_URI}.php -f
-RewriteRule ^(.+)$ $1.php [L,QSA]
-
-# Also handle /dir/slug/ → /dir/slug.php
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{DOCUMENT_ROOT}/%1.php -f
-RewriteRule ^(.+)/?$ $1.php [L,QSA]
+RewriteRule ^(.*)$ $1.php [L,QSA]
 
 # ------------------------------------------------------------
 # 4) Security: disable directory listing

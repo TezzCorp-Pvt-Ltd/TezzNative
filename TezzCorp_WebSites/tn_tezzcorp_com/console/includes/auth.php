@@ -24,7 +24,7 @@ function tn_admin_is_logged(): bool {
 function tn_admin_require(): void {
     if (!tn_admin_is_logged()) {
         $curr = $_SERVER['REQUEST_URI'] ?? '/console/';
-        header("Location: /console/login.php?redirect=" . urlencode($curr));
+        header("Location: /console/login?redirect=" . urlencode($curr));
         exit;
     }
 }
