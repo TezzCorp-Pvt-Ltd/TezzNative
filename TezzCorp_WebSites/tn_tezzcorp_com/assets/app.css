@@ -264,6 +264,7 @@ html.light .footer-bottom {
 html {
   font-size: 16px;
   scroll-behavior: smooth;
+  overflow-x: clip;
 }
 
 body {
@@ -273,8 +274,14 @@ body {
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  overflow-x: hidden;
+  overflow-x: clip;
   transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+@supports not (overflow-x: clip) {
+  html, body {
+    overflow-x: hidden;
+  }
 }
 
 a {
@@ -352,9 +359,10 @@ pre {
 
 /* Header & Sticky Navigation */
 .main-header {
+  position: -webkit-sticky;
   position: sticky;
   top: 0;
-  z-index: 50;
+  z-index: 1000;
   background: var(--bg-glass);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
@@ -879,8 +887,10 @@ html.light .moon-icon {
   display: flex;
   flex-direction: column;
   transform: translateX(105%);
-  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
-  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.65);
+  box-shadow: none;
+  visibility: hidden;
+  pointer-events: none;
+  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.35s ease;
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
@@ -888,6 +898,9 @@ html.light .moon-icon {
 
 .mobile-sidebar.open {
   transform: translateX(0);
+  visibility: visible;
+  pointer-events: auto;
+  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.45);
 }
 
 body.sidebar-locked {
