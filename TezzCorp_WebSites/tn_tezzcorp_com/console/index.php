@@ -134,7 +134,7 @@ try {
 </div>
 
 <!-- Two-Column Section: Top Packages & System Health -->
-<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 24px;" class="dashboard-grid">
+<div class="dashboard-grid">
   <!-- Top Libraries Table -->
   <div class="panel">
     <div class="panel-header">
@@ -190,41 +190,33 @@ try {
       </div>
     </div>
 
-    <ul style="list-style: none; display: flex; flex-direction: column; gap: 14px; font-size: 0.86rem;">
-      <li style="display: flex; justify-content: space-between; border-bottom: 1px solid var(--c-border-subtle); padding-bottom: 8px;">
-        <span style="color: var(--c-text-muted);">Language Version:</span>
-        <strong style="color: #38bdf8;">TezzNative 1.0.0</strong>
+    <ul class="diagnostics-list">
+      <li class="diag-item">
+        <span class="diag-label">Language Version:</span>
+        <strong class="diag-value" style="color: #38bdf8;">TezzNative 1.0.0</strong>
       </li>
-      <li style="display: flex; justify-content: space-between; border-bottom: 1px solid var(--c-border-subtle); padding-bottom: 8px;">
-        <span style="color: var(--c-text-muted);">Backend Server:</span>
-        <span>PHP <?= PHP_VERSION ?></span>
+      <li class="diag-item">
+        <span class="diag-label">Backend Server:</span>
+        <span class="diag-value">PHP <?= PHP_VERSION ?></span>
       </li>
-      <li style="display: flex; justify-content: space-between; border-bottom: 1px solid var(--c-border-subtle); padding-bottom: 8px;">
-        <span style="color: var(--c-text-muted);">Database:</span>
-        <span style="color: #10b981; font-weight: 600;">MySQL Connected</span>
+      <li class="diag-item">
+        <span class="diag-label">Database:</span>
+        <span class="diag-value" style="color: #10b981; font-weight: 600;">MySQL Connected</span>
       </li>
-      <li style="display: flex; justify-content: space-between; border-bottom: 1px solid var(--c-border-subtle); padding-bottom: 8px;">
-        <span style="color: var(--c-text-muted);">DB Table:</span>
-        <code>tn_package_registry</code>
+      <li class="diag-item">
+        <span class="diag-label">DB Table:</span>
+        <code class="diag-value">tn_package_registry</code>
       </li>
-      <li style="display: flex; justify-content: space-between; border-bottom: 1px solid var(--c-border-subtle); padding-bottom: 8px;">
-        <span style="color: var(--c-text-muted);">Company:</span>
-        <strong style="color: var(--c-text-primary);">TEZZCORP PRIVATE LIMITED</strong>
+      <li class="diag-item">
+        <span class="diag-label">Company:</span>
+        <strong class="diag-value" style="color: var(--c-text-primary);">TEZZCORP PRIVATE LIMITED</strong>
       </li>
-      <li style="display: flex; justify-content: space-between;">
-        <span style="color: var(--c-text-muted);">Portal Domain:</span>
-        <a href="https://tezznative.org" target="_blank" style="color: #0284c7;">tezznative.org</a>
+      <li class="diag-item">
+        <span class="diag-label">Portal Domain:</span>
+        <a href="https://tezznative.org" target="_blank" class="diag-value" style="color: #0284c7;">tezznative.org</a>
       </li>
     </ul>
   </div>
 </div>
-
-<style>
-@media (max-width: 900px) {
-  .dashboard-grid {
-    grid-template-columns: 1fr !important;
-  }
-}
-</style>
 
 <?php require_once __DIR__ . '/includes/footer.php'; ?>

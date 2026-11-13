@@ -479,6 +479,10 @@ body {
   border-radius: 14px;
   padding: 24px;
   margin-bottom: 24px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .command-actions-grid {
@@ -486,6 +490,7 @@ body {
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 12px;
   width: 100%;
+  min-width: 0;
 }
 @media (max-width: 580px) {
   .command-actions-grid {
@@ -500,6 +505,8 @@ body {
   margin-bottom: 20px;
   flex-wrap: wrap;
   gap: 12px;
+  min-width: 0;
+  width: 100%;
 }
 
 .panel-title {
@@ -510,6 +517,7 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 .panel-actions {
@@ -522,9 +530,64 @@ body {
 /* Grids */
 .dashboard-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  grid-template-columns: 2fr 1fr;
   gap: 24px;
   margin-bottom: 24px;
+  width: 100%;
+  min-width: 0;
+}
+
+.dashboard-grid > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Diagnostics List */
+.diagnostics-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 0.86rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.diag-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-bottom: 1px solid var(--c-border-subtle);
+  padding-bottom: 8px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.diag-label {
+  color: var(--c-text-muted);
+  flex-shrink: 0;
+  font-size: 0.85rem;
+}
+
+.diag-value {
+  text-align: right;
+  word-break: break-word;
+  max-width: 100%;
+  font-size: 0.86rem;
+}
+
+@media (max-width: 480px) {
+  .diag-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+  .diag-value {
+    text-align: left;
+  }
 }
 
 .filterable-row {
@@ -535,11 +598,25 @@ body {
 .table-wrapper,
 .table-responsive {
   width: 100%;
-  overflow-x: auto;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto !important;
   -webkit-overflow-scrolling: touch;
   border-radius: 10px;
   border: 1px solid var(--c-border-subtle);
   margin-bottom: 16px;
+  display: block;
+}
+
+.table-wrapper::-webkit-scrollbar,
+.table-responsive::-webkit-scrollbar {
+  height: 5px;
+}
+
+.table-wrapper::-webkit-scrollbar-thumb,
+.table-responsive::-webkit-scrollbar-thumb {
+  background: rgba(56, 189, 248, 0.4);
+  border-radius: 4px;
 }
 
 .console-table,
@@ -548,6 +625,8 @@ body {
   border-collapse: collapse;
   text-align: left;
   font-size: 0.88rem;
+  min-width: 520px;
+}
 }
 
 .console-table th,
@@ -1018,13 +1097,15 @@ html.light .c-modal-footer {
     grid-template-columns: repeat(2, 1fr);
   }
   .dashboard-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr !important;
+    gap: 18px;
   }
 }
 
 @media (max-width: 900px) {
   .sidebar-backdrop {
     display: block;
+    z-index: 998;
   }
 
   .console-sidebar {
@@ -1035,7 +1116,7 @@ html.light .c-modal-footer {
     width: 280px;
     max-width: 85vw;
     height: 100vh;
-    z-index: 50;
+    z-index: 999;
     transform: translateX(-100%);
     box-shadow: 16px 0 48px rgba(0, 0, 0, 0.75);
     transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
@@ -1079,21 +1160,91 @@ html.light .c-modal-footer {
 
   .console-body {
     padding: 20px 14px;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+
+  .datatable-controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .datatable-left,
+  .datatable-right {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    gap: 8px;
+  }
+
+  .datatable-left .c-input,
+  .datatable-left input,
+  .datatable-left select,
+  .datatable-right select {
+    width: 100% !important;
+    max-width: 100% !important;
   }
 }
 
 @media (max-width: 640px) {
   .console-wrapper {
     overflow-x: hidden;
+    width: 100%;
+    max-width: 100vw;
+    box-sizing: border-box;
+  }
+
+  .console-main {
+    overflow-x: hidden;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+
+  .console-body {
+    padding: 16px 12px;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+
+  .dashboard-grid {
+    grid-template-columns: 1fr !important;
+    gap: 16px;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .dashboard-grid > * {
+    min-width: 0;
+    max-width: 100%;
   }
 
   .kpi-grid {
     grid-template-columns: 1fr;
-    gap: 14px;
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .kpi-card {
+    min-width: 0;
+    padding: 16px 14px;
   }
 
   .panel {
     padding: 16px 12px;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    border-radius: 12px;
   }
 
   .panel-header {
@@ -1175,16 +1326,20 @@ html.light .c-modal-footer {
     display: none;
   }
 
-  .table-wrapper {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    width: 100%;
+  .table-wrapper,
+  .table-responsive {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    display: block;
     border-radius: 8px;
   }
 
   .console-table,
   .data-table {
-    min-width: 580px;
+    min-width: 500px;
   }
 
   .dataTables_wrapper .dataTables_paginate {
@@ -1205,6 +1360,59 @@ html.light .c-modal-footer {
   .dt-controls-bar select {
     width: 100% !important;
     max-width: 100% !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .console-topbar {
+    padding: 0 12px;
+    height: 56px;
+    min-height: 56px;
+  }
+
+  .topbar-title {
+    font-size: 0.88rem;
+    max-width: 130px;
+  }
+
+  .console-body {
+    padding: 12px 8px;
+  }
+
+  .panel {
+    padding: 14px 10px;
+    border-radius: 10px;
+  }
+
+  .kpi-card {
+    padding: 12px 10px;
+  }
+
+  .kpi-value {
+    font-size: 1.5rem;
+  }
+
+  .command-actions-grid {
+    grid-template-columns: 1fr !important;
+    gap: 8px;
+  }
+
+  .command-actions-grid .c-btn {
+    font-size: 0.8rem;
+    padding: 8px 10px;
+    width: 100%;
+  }
+
+  .datatable-pagination {
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.78rem;
+  }
+
+  .pagination-pages {
+    flex-wrap: wrap;
+    justify-content: center;
   }
 }
 
