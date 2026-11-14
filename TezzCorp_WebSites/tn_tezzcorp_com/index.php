@@ -292,7 +292,7 @@ require_once __DIR__ . '/includes/nav.php';
       <span class="section-pill">LIVE CODE SHOWCASE</span>
       <h2 class="section-title">Experience the Syntax in Action</h2>
       <p class="section-desc">
-        Explore interactive code examples showcasing native async coroutines, deep learning autograd, GGUF binary loading, and scoped memory cleanup.
+        Explore interactive code examples showcasing concurrent actor tasks, dense matrix math &amp; softmax, INT8 quantized inference, systems bump allocator, and high-throughput HTTP routing.
       </p>
     </div>
 
@@ -301,19 +301,19 @@ require_once __DIR__ . '/includes/nav.php';
       <div class="playground-nav-tabs">
         <button class="tab-btn active" data-tab="async">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-          <span>1. Async / Await Coroutines</span>
+          <span>1. Concurrent Actor Tasks</span>
         </button>
         <button class="tab-btn" data-tab="xor">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
-          <span>2. Infix @ &amp; Autodiff MLP</span>
+          <span>2. Matrix Math &amp; Softmax</span>
         </button>
         <button class="tab-btn" data-tab="gguf">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect></svg>
-          <span>3. GGUF Q4_0 Engine</span>
+          <span>3. INT8 Quantized Inference</span>
         </button>
         <button class="tab-btn" data-tab="defer_sugar">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-          <span>4. Scoped 'defer' &amp; 4D Slices</span>
+          <span>4. Systems Arena Allocator</span>
         </button>
         <button class="tab-btn" data-tab="http_serve">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
@@ -346,27 +346,39 @@ require_once __DIR__ . '/includes/nav.php';
               </button>
             </div>
           </div>
-          <pre class="code-view" id="codeView" style="margin: 0; padding: 20px; font-family: var(--font-mono); font-size: 0.9rem; line-height: 1.65; overflow-x: auto;"><span class="cmt">// Native Async/Await Concurrency in TezzNative</span>
-<span class="kw">import</span> <span class="str">"task"</span>
+          <pre class="code-view" id="codeView" style="margin: 0; padding: 20px; font-family: var(--font-mono); font-size: 0.9rem; line-height: 1.65; overflow-x: auto;"><span class="cmt">// Concurrent Worker Tasks &amp; Mailboxes in TezzNative</span>
+<span class="kw">import</span> <span class="str">"actor"</span>
 <span class="kw">import</span> <span class="str">"net"</span>
 
-<span class="kw">async fn</span> <span class="fn">fetch_user_profile</span>(uid: <span class="ty">int</span>) -&gt; <span class="ty">int</span>:
-  <span class="kw">let</span> client = net.http_client()
-  <span class="kw">defer</span> client.close()
-  <span class="kw">let</span> res = client.get(<span class="str">"https://api.tezzcorp.com/v1/user"</span>)
-  <span class="kw">ret</span> res.status_code
+<span class="kw">fn</span> <span class="fn">handle_worker</span>(sys:<span class="ty">*ActorSystem</span>, worker_id:<span class="ty">int</span>, master_id:<span class="ty">int</span>, uid:<span class="ty">int</span>) -&gt; <span class="ty">int</span>:
+  <span class="fn">say</span> <span class="str">"Spawning worker task for UID: "</span>, uid
+  resp:<span class="ty">str</span> = <span class="str">"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"user\":\"ok\"}"</span>
+  status:<span class="ty">int</span> = net.http_status_code(resp)
+  <span class="cmt">// Send status back to master actor mailbox</span>
+  <span class="kw">ret</span> actor.send_from(sys, worker_id, master_id, <span class="num">1</span>, uid, status, <span class="num">0</span>, <span class="num">0</span>, <span class="str">"ok"</span>)
 
 <span class="kw">fn</span> <span class="fn">main</span>() -&gt; <span class="ty">int</span>:
-  <span class="fn">say</span> <span class="str">"Spawning concurrent async worker tasks..."</span>
-  <span class="kw">let</span> t1 = task.spawn_arg(fetch_user_profile, <span class="num">101</span>)
-  <span class="kw">let</span> t2 = task.spawn_arg(fetch_user_profile, <span class="num">102</span>)
+  <span class="fn">say</span> <span class="str">"Spawning concurrent actor worker tasks..."</span>
+  sys:<span class="ty">*ActorSystem</span> = actor.system_new(<span class="num">4</span>, <span class="num">4</span>, <span class="num">1</span>)
+  <span class="kw">if</span> sys == <span class="num">0</span>:
+    <span class="kw">ret</span> <span class="num">1</span>
 
-  <span class="cmt">// Native non-blocking join on event loop</span>
-  <span class="kw">let</span> s1: <span class="ty">int</span> = <span class="kw">await</span> t1
-  <span class="kw">let</span> s2: <span class="ty">int</span> = <span class="kw">await</span> t2
+  master:<span class="ty">int</span> = actor.spawn(sys, <span class="str">"master"</span>)
+  w1:<span class="ty">int</span> = actor.spawn(sys, <span class="str">"worker-1"</span>)
+  w2:<span class="ty">int</span> = actor.spawn(sys, <span class="str">"worker-2"</span>)
 
-  <span class="fn">say</span> <span class="str">"Task 1 HTTP status:"</span>, s1
-  <span class="fn">say</span> <span class="str">"Task 2 HTTP status:"</span>, s2
+  handle_worker(sys, w1, master, <span class="num">101</span>)
+  handle_worker(sys, w2, master, <span class="num">102</span>)
+
+  msg1:ActorMessage
+  msg2:ActorMessage
+  <span class="kw">unsafe</span>:
+    actor.receive(sys, master, &amp;msg1)
+    actor.receive(sys, master, &amp;msg2)
+    <span class="fn">say</span> <span class="str">"Worker 1 HTTP status: "</span>, msg1.arg2
+    <span class="fn">say</span> <span class="str">"Worker 2 HTTP status: "</span>, msg2.arg2
+
+  actor.system_free(sys)
   <span class="kw">ret</span> <span class="num">0</span></pre>
         </div>
 

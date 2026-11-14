@@ -214,10 +214,6 @@ fn matmul_f64(out:*float, a:*float, b:*float, m:int, n:int, k:int) -> int:
     ret 0 - 1
   if _valid_matmul(m, n, k) == 0:
     ret 0 - 1
-
-  rc:int = tezz_ai_matmul_f64(out, a, b, m, n, k)
-  if rc == 0:
-    ret 0
   ret matmul_f64_scalar(out, a, b, m, n, k)
 
 fn matmul_f32_scalar(out:*float, a:*float, b:*float, m:int, n:int, k:int) -> int:
@@ -225,6 +221,13 @@ fn matmul_f32_scalar(out:*float, a:*float, b:*float, m:int, n:int, k:int) -> int
 
 fn matmul_f32(out:*float, a:*float, b:*float, m:int, n:int, k:int) -> int:
   ret matmul_f32_scalar(out, a, b, m, n, k)
+
+fn _u16_get(p:*u16, idx:int) -> int:
+  unsafe:
+    bp:*u8 = p as *u8
+    b0:int = bp[idx * 2] as int
+    b1:int = bp[idx * 2 + 1] as int
+    ret (b0 & 255) | ((b1 & 255) << 8)
 
 fn matmul_f16_f32_scalar(out:*float, a:*u16, b:*u16, m:int, n:int, k:int) -> int:
   if out == 0 as *float || a == 0 as *u16 || b == 0 as *u16:
@@ -239,11 +242,8 @@ fn matmul_f16_f32_scalar(out:*float, a:*u16, b:*u16, m:int, n:int, k:int) -> int
       acc:float = 0.0
       p:int = 0
       while p < k:
-        av:float = 0.0
-        bv:float = 0.0
-        unsafe:
-          av = f16_to_f32_bits(a[row * k + p])
-          bv = f16_to_f32_bits(b[p * n + col])
+        av:float = f16_to_f32_bits(_u16_get(a, row * k + p))
+        bv:float = f16_to_f32_bits(_u16_get(b, p * n + col))
         acc = acc + av * bv
         p = p + 1
       unsafe:
@@ -268,11 +268,8 @@ fn matmul_bf16_f32_scalar(out:*float, a:*u16, b:*u16, m:int, n:int, k:int) -> in
       acc:float = 0.0
       p:int = 0
       while p < k:
-        av:float = 0.0
-        bv:float = 0.0
-        unsafe:
-          av = bf16_to_f32_bits(a[row * k + p])
-          bv = bf16_to_f32_bits(b[p * n + col])
+        av:float = bf16_to_f32_bits(_u16_get(a, row * k + p))
+        bv:float = bf16_to_f32_bits(_u16_get(b, p * n + col))
         acc = acc + av * bv
         p = p + 1
       unsafe:
@@ -283,6 +280,14 @@ fn matmul_bf16_f32_scalar(out:*float, a:*u16, b:*u16, m:int, n:int, k:int) -> in
 
 fn matmul_bf16_f32(out:*float, a:*u16, b:*u16, m:int, n:int, k:int) -> int:
   ret matmul_bf16_f32_scalar(out, a, b, m, n, k)
+
+fn _i8_get(p:*i8, idx:int) -> int:
+  unsafe:
+    cp:*char = p as *char
+    val:int = cp[idx] as int
+    if val >= 128:
+      ret val - 256
+    ret val
 
 fn matmul_i8_f64_scalar(out:*float, a:*float, b:*i8, scales:*float, m:int, n:int, k:int) -> int:
   if out == 0 as *float || a == 0 as *float || b == 0 as *i8:
@@ -305,7 +310,7 @@ fn matmul_i8_f64_scalar(out:*float, a:*float, b:*i8, scales:*float, m:int, n:int
         q:int = 0
         unsafe:
           av = a[row * k + p]
-          q = b[p * n + col] as int
+        q = _i8_get(b, p * n + col)
         acc = acc + av * ((q as float) * scale)
         p = p + 1
       unsafe:
@@ -319,10 +324,6 @@ fn matmul_i8_f64(out:*float, a:*float, b:*i8, scales:*float, m:int, n:int, k:int
     ret 0 - 1
   if _valid_matmul(m, n, k) == 0:
     ret 0 - 1
-
-  rc:int = tezz_ai_matmul_i8_f64(out, a, b, scales, m, n, k)
-  if rc == 0:
-    ret 0
   ret matmul_i8_f64_scalar(out, a, b, scales, m, n, k)
 
 fn matmul_u8_f64_scalar(out:*float, a:*float, b:*u8, scales:*float, zero_points:*int, m:int, n:int, k:int) -> int:
@@ -446,10 +447,6 @@ fn rmsnorm_rows_f64(out:*float, x:*float, weight:*float, rows:int, cols:int, eps
     ret 0 - 1
   if _valid_rows_cols(rows, cols) == 0:
     ret 0 - 1
-
-  rc:int = tezz_ai_rmsnorm_rows_f64(out, x, weight, rows, cols, eps)
-  if rc == 0:
-    ret 0
   ret rmsnorm_rows_f64_scalar(out, x, weight, rows, cols, eps)
 
 fn rmsnorm_rows_f32_scalar(out:*float, x:*float, weight:*float, rows:int, cols:int, eps:float) -> int:
@@ -510,10 +507,6 @@ fn softmax_rows_f64(out:*float, x:*float, rows:int, cols:int) -> int:
     ret 0 - 1
   if _valid_rows_cols(rows, cols) == 0:
     ret 0 - 1
-
-  rc:int = tezz_ai_softmax_rows_f64(out, x, rows, cols)
-  if rc == 0:
-    ret 0
   ret softmax_rows_f64_scalar(out, x, rows, cols)
 
 fn softmax_rows_f32_scalar(out:*float, x:*float, rows:int, cols:int) -> int:
@@ -561,10 +554,6 @@ fn rope_f64(q:*float, k:*float, pos:int, dim:int, base:float) -> int:
   if dim <= 0 || (dim & 1) != 0:
     ret 0 - 1
   if pos == 0:
-    ret 0
-
-  rc:int = tezz_ai_rope_f64(q, k, pos, dim, base)
-  if rc == 0:
     ret 0
   ret rope_f64_scalar(q, k, pos, dim, base)
 

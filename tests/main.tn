@@ -1,0 +1,35 @@
+// Concurrent Worker Tasks & Network Status in TezzNative
+import "actor"
+import "net"
+
+fn handle_worker(sys:*ActorSystem, worker_id:int, master_id:int, uid:int) -> int:
+  say "Spawning worker task for UID: ", uid
+  resp:str = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"user\":\"ok\"}"
+  status:int = net.http_status_code(resp)
+  // Send status back to master actor mailbox
+  ret actor.send_from(sys, worker_id, master_id, 1, uid, status, 0, 0, "ok")
+
+fn main() -> int:
+  say "Spawning concurrent worker tasks..."
+  sys:*ActorSystem = actor.system_new(4, 4, 1)
+  if sys == 0:
+    ret 1
+
+  master:int = actor.spawn(sys, "master")
+  w1:int = actor.spawn(sys, "worker-1")
+  w2:int = actor.spawn(sys, "worker-2")
+
+  handle_worker(sys, w1, master, 101)
+  handle_worker(sys, w2, master, 102)
+
+  msg1:ActorMessage
+  msg2:ActorMessage
+  unsafe:
+    actor.receive(sys, master, &msg1)
+    actor.receive(sys, master, &msg2)
+
+  say "Task 1 (UID ", msg1.tag, ") HTTP status: ", msg1.a
+  say "Task 2 (UID ", msg2.tag, ") HTTP status: ", msg2.a
+
+  actor.system_free(sys)
+  ret 0

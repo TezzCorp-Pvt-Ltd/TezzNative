@@ -35,6 +35,7 @@ benchmarks/results/**
 !.github/workflows/conformance.yml
 !.github/workflows/release-security.yml
 !tests/
+!tests/*.tn
 !tests/conformance/
 !tests/conformance/**
 !tests/gui/
@@ -45,6 +46,7 @@ benchmarks/results/**
 !tools/tezz.tn
 !tools/tezz_lsp.tn
 !tools/resolve_hashes.py
+!tools/package_distributed_sdk.py
 !tools/tezz_lib.py
 !tools/release/
 !tools/release/**
@@ -87,4 +89,38 @@ TezzCorp_WebSites/tn_tezzcorp_com/storage/**
 TezzCorp_WebSites/tn_tezzcorp_com/tezznative_source_backup.tar.gz
 TezzCorp_WebSites/tn_tezzcorp_com/*source_backup*
 
+# Temporary scratch scripts, logs, and artifacts
+scratch/
+scratch/**
+temp/
+tmp/
+*.tmp
+*.obj
+*.o
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.log
+tests/*.exe
+benchmarks/*.exe
+examples/**/*.exe
+
+# Editor & OS artifacts
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Credentials & Sensitive Files
 ssh.txt
+*ssh*.txt
+*pass*.cmd
+*pass*.bat
+*pass*.ps1
+*.pem
+*.key
+*.env
+*.env.*

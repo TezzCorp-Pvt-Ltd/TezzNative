@@ -211,14 +211,11 @@ fn tensor_new(rows:int, cols:int) -> TensorData:
   if t.size <= 0:
     t.data = 0 as *float
     ret t
-  raw:*char = malloc(t.size * 8)
-  t.data = raw as *float
-  // SIMD bulk zero fill
+  unsafe:
+    raw:*char = malloc(t.size * 8)
+    t.data = raw as *float
+  // Bulk zero fill
   i:int = 0
-  lim:int = t.size - (t.size % 8)
-  while i < lim:
-    simd.v8f_zero(t.data + i)
-    i = i + 8
   while i < t.size:
     unsafe:
       t.data[i] = 0.0
@@ -228,7 +225,8 @@ fn tensor_new(rows:int, cols:int) -> TensorData:
 // Free tensor memory
 fn tensor_free(t:TensorData) -> int:
   if t.data != 0 as *float:
-    free(t.data)
+    unsafe:
+      free(t.data as *char)
   ret 0
 
 // Fast hardware-accelerated matrix multiplication (dot product)

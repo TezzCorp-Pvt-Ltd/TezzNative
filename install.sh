@@ -198,6 +198,41 @@ remove_install() {
   rm -f "$BIN_DIR/tezz" "$BIN_DIR/tezzc"
 }
 
+detect_arch() {
+  local m
+  m="$(uname -m 2>/dev/null || echo "x86_64")"
+  case "$m" in
+    x86_64|amd64) echo "x64" ;;
+    aarch64|arm64) echo "arm64" ;;
+    armv7l|armv8l) echo "arm" ;;
+    i386|i686) echo "x86" ;;
+    *) echo "$m" ;;
+  esac
+}
+
+find_tezzc_binary() {
+  local sdk_root="${1:-$SDK_DIR}"
+  local arch
+  arch="$(detect_arch)"
+  if [[ "$arch" == "arm64" && -x "$sdk_root/bin/tezzc-linux-arm64" ]]; then
+    echo "$sdk_root/bin/tezzc-linux-arm64"
+    return 0
+  fi
+  if [[ -x "$sdk_root/bin/tezzc-linux-x64" ]]; then
+    echo "$sdk_root/bin/tezzc-linux-x64"
+    return 0
+  fi
+  if [[ -x "$sdk_root/bin/tezzc" ]]; then
+    echo "$sdk_root/bin/tezzc"
+    return 0
+  fi
+  if [[ -x "$sdk_root/tezzc" ]]; then
+    echo "$sdk_root/tezzc"
+    return 0
+  fi
+  return 1
+}
+
 normalize_sdk_layout() {
   local sdk_root="${1:-$SDK_DIR}"
   mkdir -p "$sdk_root/bin"
@@ -209,6 +244,7 @@ normalize_sdk_layout() {
   fi
   chmod +x "$sdk_root/tezz" 2>/dev/null || true
   chmod +x "$sdk_root/bin/tezzc-linux-x64" 2>/dev/null || true
+  chmod +x "$sdk_root/bin/tezzc-linux-arm64" 2>/dev/null || true
 }
 
 assert_sdk_integrity() {
@@ -221,7 +257,6 @@ assert_sdk_integrity() {
     "$sdk_root/tools/probes/tls_connect_ex_probe.tn"
     "$sdk_root/lib/std.tn"
     "$sdk_root/lib/io.tn"
-    "$sdk_root/bin/tezzc-linux-x64"
   )
   for item in "${required[@]}"; do
     if [[ ! -e "$item" ]]; then
@@ -229,6 +264,10 @@ assert_sdk_integrity() {
       missing=1
     fi
   done
+  if ! find_tezzc_binary "$sdk_root" >/dev/null 2>&1; then
+    echo "missing SDK file: compiler binary (tezzc-linux-x64 / tezzc-linux-arm64 / tezzc)"
+    missing=1
+  fi
   if [[ $missing -ne 0 ]]; then
     return 1
   fi
@@ -236,26 +275,31 @@ assert_sdk_integrity() {
 }
 
 write_user_profile() {
-  local profile="$HOME/.profile"
-  local temp_profile="$profile.tezznative.$$"
+  local targets=("$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.bash_profile")
   local bin_quoted sdk_quoted
   printf -v bin_quoted '%q' "$BIN_DIR"
   printf -v sdk_quoted '%q' "$SDK_DIR"
-  mkdir -p "$(dirname "$profile")"
-  touch "$profile"
-  awk '
-    $0 == "# >>> TezzNative managed environment >>>" { managed = 1; next }
-    $0 == "# <<< TezzNative managed environment <<<" { managed = 0; next }
-    !managed { print }
-  ' "$profile" > "$temp_profile"
-  {
-    printf '\n# >>> TezzNative managed environment >>>\n'
-    printf 'export PATH=%s:"$PATH"\n' "$bin_quoted"
-    printf 'export TEZZ_SDK_ROOT=%s\n' "$sdk_quoted"
-    printf '# <<< TezzNative managed environment <<<\n'
-  } >> "$temp_profile"
-  chmod --reference="$profile" "$temp_profile" 2>/dev/null || true
-  mv "$temp_profile" "$profile"
+
+  for profile in "${targets[@]}"; do
+    if [[ -e "$profile" || "$profile" == *".profile" || "$profile" == *".bashrc" ]]; then
+      local temp_profile="$profile.tezznative.$$"
+      mkdir -p "$(dirname "$profile")"
+      touch "$profile"
+      awk '
+        $0 == "# >>> TezzNative managed environment >>>" { managed = 1; next }
+        $0 == "# <<< TezzNative managed environment <<<" { managed = 0; next }
+        !managed { print }
+      ' "$profile" > "$temp_profile"
+      {
+        printf '\n# >>> TezzNative managed environment >>>\n'
+        printf 'export PATH=%s:"$PATH"\n' "$bin_quoted"
+        printf 'export TEZZ_SDK_ROOT=%s\n' "$sdk_quoted"
+        printf '# <<< TezzNative managed environment <<<\n'
+      } >> "$temp_profile"
+      chmod --reference="$profile" "$temp_profile" 2>/dev/null || true
+      mv "$temp_profile" "$profile"
+    fi
+  done
 }
 
 write_system_profile() {
@@ -285,11 +329,14 @@ configure_path() {
 }
 
 install_shims() {
+  local tezzc_bin
+  tezzc_bin="$(find_tezzc_binary "$SDK_DIR" || true)"
+
   if [[ -w "$BIN_DIR" ]]; then
     mkdir -p "$BIN_DIR"
     ln -sf "$SDK_DIR/tezz" "$BIN_DIR/tezz"
-    if [[ -x "$SDK_DIR/bin/tezzc-linux-x64" ]]; then
-      ln -sf "$SDK_DIR/bin/tezzc-linux-x64" "$BIN_DIR/tezzc"
+    if [[ -n "$tezzc_bin" && -x "$tezzc_bin" ]]; then
+      ln -sf "$tezzc_bin" "$BIN_DIR/tezzc"
     fi
   else
     if ! command -v sudo >/dev/null 2>&1; then
@@ -298,8 +345,8 @@ install_shims() {
     fi
     sudo install -d "$BIN_DIR"
     sudo ln -sf "$SDK_DIR/tezz" "$BIN_DIR/tezz"
-    if [[ -x "$SDK_DIR/bin/tezzc-linux-x64" ]]; then
-      sudo ln -sf "$SDK_DIR/bin/tezzc-linux-x64" "$BIN_DIR/tezzc"
+    if [[ -n "$tezzc_bin" && -x "$tezzc_bin" ]]; then
+      sudo ln -sf "$tezzc_bin" "$BIN_DIR/tezzc"
     fi
   fi
 }
@@ -473,8 +520,9 @@ install_payload() {
   echo "Bin dir: $BIN_DIR"
   echo ""
   echo "Next steps:"
-  echo "  source ~/.profile"
+  echo "  source ~/.bashrc 2>/dev/null || source ~/.profile (or restart terminal)"
   echo "  tezz --version"
+  echo "  tezzc --version"
   echo "  tezz my_script.tn"
   echo ""
   echo "Executable script mode (Python-like):"

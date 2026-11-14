@@ -1,6 +1,6 @@
 {
     "schema":  "tezznative.release-manifest.v1",
-    "generated_utc":  "2026-11-12T06:32:43Z",
+    "generated_utc":  "2026-11-14T19:30:38Z",
     "project":  "TezzNative",
     "version":  "1.0.0",
     "channel":  "release",
@@ -15,14 +15,14 @@
                       {
                           "path":  "download/install.cmd",
                           "url":  "https://tezznative.org/download/install.cmd",
-                          "bytes":  725,
-                          "sha256":  "351B34E00C1F506ECD55BC3EFA02844615B3ADE5753DB60090F3B342D3C133F7"
+                          "bytes":  746,
+                          "sha256":  "952C0AC5748E7D1F219ABC876965C8A1B763F6B3FA8C6F6FE5EC65FF9B0A27A1"
                       },
                       {
                           "path":  "download/install.ps1",
                           "url":  "https://tezznative.org/download/install.ps1",
-                          "bytes":  26662,
-                          "sha256":  "47F568F4C1946A08E01364D554C4EFF8827E954F65375BD4D739FC096816F1B9"
+                          "bytes":  27324,
+                          "sha256":  "2BEC30790853E9905955B9E4D5F8C7AEC4D07AB297547BECB51C30A4B132EA7A"
                       },
                       {
                           "path":  "download/install.sh",
@@ -33,110 +33,110 @@
                       {
                           "path":  "download/sdk/benchmarks/c/file_io.c",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/c/file_io.c",
-                          "bytes":  1291,
-                          "sha256":  "9D51A45FC3D5977CFD4E2BAE19C2628446FABD9C53F76AB19334DC022E43E314"
+                          "bytes":  1349,
+                          "sha256":  "1BC5CBB584BE46B283B62B0CB773C90DC21013825899068EE04259CC4BBE4B4D"
                       },
                       {
                           "path":  "download/sdk/benchmarks/c/startup.c",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/c/startup.c",
-                          "bytes":  31,
-                          "sha256":  "57B9A643AD8840D8B26E9DECCD86FABA017EBD91037AA4E4124D6005E2E90CF8"
+                          "bytes":  34,
+                          "sha256":  "7162E93A63B81D1B5E9841AFA71BFDB5805B6FC0904E0E14CC75C3FC1BE1BC94"
                       },
                       {
                           "path":  "download/sdk/benchmarks/c/string_scan.c",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/c/string_scan.c",
-                          "bytes":  447,
-                          "sha256":  "1E8470244FD25435E886E3562097C04F7A2BB7356CED9F16CAD14CE888279546"
+                          "bytes":  463,
+                          "sha256":  "ECBA2C2EFEDBB792D9DDE77480E80DEBA97506BF73E1DFD6E597E6C94DB5184C"
                       },
                       {
                           "path":  "download/sdk/benchmarks/c/sum_loop.c",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/c/sum_loop.c",
-                          "bytes":  192,
-                          "sha256":  "542FD79B8883C9508519DD20A91ABD18636F4A57BD2CE01C6C65DCE7DF18F59F"
+                          "bytes":  202,
+                          "sha256":  "8B72AB1D3BF0B86B9FC1B24A42148CEDC09D354E60A82912F9517F288EFA23A0"
                       },
                       {
                           "path":  "download/sdk/benchmarks/go/file_io.go",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/go/file_io.go",
-                          "bytes":  820,
-                          "sha256":  "B85E1276571CC4721BCD89139FBC88851E40ADBD7DA304F8B5F2C1F38782E629"
+                          "bytes":  867,
+                          "sha256":  "E4835F6ABFFDEDBD89570CDF30BBA71A399DE5AE1B51BC14A4C9F634884C4AC2"
                       },
                       {
                           "path":  "download/sdk/benchmarks/go/startup.go",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/go/startup.go",
-                          "bytes":  29,
-                          "sha256":  "55A60BB97151B2B4B680462447CE60EC34511B14FA10D77440C97B9777101566"
+                          "bytes":  32,
+                          "sha256":  "99F7EADF82093565973F5A0DE0326D66D632049326E4A14D93C4D83AF23B8A6B"
                       },
                       {
                           "path":  "download/sdk/benchmarks/go/string_scan.go",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/go/string_scan.go",
-                          "bytes":  275,
-                          "sha256":  "151EA7A678B7679880FFD4E276067D2D648A0420A7A7656DE1EFBDE20A73D7E9"
+                          "bytes":  291,
+                          "sha256":  "F5B531E09F82DC1FCB592691B482FE5FBF62E8B8C1E1F3837E829A7772E6560F"
                       },
                       {
                           "path":  "download/sdk/benchmarks/go/sum_loop.go",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/go/sum_loop.go",
-                          "bytes":  173,
-                          "sha256":  "5B45BACA867169AACE69FC03715DC713E1A6A9838C83E0C9B91D0BED7EACEF9F"
+                          "bytes":  187,
+                          "sha256":  "221FAA73F421314BA660B075879054BC7F8A047A2C003C38BCC882F46CE097D8"
                       },
                       {
                           "path":  "download/sdk/benchmarks/node/file_io.js",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/node/file_io.js",
-                          "bytes":  928,
-                          "sha256":  "5CB788058F0B83AD517B6F896568791AF456CA66C336FCE28DD257383BD00ACC"
+                          "bytes":  966,
+                          "sha256":  "3A082C1866531221A766D79CFC03047EB9E9ABA2AD7F6F8046D69B08923CF0CE"
                       },
                       {
                           "path":  "download/sdk/benchmarks/node/startup.js",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/node/startup.js",
-                          "bytes":  17,
-                          "sha256":  "8BD84068849DB1CF74863FDFF2BC74704C33EFB8FAFE33347274FC758A63B302"
+                          "bytes":  18,
+                          "sha256":  "32FE1A02DE12AA928F56EAA9286809FAF2D28E873E20A4931B4F3AD7753A3345"
                       },
                       {
                           "path":  "download/sdk/benchmarks/node/string_scan.js",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/node/string_scan.js",
-                          "bytes":  277,
-                          "sha256":  "24277BA42A44F60DE1379452C800D0E965D7825C2C257461BAEE6B25D2B62201"
+                          "bytes":  287,
+                          "sha256":  "D7F591E8F801A603355AC697F3F773439DD9FD0992DB814735C5661C039EFC61"
                       },
                       {
                           "path":  "download/sdk/benchmarks/node/sum_loop.js",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/node/sum_loop.js",
-                          "bytes":  150,
-                          "sha256":  "0DA7071F98D8B961A4CA9FBAB262A77FC9A84EF9642B18C675C229C477E91ABA"
+                          "bytes":  158,
+                          "sha256":  "46D1B92675F203F10112A96B272DDD44E51C9DF535E402142D9F179AA402864B"
                       },
                       {
                           "path":  "download/sdk/benchmarks/python/file_io.py",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/python/file_io.py",
-                          "bytes":  712,
-                          "sha256":  "3A9E7B62E6CF60073685F46063284EF631DA407036E58856F76DC9FE22315F14"
+                          "bytes":  742,
+                          "sha256":  "43142D9392854A8FBEC8BEA48764B64F91714425845C5669B754EB82B0F28B96"
                       },
                       {
                           "path":  "download/sdk/benchmarks/python/startup.py",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/python/startup.py",
-                          "bytes":  20,
-                          "sha256":  "0E0E7EAED7CBB486356C6101499FFE3DFBB88D49E884AAA1D604F970FB8C214C"
+                          "bytes":  21,
+                          "sha256":  "E7E1F166C23EBB3F173BBA9B0D8C537E0AC7A91BE03EDC57A44B22E78371330B"
                       },
                       {
                           "path":  "download/sdk/benchmarks/python/string_scan.py",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/python/string_scan.py",
-                          "bytes":  235,
-                          "sha256":  "9B56140BD243802FD08FDE4FA754551F1FCB5B96895C1141F46524BD5A2742B8"
+                          "bytes":  243,
+                          "sha256":  "D44C4AE8DB1F99C1C2567A696F064B9840C924CF29853FB777B8DD3CF8944382"
                       },
                       {
                           "path":  "download/sdk/benchmarks/python/sum_loop.py",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/python/sum_loop.py",
-                          "bytes":  139,
-                          "sha256":  "2153A97074DD2D7CFF07F20F7F39194E38852968CDCBBCA9C4100C304CDF35B4"
+                          "bytes":  147,
+                          "sha256":  "502EB5AE90AE6D5F4FBB17D271C5AE652C68C5EF0C5115510A754BDDFAFCD12F"
                       },
                       {
                           "path":  "download/sdk/benchmarks/README.md",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/README.md",
-                          "bytes":  1350,
-                          "sha256":  "4908B563F2149FFA46D837026FCD66F55BAA0E74A7938360C8F0A206515A8133"
+                          "bytes":  1395,
+                          "sha256":  "556370D305894BB7730AFE5292B5C0A660C42BFC480327E136C072202FBB34C9"
                       },
                       {
                           "path":  "download/sdk/benchmarks/run.ps1",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/run.ps1",
-                          "bytes":  15166,
-                          "sha256":  "95E858B46E27C6CA08455D313C96E75077BB7ABE89CBC493E87BEDBC331AEA7E"
+                          "bytes":  15625,
+                          "sha256":  "04FB097AF31762357626D9F02D15D0B11F17CED3B8AF36E8451EE132095915C1"
                       },
                       {
                           "path":  "download/sdk/benchmarks/run.sh",
@@ -147,50 +147,50 @@
                       {
                           "path":  "download/sdk/benchmarks/rust/file_io.rs",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/rust/file_io.rs",
-                          "bytes":  1024,
-                          "sha256":  "F6C8B51E7DF3E55270A991696F88ECDA2225FDBBCE4A6DF69BDB93276D9F03A1"
+                          "bytes":  1063,
+                          "sha256":  "4B384AC0FF071FF32DF604A8837FA87CE7AD1DE2F53A160D1D2CE58650BC768F"
                       },
                       {
                           "path":  "download/sdk/benchmarks/rust/startup.rs",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/rust/startup.rs",
-                          "bytes":  13,
-                          "sha256":  "536E506BB90914C243A12B397B9A998F85AE2CBD9BA02DFD03A9E155CA5CA0F4"
+                          "bytes":  14,
+                          "sha256":  "787B0EB17F2AFD20FC0DE9616EC721B3A8C76D8E37638499B1709510B377C1FA"
                       },
                       {
                           "path":  "download/sdk/benchmarks/rust/string_scan.rs",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/rust/string_scan.rs",
-                          "bytes":  338,
-                          "sha256":  "A69C5307714D10041019204BC7A3821AD8F914269FA8660F7708752D49B1676E"
+                          "bytes":  350,
+                          "sha256":  "CA7212F10022D99AB9035AB15A2E2722BE96F6F97B9CEF2E9F363F6A8A0BE578"
                       },
                       {
                           "path":  "download/sdk/benchmarks/rust/sum_loop.rs",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/rust/sum_loop.rs",
-                          "bytes":  204,
-                          "sha256":  "CD3F9E31F04250BE048B09FD67E969B0CBC446DE703DFA94A695B5A1C99FAD7B"
+                          "bytes":  214,
+                          "sha256":  "3FD5A8A553A3FAD51C43919DCBB8132AC8BBE8D92FE031C8D60AE665B3CD03AA"
                       },
                       {
                           "path":  "download/sdk/benchmarks/tezz/file_io.tn",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/tezz/file_io.tn",
-                          "bytes":  1310,
-                          "sha256":  "918E5C9F2077BA0351CBEC55875517C33B5372607D33859975655C6C5BF07B35"
+                          "bytes":  1378,
+                          "sha256":  "8FA6EEC60C5AE95EAB82D010E4F76FB68D101F177C604EECFA1069069A2B1092"
                       },
                       {
                           "path":  "download/sdk/benchmarks/tezz/startup.tn",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/tezz/startup.tn",
-                          "bytes":  26,
-                          "sha256":  "B26D9DCD240FBC2985A9D4BA88BBB85148108562601A97976E7FCE461341AABB"
+                          "bytes":  28,
+                          "sha256":  "B8B0F359744CE7FCD01059AA12EC8307CAD168EB5DF711BADB37E981BCDA959E"
                       },
                       {
                           "path":  "download/sdk/benchmarks/tezz/string_scan.tn",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/tezz/string_scan.tn",
-                          "bytes":  390,
-                          "sha256":  "EC321759F463F79086C82C1B5F5150362CFBA7C1B3B7980482E878444F021E7F"
+                          "bytes":  408,
+                          "sha256":  "8535843722486AA59709D4289246DA3FF15CF5B2294F95D38E4185DFD2DAC106"
                       },
                       {
                           "path":  "download/sdk/benchmarks/tezz/sum_loop.tn",
                           "url":  "https://tezznative.org/download/sdk/benchmarks/tezz/sum_loop.tn",
-                          "bytes":  175,
-                          "sha256":  "1BAEB54A3421990EE4D3FC47D642983CE03543401A9E353D66B06FD9A59EB9E9"
+                          "bytes":  185,
+                          "sha256":  "5501992DF959223D416585D9A706FB7E98E5ADF3C867C6D7F83D2B5793D4C98F"
                       },
                       {
                           "path":  "download/sdk/bin/tezzc.exe",
@@ -213,140 +213,140 @@
                       {
                           "path":  "download/sdk/docs/BENCHMARKS.md",
                           "url":  "https://tezznative.org/download/sdk/docs/BENCHMARKS.md",
-                          "bytes":  3365,
-                          "sha256":  "11C3B8D8C7BBF0B1DF78A202AD9018CAD028CED373030C776A31B536E6734719"
+                          "bytes":  3464,
+                          "sha256":  "D641D1A2932D06F0C6B28F1AC51BC9BA5F8A38B9483D6EB515FFB8A857ACD1B0"
                       },
                       {
                           "path":  "download/sdk/docs/C_ABI.md",
                           "url":  "https://tezznative.org/download/sdk/docs/C_ABI.md",
-                          "bytes":  3093,
-                          "sha256":  "5A11C38B06D7E8D4EFD9C44F884510A0A2EBF0A67DFAB0BA710AC7AD31C617F9"
+                          "bytes":  3193,
+                          "sha256":  "818C9B4F7C7E8C88BBF32FA15F445C04F590A803D4951DEFE5A56A2F029C7F97"
                       },
                       {
                           "path":  "download/sdk/docs/CONFORMANCE.md",
                           "url":  "https://tezznative.org/download/sdk/docs/CONFORMANCE.md",
-                          "bytes":  6024,
-                          "sha256":  "14B98CA05BF164E85E84BCA15FBB4938F3A6F11FAE36DB980FA10B8C674B255C"
+                          "bytes":  6095,
+                          "sha256":  "5538E4C840D3952525DB9AACA5E545DC96FF975EADB842591EE684FB0A422134"
                       },
                       {
                           "path":  "download/sdk/docs/DEVELOPER_EXPERIENCE.md",
                           "url":  "https://tezznative.org/download/sdk/docs/DEVELOPER_EXPERIENCE.md",
-                          "bytes":  2751,
-                          "sha256":  "4D0743B50F6FBB32FD423DFFFAA24B26FDE17140A77ED4DF020583610C333536"
+                          "bytes":  2834,
+                          "sha256":  "6695AC961C610D04140D92F0B77A5BCF75ABCA6FCF6164520DFA569C48B9BD6F"
                       },
                       {
                           "path":  "download/sdk/docs/LLM_PRODUCTION_PATH.md",
                           "url":  "https://tezznative.org/download/sdk/docs/LLM_PRODUCTION_PATH.md",
-                          "bytes":  4387,
-                          "sha256":  "65A4BC5086ABA36B8C1E68977D7DFFD5285968EDA4E09140A14ED5DF0DFA6CFB"
+                          "bytes":  4492,
+                          "sha256":  "660BC035BD5217261FDD4C7EC48C01EE4E5F3E87E7CC51F98CB464A159145414"
                       },
                       {
                           "path":  "download/sdk/docs/NATIVE_BACKEND.md",
                           "url":  "https://tezznative.org/download/sdk/docs/NATIVE_BACKEND.md",
-                          "bytes":  4556,
-                          "sha256":  "C3F2D0BC32BDD902B439E5E8F759F9D26E83C666D1414DB4FEC16ED2DB94241D"
+                          "bytes":  4646,
+                          "sha256":  "61C345A01731483502168FD379AA80CD28E902D3CBBA30FC8C400DBD2CE96B81"
                       },
                       {
                           "path":  "download/sdk/docs/OPTIMIZATION_PLAN.md",
                           "url":  "https://tezznative.org/download/sdk/docs/OPTIMIZATION_PLAN.md",
-                          "bytes":  39561,
-                          "sha256":  "53E4A8CCC9C9950C8AF41A2CAFDACF596658E49F1A0C39B15C1C9C2C862DC25A"
+                          "bytes":  39749,
+                          "sha256":  "6A2CA5278AF3FE3E5CC69CDD5856E3D91B6D8038E0C8F595C5EAD2D78C0EF49D"
                       },
                       {
                           "path":  "download/sdk/docs/PACKAGE_TRUST.md",
                           "url":  "https://tezznative.org/download/sdk/docs/PACKAGE_TRUST.md",
-                          "bytes":  5372,
-                          "sha256":  "03E1EF798618B32218F86239B0CFEABA51388273703A2E0D6AA78358B760E317"
+                          "bytes":  5481,
+                          "sha256":  "02714D0E590F53BFC022C5C208DD27A6A0400E89C3B28107A4E4D98D4AA232FF"
                       },
                       {
                           "path":  "download/sdk/docs/PLATFORM_SUPPORT.md",
                           "url":  "https://tezznative.org/download/sdk/docs/PLATFORM_SUPPORT.md",
-                          "bytes":  5635,
-                          "sha256":  "21A4E05C5FEDFCC193F46B83B77C841887675485823C9675CE1FA57F7D90C0D5"
+                          "bytes":  5701,
+                          "sha256":  "AC306CBC83B840E0E41CD4AB9EB8193744CA076F1E1A05ABF20ED08A447435C7"
                       },
                       {
                           "path":  "download/sdk/docs/PYTHON_BRIDGE.md",
                           "url":  "https://tezznative.org/download/sdk/docs/PYTHON_BRIDGE.md",
-                          "bytes":  2471,
-                          "sha256":  "77B48E2365312010B6161D072D22FF30E5718A2EABA8C0A8AD4B9B7141B407A8"
+                          "bytes":  2548,
+                          "sha256":  "C489F7956EBFF0DCE5D61D0168ACA38363E04D0762E8AA12610EF92C6404499D"
                       },
                       {
                           "path":  "download/sdk/docs/RELEASE_ENGINEERING.md",
                           "url":  "https://tezznative.org/download/sdk/docs/RELEASE_ENGINEERING.md",
-                          "bytes":  1767,
-                          "sha256":  "73F28733F2D6ED1A628E00724CD4E39A3382CDC823E7A3381F8F78CB40812524"
+                          "bytes":  1824,
+                          "sha256":  "7BA2250FF426F041B74CD495A75DDD6FCD4C2EDA6B7380BA8613DDE648A18335"
                       },
                       {
                           "path":  "download/sdk/docs/STABILITY.md",
                           "url":  "https://tezznative.org/download/sdk/docs/STABILITY.md",
-                          "bytes":  6483,
-                          "sha256":  "C3FA4CD22B95708599756F2666E6382344BFAE886FDBD29FF3D47EB4E4C44BE0"
+                          "bytes":  6517,
+                          "sha256":  "B7946E2C652E9E4CD085D88B5D718EE8706FFC44633D7FE138FADD245B79807C"
                       },
                       {
                           "path":  "download/sdk/docs/STDLIB_CORE.md",
                           "url":  "https://tezznative.org/download/sdk/docs/STDLIB_CORE.md",
-                          "bytes":  3398,
-                          "sha256":  "9E4962F4F711252320A6563E0129CA92BD4C40888E5AEC1D72E99362EBABAEBE"
+                          "bytes":  3471,
+                          "sha256":  "172628061AD993667E279C2B10EF0E3A4302B0AC0E62C1E076EC4A1EE3BF2CFE"
                       },
                       {
                           "path":  "download/sdk/docs/STDLIB_INVENTORY.md",
                           "url":  "https://tezznative.org/download/sdk/docs/STDLIB_INVENTORY.md",
-                          "bytes":  6142,
-                          "sha256":  "B3453A7525F0C57FD3AE10C6FCF991170E598B15E8CF254930DF08DEF8C33A3E"
+                          "bytes":  6151,
+                          "sha256":  "2495965B9EBD8157759F768E1E1E0736AF1B5B36DA82BB8BC6097D4D5D0EFCAF"
                       },
                       {
                           "path":  "download/sdk/docs/TRUST_BASELINE.md",
                           "url":  "https://tezznative.org/download/sdk/docs/TRUST_BASELINE.md",
-                          "bytes":  3458,
-                          "sha256":  "406D5035A8112D7D6FA35ED6617298696270CF9BD5D0A4BAEFFBD764C9436115"
+                          "bytes":  3539,
+                          "sha256":  "247CAC190D553776DEE75BFB6C488B1C62703A5037D2E2E05EA5BD71449C17BB"
                       },
                       {
                           "path":  "download/sdk/examples/dx/c_extern_call.tn",
                           "url":  "https://tezznative.org/download/sdk/examples/dx/c_extern_call.tn",
-                          "bytes":  100,
-                          "sha256":  "EABB2E6C8A1CBB8D89B0ABC74FF3B6E436A2532A7DE36BE8D20911947B508D4C"
+                          "bytes":  106,
+                          "sha256":  "AA9AB11B9EB148A4670DBE1D3967192E63915257A53C3D66B95B70814CEDB32B"
                       },
                       {
                           "path":  "download/sdk/examples/dx/cli_flags.tn",
                           "url":  "https://tezznative.org/download/sdk/examples/dx/cli_flags.tn",
-                          "bytes":  244,
-                          "sha256":  "08E85B5A9344F6EFCEFF326BABD6DF5F26F03A2C13C9F3D9E777B970B0D74EE3"
+                          "bytes":  256,
+                          "sha256":  "3039D54BBF6F511B74DF2393CA7614CB777A4CD86BDB7CB0DB8A77F1C6C062AF"
                       },
                       {
                           "path":  "download/sdk/examples/dx/file_read_write.tn",
                           "url":  "https://tezznative.org/download/sdk/examples/dx/file_read_write.tn",
-                          "bytes":  727,
-                          "sha256":  "C638808E0FD983D86137C8AAEF864E4F3C83110C17840F99B7E7CB47902DA157"
+                          "bytes":  767,
+                          "sha256":  "4318053B6A9D653A638F3986B442F5CA18112764258364E6BECCAD116BAD0EC6"
                       },
                       {
                           "path":  "download/sdk/examples/dx/hello.tn",
                           "url":  "https://tezznative.org/download/sdk/examples/dx/hello.tn",
-                          "bytes":  70,
-                          "sha256":  "525B7E5C6E449F292CA45B1041FDFEC6BA1CEA057272E8578AA7F61400E25B80"
+                          "bytes":  75,
+                          "sha256":  "F8A2369A96809C839A9458DEC80DA380AE7206468A0C4B1F455C28965B550F15"
                       },
                       {
                           "path":  "download/sdk/examples/dx/http_request_parse.tn",
                           "url":  "https://tezznative.org/download/sdk/examples/dx/http_request_parse.tn",
-                          "bytes":  348,
-                          "sha256":  "F01638DCFE852444C7C1740E5F636C170E56FA2D66BB5049D1BA81E70BF457E1"
+                          "bytes":  364,
+                          "sha256":  "D28DDF77F9841DB8B5EAC31500D6002488B9410399C4DC522E1F63299D2CF5A3"
                       },
                       {
                           "path":  "download/sdk/examples/dx/http_server_route_once.tn",
                           "url":  "https://tezznative.org/download/sdk/examples/dx/http_server_route_once.tn",
-                          "bytes":  265,
-                          "sha256":  "4169F53B385DD5417F48E90F4ADFD217A80EF02502EA0F34D542BAFAB9A9708F"
+                          "bytes":  275,
+                          "sha256":  "6DF24805F5834D7445BA492BB87A3D471F734829F79CEFC6C4F9389CE8FC8701"
                       },
                       {
                           "path":  "download/sdk/examples/dx/native_build.tn",
                           "url":  "https://tezznative.org/download/sdk/examples/dx/native_build.tn",
-                          "bytes":  204,
-                          "sha256":  "8C7035C61E691A4D036CAB1F627FDCEC2ADA78427F1F428BD3F67BDE4AC53A97"
+                          "bytes":  217,
+                          "sha256":  "45B1C95FA5DEBE42FA543B9C703B2FEF94D713FA392EE357076EBE0BEF681AA3"
                       },
                       {
                           "path":  "download/sdk/examples/dx/tezzdb_small.tn",
                           "url":  "https://tezznative.org/download/sdk/examples/dx/tezzdb_small.tn",
-                          "bytes":  363,
-                          "sha256":  "E5B9E6ACCE1830AF4FE8EB72ED40505BAE7FA187288E3B0EB39D4F9B3426F671"
+                          "bytes":  379,
+                          "sha256":  "CC45085765BF440224B9C10FFB82EDEB0470E1215A457CCA78C21375174399F2"
                       },
                       {
                           "path":  "download/sdk/lib/arena.tn",
@@ -363,8 +363,8 @@
                       {
                           "path":  "download/sdk/lib/llm_core.tn",
                           "url":  "https://tezznative.org/download/sdk/lib/llm_core.tn",
-                          "bytes":  17655,
-                          "sha256":  "68E36F3217E02B2FAFBA23CF81CA2CA3ADF8692BDE2071EA7902ED1D9749D529"
+                          "bytes":  17494,
+                          "sha256":  "6B3231D01EFADEF68F1BB125EDCBFC8E4AAAE919ECC28B5A383DC4F96EECB761"
                       },
                       {
                           "path":  "download/sdk/lib/math.tn",
@@ -381,8 +381,8 @@
                       {
                           "path":  "download/sdk/lib/std.tn",
                           "url":  "https://tezznative.org/download/sdk/lib/std.tn",
-                          "bytes":  4130,
-                          "sha256":  "ADE9E4CB64B3FEE1CAD293C427C9F162AB75A64D24377A516C4AA78B412C71C3"
+                          "bytes":  4330,
+                          "sha256":  "9899613850DD35D7EE4B3E4293770D2BF1819B983435A6C7939FFF2077BB9A96"
                       },
                       {
                           "path":  "download/sdk/lib/str.tn",
@@ -411,8 +411,8 @@
                       {
                           "path":  "download/sdk/tests/conformance/abi/starter_abi.tn",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/abi/starter_abi.tn",
-                          "bytes":  708,
-                          "sha256":  "B02C62E455DFA5DC6A2AEABA7BF9838F0D3BC3E32A8DCB4684D6AF8B76C683B1"
+                          "bytes":  749,
+                          "sha256":  "C2F7D0FDA9F801E334EE440384BA7047C007754458A0D20F0A4179621C21681C"
                       },
                       {
                           "path":  "download/sdk/tests/conformance/dx/diagnostics/actionable_unknown_name.tn",
@@ -429,14 +429,14 @@
                       {
                           "path":  "download/sdk/tests/conformance/dx/fmt/control_flow.formatted.tn",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/dx/fmt/control_flow.formatted.tn",
-                          "bytes":  169,
-                          "sha256":  "6771D1BDFECBEB9ADDF1CDE857581307104B018C510E73EB494DDB41441DB04B"
+                          "bytes":  183,
+                          "sha256":  "E101DB4F7B1B4BE3159E5F42BF00E91CF0F107A5541FE987ACFC6286B4288761"
                       },
                       {
                           "path":  "download/sdk/tests/conformance/dx/fmt/control_flow.input.tn",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/dx/fmt/control_flow.input.tn",
-                          "bytes":  150,
-                          "sha256":  "A92B4A6EAA3DC8689438BDFBBB3E45044730C739EA5C5E88F33286FA9310F9F3"
+                          "bytes":  163,
+                          "sha256":  "63E5333008F17A38439DBB9A5C77556043C5D0C16AB33B018C27EAE30ABBB560"
                       },
                       {
                           "path":  "download/sdk/tests/conformance/dx/lint/shadowed_var.tn",
@@ -459,68 +459,68 @@
                       {
                           "path":  "download/sdk/tests/conformance/native/int_widths.stdout.txt",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/native/int_widths.stdout.txt",
-                          "bytes":  11,
-                          "sha256":  "7FAEFD80E00F94DAD4E61382FAC63EDF41B74388FED74A3FCAD28D4233FF26EF"
+                          "bytes":  12,
+                          "sha256":  "1AD2B43E30AB542EE9BBE909636F08E0FEF5EAC15558C445A1A1FB54FA347275"
                       },
                       {
                           "path":  "download/sdk/tests/conformance/native/int_widths.tn",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/native/int_widths.tn",
-                          "bytes":  986,
-                          "sha256":  "158250061AC9AB89D5939EF11DE37231929A2C100148874AE95F77BF9E793D07"
+                          "bytes":  1047,
+                          "sha256":  "E0ADA01C9633CA743C21752F096320F697AB60620B09B255754BBBA940BB5991"
                       },
                       {
                           "path":  "download/sdk/tests/conformance/native/stdlib_collections_edges.stdout.txt",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/native/stdlib_collections_edges.stdout.txt",
-                          "bytes":  25,
-                          "sha256":  "9CE61795987CD395430131DDB331D72D9F3DEB771F05B00AA752EF9B9310D0F9"
+                          "bytes":  26,
+                          "sha256":  "B6DEA93953887D9853E70F92257566F5B90252280159C998A6E6BB41B98AE21F"
                       },
                       {
                           "path":  "download/sdk/tests/conformance/native/stdlib_collections_edges.tn",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/native/stdlib_collections_edges.tn",
-                          "bytes":  2181,
-                          "sha256":  "2AF87BC3DE707A2482A5633E40FE0227AD0F737D385F922258176A9D38ED4E71"
+                          "bytes":  2285,
+                          "sha256":  "7C3FBF49A81D9BFA59BDDDE01581B3542408FD55BA8AD637FB442014C9DCFBB2"
                       },
                       {
                           "path":  "download/sdk/tests/conformance/native/stdlib_math_edges.stdout.txt",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/native/stdlib_math_edges.stdout.txt",
-                          "bytes":  18,
-                          "sha256":  "9648D5B7BAACED8E937C8ED9834159CFB7C6DAD15EFA5EAC1FC3A89BB1EB9C6C"
+                          "bytes":  19,
+                          "sha256":  "E05FF2FDD68CADDC062E907702C6902A85E3ECCF51A126049B35DDD9A18B518D"
                       },
                       {
                           "path":  "download/sdk/tests/conformance/native/stdlib_math_edges.tn",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/native/stdlib_math_edges.tn",
-                          "bytes":  1031,
-                          "sha256":  "E4D4D042EA1B527596E72DAC8B9E51F0A214C9C677A4E1131172A32E9879708E"
+                          "bytes":  1078,
+                          "sha256":  "B5FAE68A80FF27B3BA39B6587FAF28169B37CED7DCE617758F975B34C4CB43D7"
                       },
                       {
                           "path":  "download/sdk/tests/conformance/parser/invalid/bad_indentation.tn",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/parser/invalid/bad_indentation.tn",
-                          "bytes":  52,
-                          "sha256":  "BAA4BD010E650E66EF78A0986D6ECF3C0D468901D7B28C8D23CC6A88B15B52A6"
+                          "bytes":  56,
+                          "sha256":  "89F508677D9EEA05703D6822D6F38397FDE70359BD68FEAD59AAE813228BC16B"
                       },
                       {
                           "path":  "download/sdk/tests/conformance/parser/valid/comments_and_literals.tn",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/parser/valid/comments_and_literals.tn",
-                          "bytes":  226,
-                          "sha256":  "E9C2A629F6AAFB80E66CA3FD12910C7116790880E7F1399C3024CABBB7FBA227"
+                          "bytes":  240,
+                          "sha256":  "E475D377145A117EC947E5D3CC58AFBA8C2E3F39D4093BA88EDF25E466756E5D"
                       },
                       {
                           "path":  "download/sdk/tests/conformance/python_bridge/hot_math.tn",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/python_bridge/hot_math.tn",
-                          "bytes":  331,
-                          "sha256":  "21C64054B8D6E9796C801657A0957EE1ACFC7796636955C1C338F63CDF986B4C"
+                          "bytes":  352,
+                          "sha256":  "F5CD1F2432381D7C274CCFD7AC7C9689F91A1E94730AF89854D411B12B7D5E10"
                       },
                       {
                           "path":  "download/sdk/tests/conformance/README.md",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/README.md",
-                          "bytes":  3391,
-                          "sha256":  "AD8E0B83AB98E7C2B6A1C3FA8B855441BCBC840DA8B390B17CFDBFA0D9BA7427"
+                          "bytes":  3491,
+                          "sha256":  "62E0608098B4A54244F5B19DA1FC53E8C48B2D4E26C329640CFBDCEB795D047C"
                       },
                       {
                           "path":  "download/sdk/tests/conformance/run.ps1",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/run.ps1",
-                          "bytes":  4321,
-                          "sha256":  "E53C3928AC9789E0F976BA1C17B8D088FA4FE9B298757E4B6B92BA1E4EF11259"
+                          "bytes":  4480,
+                          "sha256":  "3A2614252823914D642E5620A58F01DACE5DD3D4AE3F9F2FEC3A2C4B9D32DF5A"
                       },
                       {
                           "path":  "download/sdk/tests/conformance/run.sh",
@@ -531,8 +531,8 @@
                       {
                           "path":  "download/sdk/tests/conformance/run-abi.ps1",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/run-abi.ps1",
-                          "bytes":  13483,
-                          "sha256":  "0EFA87EE31714A29D8E8959BC898C0CCBFFD5BA0238E7E7BFA000AEDDB46002A"
+                          "bytes":  13863,
+                          "sha256":  "935523ACA707685F7801BF70946CC9920CC8A8E02489B8291842F0DA21BE8A66"
                       },
                       {
                           "path":  "download/sdk/tests/conformance/run-abi.sh",
@@ -555,8 +555,8 @@
                       {
                           "path":  "download/sdk/tests/conformance/run-native-reliability.ps1",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/run-native-reliability.ps1",
-                          "bytes":  5921,
-                          "sha256":  "B8FC87BB2E6FD7BE8526675CF609DA5BFE4E1DD5D614F4228771E5CF2A6EF160"
+                          "bytes":  6123,
+                          "sha256":  "7151AB49D4F1906A1779380CFA36482DA1FD5331C1F81FF3CC0CE25DA05EDB1A"
                       },
                       {
                           "path":  "download/sdk/tests/conformance/run-native-reliability.sh",
@@ -567,8 +567,8 @@
                       {
                           "path":  "download/sdk/tests/conformance/run-native-smoke.ps1",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/run-native-smoke.ps1",
-                          "bytes":  4835,
-                          "sha256":  "B582EE5D800FDD3E7E13BF519EB1A30F422E3C1245FA486543E5F8C4F466F465"
+                          "bytes":  5021,
+                          "sha256":  "7194B746BBA1170D0FDD56FA63690FE56E6C7A4BDF05A58F79481A00972912AD"
                       },
                       {
                           "path":  "download/sdk/tests/conformance/run-native-smoke.sh",
@@ -591,8 +591,8 @@
                       {
                           "path":  "download/sdk/tests/conformance/run-python-bridge.ps1",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/run-python-bridge.ps1",
-                          "bytes":  5226,
-                          "sha256":  "67AC5B1D2975A3C308BDF4968D96EE23C720258069CC29FB80C64E5463CB9416"
+                          "bytes":  5407,
+                          "sha256":  "80496965688CDEFC3FF96CB94374D1370A74EEF51545400151C8669FA81244C2"
                       },
                       {
                           "path":  "download/sdk/tests/conformance/run-python-bridge.sh",
@@ -603,32 +603,32 @@
                       {
                           "path":  "download/sdk/tests/conformance/stdlib/llm_core_f64.tn",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/stdlib/llm_core_f64.tn",
-                          "bytes":  1651,
-                          "sha256":  "57EFA6F9043BBAA6B40348AD9B1F2DF4F34B0FA1658F1477792840BA73121399"
+                          "bytes":  1732,
+                          "sha256":  "73BAC592DFDE7FFAEBFA79A9D770117C3A5D35C466717A74D167280D337396B5"
                       },
                       {
                           "path":  "download/sdk/tests/conformance/stdlib/llm_core_quant_i8.tn",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/stdlib/llm_core_quant_i8.tn",
-                          "bytes":  1938,
-                          "sha256":  "2393ED0C736EE88BFA4EF47A666305503ECBF4FDA153F8AFBAF006C7AA8C0E7F"
+                          "bytes":  2028,
+                          "sha256":  "B5FED1D17D8F38410E055D6001D8A48B727E9C58DA8A85184D1770CA9CE8248B"
                       },
                       {
                           "path":  "download/sdk/tests/conformance/typecheck/invalid/return_type_mismatch.tn",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/typecheck/invalid/return_type_mismatch.tn",
-                          "bytes":  72,
-                          "sha256":  "AFF697FEF6996DDE189485999EBCE9F9EAA00DA1BD8323E2F39CD6158F133074"
+                          "bytes":  77,
+                          "sha256":  "A390058D372F14D426605876754385D9A09178FC520C9342956CCD63C14FCAC2"
                       },
                       {
                           "path":  "download/sdk/tests/conformance/typecheck/valid/functions_and_returns.tn",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/typecheck/valid/functions_and_returns.tn",
-                          "bytes":  190,
-                          "sha256":  "129D71C9E557C8F128FA5E51B25B2ADFD36508970ECC492D6308C20829D87F77"
+                          "bytes":  202,
+                          "sha256":  "8031B0E18E53BD9914D44DC3AD52F23FCE71DAB08C5941D7B799517530DDA708"
                       },
                       {
                           "path":  "download/sdk/tests/conformance/valid/integer_widths.tn",
                           "url":  "https://tezznative.org/download/sdk/tests/conformance/valid/integer_widths.tn",
-                          "bytes":  535,
-                          "sha256":  "4086A58746BCCDC969C7B0901CFFA7FAB544F0768302063444B4E93E130EE153"
+                          "bytes":  558,
+                          "sha256":  "C71835B4DF908E2E09738C972B2445A7B75DFA6877EFD27D56B54A7B87EB7591"
                       },
                       {
                           "path":  "download/sdk/tezz",
@@ -663,8 +663,8 @@
                       {
                           "path":  "download/sdk/tezznative-vscode/snippets/snippets.json",
                           "url":  "https://tezznative.org/download/sdk/tezznative-vscode/snippets/snippets.json",
-                          "bytes":  2204,
-                          "sha256":  "30A757F331045CC9D5041F1C7A799029D25B70840ECDBD38B4C4C5886AEF0052"
+                          "bytes":  2304,
+                          "sha256":  "D057BD85A64BF9E494F6F319A27C64084F5926D1216FCE9899B97111A3FBB49A"
                       },
                       {
                           "path":  "download/sdk/tools/tezz.tn",
@@ -681,8 +681,8 @@
                       {
                           "path":  "download/sdk/version.json",
                           "url":  "https://tezznative.org/download/sdk/version.json",
-                          "bytes":  266,
-                          "sha256":  "A541337899F50B3E98AB23B8156FB42D405E87FDFC0B45362C8889E4C19678FC"
+                          "bytes":  276,
+                          "sha256":  "59C3D2CBFF82A7EF334E8256FBB4372AFB9E9ADD2DFB48E6C5EBF8334A7419C6"
                       },
                       {
                           "path":  "download/tezzc-linux-x64.gz",
@@ -699,32 +699,32 @@
                       {
                           "path":  "download/tezznative-sdk.zip",
                           "url":  "https://tezznative.org/download/tezznative-sdk.zip",
-                          "bytes":  2237961,
-                          "sha256":  "480316F9B42CD9214A0B37E8E673C8A779585F46881CD9BA4AF157F2CA818643"
+                          "bytes":  2155980,
+                          "sha256":  "65DF82CB3F5A71304C7E6296F60576AD1FE740AC07D2FD6C179DB35EF9CF3068"
                       },
                       {
                           "path":  "download/tezznative-sdk.zip.sha256",
                           "url":  "https://tezznative.org/download/tezznative-sdk.zip.sha256",
                           "bytes":  86,
-                          "sha256":  "66B6002A33BF5D398FC39F37283C59244996C66DBA243468055833E10D19FBCF"
+                          "sha256":  "F2F4CAE9ABDAC520AE302D6AFB9ADC4E11341DB77BEC5C25503BD25D2EB4915F"
                       },
                       {
                           "path":  "download/tezznative-sdk-linux.tar.gz",
                           "url":  "https://tezznative.org/download/tezznative-sdk-linux.tar.gz",
-                          "bytes":  6791697,
-                          "sha256":  "399DE08B6DE1B4589DB2EC9F3AC6287E94A6C44D210C552CCD65CE086DEEE52C"
+                          "bytes":  6796737,
+                          "sha256":  "34CC21A458695AA3E48683FF301ED5D575BF19B17825B529FE4957CA7B4F9476"
                       },
                       {
                           "path":  "download/tezznative-sdk-linux.tar.gz.sha256",
                           "url":  "https://tezznative.org/download/tezznative-sdk-linux.tar.gz.sha256",
                           "bytes":  95,
-                          "sha256":  "21441A0D0946B3F120155497CC0D63B7F1867CB42BF1E04760FBC616ADE4CFEE"
+                          "sha256":  "17C08F1401F140833FFC6EEA59D6576E211896BD7BA4D70832F15224FD6B71A6"
                       },
                       {
                           "path":  "registry.tnx",
                           "url":  "https://tezznative.org/registry.tnx",
                           "bytes":  4445,
-                          "sha256":  "359F566A57C3DE6E25EAE74763FB8A07C8FD88B1A2D047108A308681C44DA200"
+                          "sha256":  "FE9ED7A0F2FF89233B79E56B94F4D97052B5B792FC7FDDD58472DEBB415E359F"
                       }
                   ]
 }

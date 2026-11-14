@@ -233,6 +233,8 @@ function Remove-Install {
     Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $dir "tezz.cmd")
     Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $dir "tezz.ps1")
     Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $dir "tezzc.cmd")
+    Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $dir "tezzc.ps1")
+    Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $dir "tezzc.exe")
     Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $dir "tezz.exe")
   }
 
@@ -357,11 +359,14 @@ function Install-Shims {
   $cmdShim = "@echo off`r`nset `"TEZZ_SDK_ROOT=$SdkDir`"`r`nset `"TEZZC=$tezzcExe`"`r`n`"$SdkDir\tezz.cmd`" %*`r`n"
   $psShim = "`$env:TEZZ_SDK_ROOT = `"$SdkDir`"`r`n`$env:TEZZC = `"$tezzcExe`"`r`n& `"$SdkDir\tezz.ps1`" @args`r`n"
   $tezzcShim = "@echo off`r`n`"$tezzcExe`" %*`r`n"
+  $tezzcPsShim = "& `"$tezzcExe`" @args`r`n"
 
   foreach ($dir in @($primaryBin, $userBin)) {
     Set-Content -Path (Join-Path $dir "tezz.cmd") -Value $cmdShim -Encoding ASCII
     Set-Content -Path (Join-Path $dir "tezz.ps1") -Value $psShim -Encoding ASCII
     Set-Content -Path (Join-Path $dir "tezzc.cmd") -Value $tezzcShim -Encoding ASCII
+    Set-Content -Path (Join-Path $dir "tezzc.ps1") -Value $tezzcPsShim -Encoding ASCII
+    Copy-Item -Path $tezzcExe -Destination (Join-Path $dir "tezzc.exe") -Force -ErrorAction SilentlyContinue
     Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $dir "tezz.exe")
   }
 
@@ -391,6 +396,8 @@ if (Test-Path `$installerScript) {
     Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path `$d "tezz.cmd")
     Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path `$d "tezz.ps1")
     Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path `$d "tezzc.cmd")
+    Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path `$d "tezzc.ps1")
+    Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path `$d "tezzc.exe")
     Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path `$d "tezz.exe")
   }
   Remove-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\TezzNative" -Recurse -Force -ErrorAction SilentlyContinue
@@ -605,7 +612,9 @@ function Install-Payload {
   Write-Host "Version:      $effectiveVer"
   Write-Host ""
   Write-Host "Next steps:"
+  Write-Host "  Restart your terminal or run: `$env:Path = [System.Environment]::GetEnvironmentVariable('Path','User')"
   Write-Host "  tezz --version"
+  Write-Host "  tezzc --version"
   Write-Host "  tezz init my-project"
   Write-Host "  tezz run hello.tn"
   Write-Host ""
