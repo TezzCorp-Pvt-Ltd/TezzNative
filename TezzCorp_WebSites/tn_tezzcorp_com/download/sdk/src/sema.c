@@ -100,6 +100,8 @@ static int is_i64(TypeEnv* E, Type* t){ return t==E->b.ty_i64 || (t && t->k==TY_
 static int is_int(TypeEnv* E, Type* t){ (void)E; return type_is_int(t); }
 static int is_u8 (TypeEnv* E, Type* t){ return t==E->b.ty_u8  || (t && t->k==TY_U8 ); }
 static int is_f64(TypeEnv* E, Type* t){ return t==E->b.ty_f64 || (t && t->k==TY_F64); }
+static inline int is_f32(TypeEnv* E, Type* t){ return t==E->b.ty_f32 || (t && t->k==TY_F32); }
+static int is_float(TypeEnv* E, Type* t){ (void)E; return type_is_float(t); }
 static int is_num(TypeEnv* E, Type* t){ (void)E; return type_is_numeric(t); }
 static int is_ptr(Type* t){ return t && t->k==TY_PTR; }
 static int is_array(Type* t){ return t && t->k==TY_ARRAY; }
@@ -360,6 +362,11 @@ static void validate_decl_attrs(const Attr* attrs, int n, SrcLoc loc){
 static int abi_c_type_ok(Type* t, int in_struct){
   if(!t) return 0;
   switch(t->k){
+    case TY_F8_E4M3:
+    case TY_F8_E5M2:
+    case TY_F16:
+    case TY_BF16:
+    case TY_F32:
     case TY_F64:
       return 1;
     case TY_VOID:
@@ -2062,11 +2069,16 @@ static void type_bin(TypeEnv* tenv, Expr* e){
     e->ty = tenv->b.ty_f64;
     return;
   }
+  if((e->bin.a && is_float(tenv, e->bin.a->ty)) || (e->bin.b && is_float(tenv, e->bin.b->ty))){
+    e->ty = tenv->b.ty_f32;
+    return;
+  }
   e->ty = tenv->b.ty_i64;
 }
 
 static void type_un(TypeEnv* tenv, Expr* e){
   if(e->un.e && is_f64(tenv, e->un.e->ty)) e->ty = tenv->b.ty_f64;
+  else if(e->un.e && is_float(tenv, e->un.e->ty)) e->ty = tenv->b.ty_f32;
   else e->ty = tenv->b.ty_i64;
 }
 
@@ -2166,7 +2178,7 @@ static void sema_call(ModuleGraph* G, TypeEnv* tenv, Module* curM, FnDecl* curF,
           for(int i=0;i<call->call.argc;i++){
             Expr* a = call->call.args[i];
             if(expr_is_stringy(tenv, a)) continue;
-            if(a && is_f64(tenv, a->ty)) continue;
+            if(a && type_is_float(a->ty)) continue;
             require_assignable(tenv, a->loc, tenv->b.ty_i64, a);
           }
           call->ty = tenv->b.ty_i64;
@@ -2886,8 +2898,28 @@ static void require_assignable(TypeEnv* E, SrcLoc loc, Type* dst, Expr* rhs){
   // allow pointer-to-pointer assignment (C-style)
   if(dst->k==TY_PTR && rhs->ty && rhs->ty->k==TY_PTR) return;
 
-  // int -> float
-  if(is_f64(E, dst) && is_num(E, rhs->ty)) return;
+  // numeric -> float (widening, narrowing, int -> float)
+  if(type_is_float(dst) && is_num(E, rhs->ty)) return;
+
+  // Array literal element-wise compatibility: [T; N] initialized from [e1, e2, ...]
+  if(dst->k==TY_ARRAY && rhs->k==EX_ARRAY_LIT && dst->elem){
+    if(dst->len == (long long)rhs->arr.n){
+      int all_ok = 1;
+      for(int i=0; i<rhs->arr.n; i++){
+        Type* itype = rhs->arr.items[i]->ty;
+        if(!itype){ all_ok = 0; break; }
+        if(type_eq(dst->elem, itype)) continue;
+        if(is_int(E, dst->elem) && is_int(E, itype)) continue;
+        if(type_is_float(dst->elem) && is_num(E, itype)) continue;
+        all_ok = 0;
+        break;
+      }
+      if(all_ok){
+        rhs->ty = dst;
+        return;
+      }
+    }
+  }
 
   // EX_STR (*u8) into *u8
   if(rhs->k==EX_STR && is_ptr_to_u8(E, dst)) return;

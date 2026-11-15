@@ -1330,7 +1330,7 @@ static void emit_setcc(CodeBuf* cb, int cc){
 static void emit_movzx_eax_al(CodeBuf* cb){ cb_emit(cb, "\x0F\xB6\xC0", 3); }
 
 static void emit_fbin(CodeBuf* cb, int op){
-  // xmm0 op xmm1 -> xmm0
+  // xmm0 op xmm1 -> xmm0 (scalar double)
   cb_emit(cb, "\xF2", 1);
   cb_emit1(cb, 0x0F);
   switch(op){
@@ -1343,16 +1343,50 @@ static void emit_fbin(CodeBuf* cb, int op){
   emit_modrm(cb, 3, 0, 1);
 }
 
+static void emit_fbin32(CodeBuf* cb, int op){
+  // xmm0 op xmm1 -> xmm0 (scalar single)
+  cb_emit(cb, "\xF3", 1);
+  cb_emit1(cb, 0x0F);
+  switch(op){
+    case 0: cb_emit1(cb, 0x58); break; // addss
+    case 1: cb_emit1(cb, 0x5C); break; // subss
+    case 2: cb_emit1(cb, 0x59); break; // mulss
+    case 3: cb_emit1(cb, 0x5E); break; // divss
+    default: cb_emit1(cb, 0x58); break;
+  }
+  emit_modrm(cb, 3, 0, 1);
+}
+
 static void emit_ucomisd(CodeBuf* cb){
   cb_emit(cb, "\x66\x0F\x2E\xC1", 4); // ucomisd xmm0,xmm1
+}
+
+static void emit_ucomiss(CodeBuf* cb){
+  cb_emit(cb, "\x0F\x2E\xC1", 3); // ucomiss xmm0,xmm1
 }
 
 static void emit_cvtsi2sd(CodeBuf* cb){
   cb_emit(cb, "\xF2\x0F\x2A\xC0", 4); // cvtsi2sd xmm0, rax
 }
 
+static void emit_cvtsi2ss(CodeBuf* cb){
+  cb_emit(cb, "\xF3\x48\x0F\x2A\xC0", 5); // cvtsi2ss xmm0, rax
+}
+
 static void emit_cvttsd2si(CodeBuf* cb){
   cb_emit(cb, "\xF2\x0F\x2C\xC0", 4); // cvttsd2si rax, xmm0
+}
+
+static void emit_cvttss2si(CodeBuf* cb){
+  cb_emit(cb, "\xF3\x48\x0F\x2C\xC0", 5); // cvttss2si rax, xmm0
+}
+
+static void emit_cvtss2sd(CodeBuf* cb){
+  cb_emit(cb, "\xF3\x0F\x5A\xC0", 4); // cvtss2sd xmm0, xmm0
+}
+
+static void emit_cvtsd2ss(CodeBuf* cb){
+  cb_emit(cb, "\xF2\x0F\x5A\xC0", 4); // cvtsd2ss xmm0, xmm0
 }
 
 static void emit_mov_rcx_imm32(CodeBuf* cb, int32_t imm){
@@ -1987,6 +2021,11 @@ static LsraInterval* lsra_compute_ranges(IRFunc* F, int nreg) {
     if(in->op==I_ICONST || in->op==I_FCONST || in->op==I_MOV ||
        in->op==I_BIN   || in->op==I_FBIN   || in->op==I_CMP ||
        in->op==I_FCMP  || in->op==I_I2F    || in->op==I_F2I ||
+       in->op==I_F32_TO_F64 || in->op==I_F64_TO_F32 ||
+       in->op==I_BF16_TO_F32 || in->op==I_F32_TO_BF16 ||
+       in->op==I_F16_TO_F32  || in->op==I_F32_TO_F16 ||
+       in->op==I_F8_TO_F32   || in->op==I_F32_TO_F8 ||
+       in->op==I_F8_E5M2_TO_F32 || in->op==I_F32_TO_F8_E5M2 ||
        in->op==I_CALL  || in->op==I_CALLPTR|| in->op==I_GEP ||
        in->op==I_LOAD  || in->op==I_SCONST || in->op==I_ADDRSYM){
       def = in->a;
@@ -2000,7 +2039,12 @@ static LsraInterval* lsra_compute_ranges(IRFunc* F, int nreg) {
     if(in->op==I_BIN || in->op==I_FBIN || in->op==I_CMP || in->op==I_FCMP){
       MARK_USE(in->b); MARK_USE(in->c);
     }
-    if(in->op==I_MOV || in->op==I_I2F || in->op==I_F2I){
+    if(in->op==I_MOV || in->op==I_I2F || in->op==I_F2I ||
+       in->op==I_F32_TO_F64 || in->op==I_F64_TO_F32 ||
+       in->op==I_BF16_TO_F32 || in->op==I_F32_TO_BF16 ||
+       in->op==I_F16_TO_F32  || in->op==I_F32_TO_F16 ||
+       in->op==I_F8_TO_F32   || in->op==I_F32_TO_F8 ||
+       in->op==I_F8_E5M2_TO_F32 || in->op==I_F32_TO_F8_E5M2){
       MARK_USE(in->b);
     }
     if(in->op==I_STORE){ MARK_USE(in->a); MARK_USE(in->b); }
@@ -2635,19 +2679,30 @@ static int lower_func_x64(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
       case I_FBIN:
         ra_load_xmm(cb, 0, in->b, vreg_to_mreg, nreg);
         ra_load_xmm(cb, 1, in->c, vreg_to_mreg, nreg);
-        switch(in->fop){
-          case F_ADD: emit_fbin(cb, 0); break;
-          case F_SUB: emit_fbin(cb, 1); break;
-          case F_MUL: emit_fbin(cb, 2); break;
-          case F_DIV: emit_fbin(cb, 3); break;
-          default: emit_fbin(cb, 0); break;
+        if(in->size == 4){
+          switch(in->fop){
+            case F_ADD: emit_fbin32(cb, 0); break;
+            case F_SUB: emit_fbin32(cb, 1); break;
+            case F_MUL: emit_fbin32(cb, 2); break;
+            case F_DIV: emit_fbin32(cb, 3); break;
+            default: emit_fbin32(cb, 0); break;
+          }
+        } else {
+          switch(in->fop){
+            case F_ADD: emit_fbin(cb, 0); break;
+            case F_SUB: emit_fbin(cb, 1); break;
+            case F_MUL: emit_fbin(cb, 2); break;
+            case F_DIV: emit_fbin(cb, 3); break;
+            default: emit_fbin(cb, 0); break;
+          }
         }
         ra_store_xmm(cb, in->a, 0, vreg_to_mreg, nreg);
         break;
       case I_FCMP:
         ra_load_xmm(cb, 0, in->b, vreg_to_mreg, nreg);
         ra_load_xmm(cb, 1, in->c, vreg_to_mreg, nreg);
-        emit_ucomisd(cb);
+        if(in->size == 4) emit_ucomiss(cb);
+        else emit_ucomisd(cb);
         switch(in->cmpop){
           case C_EQ:  emit_setcc(cb, 4); break;  // sete
           case C_NEQ: emit_setcc(cb, 5); break;  // setne
@@ -2662,12 +2717,154 @@ static int lower_func_x64(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
         break;
       case I_I2F:
         ra_load_rax(cb, in->b, vreg_to_mreg, nreg);
-        emit_cvtsi2sd(cb);
+        if(in->size == 4) emit_cvtsi2ss(cb);
+        else emit_cvtsi2sd(cb);
         ra_store_xmm(cb, in->a, 0, vreg_to_mreg, nreg);
         break;
       case I_F2I:
         ra_load_xmm(cb, 0, in->b, vreg_to_mreg, nreg);
-        emit_cvttsd2si(cb);
+        if(in->size == 4) emit_cvttss2si(cb);
+        else emit_cvttsd2si(cb);
+        ra_store_rax(cb, in->a, vreg_to_mreg, nreg);
+        break;
+      case I_F32_TO_F64:
+        ra_load_xmm(cb, 0, in->b, vreg_to_mreg, nreg);
+        emit_cvtss2sd(cb);
+        ra_store_xmm(cb, in->a, 0, vreg_to_mreg, nreg);
+        break;
+      case I_F64_TO_F32:
+        ra_load_xmm(cb, 0, in->b, vreg_to_mreg, nreg);
+        emit_cvtsd2ss(cb);
+        ra_store_xmm(cb, in->a, 0, vreg_to_mreg, nreg);
+        break;
+      case I_BF16_TO_F32:
+        ra_load_rax(cb, in->b, vreg_to_mreg, nreg);
+        cb_emit(cb, "\xC1\xE0\x10", 3); // shl eax, 16
+        ra_store_rax(cb, in->a, vreg_to_mreg, nreg);
+        break;
+      case I_F32_TO_BF16:
+        ra_load_rax(cb, in->b, vreg_to_mreg, nreg);
+        cb_emit(cb, "\x89\xC2", 2);                 // mov edx, eax
+        cb_emit(cb, "\xC1\xEA\x10", 3);             // shr edx, 16
+        cb_emit(cb, "\x83\xE2\x01", 3);             // and edx, 1
+        cb_emit(cb, "\x81\xC2\xFF\x7F\x00\x00", 6); // add edx, 0x7FFF
+        cb_emit(cb, "\x01\xD0", 2);                 // add eax, edx
+        cb_emit(cb, "\xC1\xE8\x10", 3);             // shr eax, 16
+        cb_emit(cb, "\x25\xFF\xFF\x00\x00", 5);     // and eax, 0xFFFF
+        ra_store_rax(cb, in->a, vreg_to_mreg, nreg);
+        break;
+      case I_F16_TO_F32:
+        ra_load_rax(cb, in->b, vreg_to_mreg, nreg);
+        cb_emit(cb, "\x89\xC1", 2);                 // mov ecx, eax
+        cb_emit(cb, "\x81\xE1\x00\x80\x00\x00", 6); // and ecx, 0x8000
+        cb_emit(cb, "\xC1\xE1\x10", 3);             // shl ecx, 16
+        cb_emit(cb, "\x89\xC2", 2);                 // mov edx, eax
+        cb_emit(cb, "\xC1\xEA\x0A", 3);             // shr edx, 10
+        cb_emit(cb, "\x83\xE2\x1F", 3);             // and edx, 0x1F
+        cb_emit(cb, "\x25\xFF\x03\x00\x00", 5);     // and eax, 0x3FF
+        cb_emit(cb, "\x85\xD2", 2);                 // test edx, edx
+        cb_emit(cb, "\x74\x03", 2);                 // jz +3
+        cb_emit(cb, "\x83\xC2\x70", 3);             // add edx, 112 (127 - 15)
+        cb_emit(cb, "\xC1\xE2\x17", 3);             // shl edx, 23
+        cb_emit(cb, "\xC1\xE0\x0D", 3);             // shl eax, 13
+        cb_emit(cb, "\x09\xCA", 2);                 // or edx, ecx
+        cb_emit(cb, "\x09\xD0", 2);                 // or eax, edx
+        ra_store_rax(cb, in->a, vreg_to_mreg, nreg);
+        break;
+      case I_F32_TO_F16:
+        ra_load_rax(cb, in->b, vreg_to_mreg, nreg);
+        cb_emit(cb, "\x89\xC1", 2);                 // mov ecx, eax
+        cb_emit(cb, "\xC1\xE9\x10", 3);             // shr ecx, 16
+        cb_emit(cb, "\x81\xE1\x00\x80\x00\x00", 6); // and ecx, 0x8000
+        cb_emit(cb, "\x89\xC2", 2);                 // mov edx, eax
+        cb_emit(cb, "\xC1\xEA\x17", 3);             // shr edx, 23
+        cb_emit(cb, "\x81\xE2\xFF\x00\x00\x00", 6); // and edx, 0xFF
+        cb_emit(cb, "\x83\xEA\x70", 3);             // sub edx, 112
+        cb_emit(cb, "\xC1\xE8\x0D", 3);             // shr eax, 13
+        cb_emit(cb, "\x25\xFF\x03\x00\x00", 5);     // and eax, 0x3FF
+        cb_emit(cb, "\x85\xD2", 2);                 // test edx, edx
+        cb_emit(cb, "\x7E\x09", 2);                 // jle (zero/underflow)
+        cb_emit(cb, "\xC1\xE2\x0A", 3);             // shl edx, 10
+        cb_emit(cb, "\x09\xD0", 2);                 // or eax, edx
+        cb_emit(cb, "\x09\xC8", 2);                 // or eax, ecx
+        cb_emit(cb, "\xEB\x02", 2);                 // jmp done
+        cb_emit(cb, "\x89\xC8", 2);                 // mov eax, ecx
+        ra_store_rax(cb, in->a, vreg_to_mreg, nreg);
+        break;
+      case I_F8_TO_F32:
+        ra_load_rax(cb, in->b, vreg_to_mreg, nreg);
+        cb_emit(cb, "\x89\xC1", 2);                 // mov ecx, eax
+        cb_emit(cb, "\x81\xE1\x80\x00\x00\x00", 6); // and ecx, 0x80
+        cb_emit(cb, "\xC1\xE1\x18", 3);             // shl ecx, 24
+        cb_emit(cb, "\x89\xC2", 2);                 // mov edx, eax
+        cb_emit(cb, "\xC1\xEA\x03", 3);             // shr edx, 3
+        cb_emit(cb, "\x83\xE2\x0F", 3);             // and edx, 0xF
+        cb_emit(cb, "\x83\xE0\x07", 3);             // and eax, 0x7
+        cb_emit(cb, "\x85\xD2", 2);                 // test edx, edx
+        cb_emit(cb, "\x74\x03", 2);                 // jz +3
+        cb_emit(cb, "\x83\xC2\x78", 3);             // add edx, 120 (127 - 7)
+        cb_emit(cb, "\xC1\xE2\x17", 3);             // shl edx, 23
+        cb_emit(cb, "\xC1\xE0\x14", 3);             // shl eax, 20
+        cb_emit(cb, "\x09\xCA", 2);                 // or edx, ecx
+        cb_emit(cb, "\x09\xD0", 2);                 // or eax, edx
+        ra_store_rax(cb, in->a, vreg_to_mreg, nreg);
+        break;
+      case I_F32_TO_F8:
+        ra_load_rax(cb, in->b, vreg_to_mreg, nreg);
+        cb_emit(cb, "\x89\xC1", 2);                 // mov ecx, eax
+        cb_emit(cb, "\xC1\xE9\x18", 3);             // shr ecx, 24
+        cb_emit(cb, "\x81\xE1\x80\x00\x00\x00", 6); // and ecx, 0x80
+        cb_emit(cb, "\x89\xC2", 2);                 // mov edx, eax
+        cb_emit(cb, "\xC1\xEA\x17", 3);             // shr edx, 23
+        cb_emit(cb, "\x81\xE2\xFF\x00\x00\x00", 6); // and edx, 0xFF
+        cb_emit(cb, "\x83\xEA\x78", 3);             // sub edx, 120
+        cb_emit(cb, "\xC1\xE8\x14", 3);             // shr eax, 20
+        cb_emit(cb, "\x83\xE0\x07", 3);             // and eax, 0x7
+        cb_emit(cb, "\x85\xD2", 2);                 // test edx, edx
+        cb_emit(cb, "\x7E\x09", 2);                 // jle
+        cb_emit(cb, "\xC1\xE2\x03", 3);             // shl edx, 3
+        cb_emit(cb, "\x09\xD0", 2);                 // or eax, edx
+        cb_emit(cb, "\x09\xC8", 2);                 // or eax, ecx
+        cb_emit(cb, "\xEB\x02", 2);                 // jmp done
+        cb_emit(cb, "\x89\xC8", 2);                 // mov eax, ecx
+        ra_store_rax(cb, in->a, vreg_to_mreg, nreg);
+        break;
+      case I_F8_E5M2_TO_F32:
+        ra_load_rax(cb, in->b, vreg_to_mreg, nreg);
+        cb_emit(cb, "\x89\xC1", 2);                 // mov ecx, eax
+        cb_emit(cb, "\x81\xE1\x80\x00\x00\x00", 6); // and ecx, 0x80
+        cb_emit(cb, "\xC1\xE1\x18", 3);             // shl ecx, 24
+        cb_emit(cb, "\x89\xC2", 2);                 // mov edx, eax
+        cb_emit(cb, "\xC1\xEA\x02", 3);             // shr edx, 2
+        cb_emit(cb, "\x83\xE2\x1F", 3);             // and edx, 0x1F
+        cb_emit(cb, "\x83\xE0\x03", 3);             // and eax, 0x3
+        cb_emit(cb, "\x85\xD2", 2);                 // test edx, edx
+        cb_emit(cb, "\x74\x03", 2);                 // jz +3
+        cb_emit(cb, "\x83\xC2\x70", 3);             // add edx, 112 (127 - 15)
+        cb_emit(cb, "\xC1\xE2\x17", 3);             // shl edx, 23
+        cb_emit(cb, "\xC1\xE0\x15", 3);             // shl eax, 21
+        cb_emit(cb, "\x09\xCA", 2);                 // or edx, ecx
+        cb_emit(cb, "\x09\xD0", 2);                 // or eax, edx
+        ra_store_rax(cb, in->a, vreg_to_mreg, nreg);
+        break;
+      case I_F32_TO_F8_E5M2:
+        ra_load_rax(cb, in->b, vreg_to_mreg, nreg);
+        cb_emit(cb, "\x89\xC1", 2);                 // mov ecx, eax
+        cb_emit(cb, "\xC1\xE9\x18", 3);             // shr ecx, 24
+        cb_emit(cb, "\x81\xE1\x80\x00\x00\x00", 6); // and ecx, 0x80
+        cb_emit(cb, "\x89\xC2", 2);                 // mov edx, eax
+        cb_emit(cb, "\xC1\xEA\x17", 3);             // shr edx, 23
+        cb_emit(cb, "\x81\xE2\xFF\x00\x00\x00", 6); // and edx, 0xFF
+        cb_emit(cb, "\x83\xEA\x70", 3);             // sub edx, 112
+        cb_emit(cb, "\xC1\xE8\x15", 3);             // shr eax, 21
+        cb_emit(cb, "\x83\xE0\x03", 3);             // and eax, 0x3
+        cb_emit(cb, "\x85\xD2", 2);                 // test edx, edx
+        cb_emit(cb, "\x7E\x09", 2);                 // jle
+        cb_emit(cb, "\xC1\xE2\x02", 3);             // shl edx, 2
+        cb_emit(cb, "\x09\xD0", 2);                 // or eax, edx
+        cb_emit(cb, "\x09\xC8", 2);                 // or eax, ecx
+        cb_emit(cb, "\xEB\x02", 2);                 // jmp done
+        cb_emit(cb, "\x89\xC8", 2);                 // mov eax, ecx
         ra_store_rax(cb, in->a, vreg_to_mreg, nreg);
         break;
       case I_ALLOCA: {

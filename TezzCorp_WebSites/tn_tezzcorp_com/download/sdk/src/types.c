@@ -29,16 +29,21 @@ void tenv_init(TypeEnv* E){
   E->cap = 64;
   E->items = (Type**)xmalloc(sizeof(Type*)*E->cap);
 
-  E->b.ty_i8  = new_prim(TY_I8,  1, 1);
-  E->b.ty_i16 = new_prim(TY_I16, 2, 2);
-  E->b.ty_i32 = new_prim(TY_I32, 4, 4);
-  E->b.ty_i64 = new_prim(TY_I64, 8, 8);
-  E->b.ty_u8  = new_prim(TY_U8,  1, 1);
-  E->b.ty_u16 = new_prim(TY_U16, 2, 2);
-  E->b.ty_u32 = new_prim(TY_U32, 4, 4);
-  E->b.ty_u64 = new_prim(TY_U64, 8, 8);
-  E->b.ty_f64 = new_prim(TY_F64, 8, 8);
-  E->b.ty_void = new_prim(TY_VOID, 0, 1);
+  E->b.ty_i8      = new_prim(TY_I8,      1, 1);
+  E->b.ty_i16     = new_prim(TY_I16,     2, 2);
+  E->b.ty_i32     = new_prim(TY_I32,     4, 4);
+  E->b.ty_i64     = new_prim(TY_I64,     8, 8);
+  E->b.ty_u8      = new_prim(TY_U8,      1, 1);
+  E->b.ty_u16     = new_prim(TY_U16,     2, 2);
+  E->b.ty_u32     = new_prim(TY_U32,     4, 4);
+  E->b.ty_u64     = new_prim(TY_U64,     8, 8);
+  E->b.ty_f8_e4m3 = new_prim(TY_F8_E4M3, 1, 1);
+  E->b.ty_f8_e5m2 = new_prim(TY_F8_E5M2, 1, 1);
+  E->b.ty_f16     = new_prim(TY_F16,     2, 2);
+  E->b.ty_bf16    = new_prim(TY_BF16,    2, 2);
+  E->b.ty_f32     = new_prim(TY_F32,     4, 4);
+  E->b.ty_f64     = new_prim(TY_F64,     8, 8);
+  E->b.ty_void    = new_prim(TY_VOID,    0, 1);
 
   E->items[E->count++] = E->b.ty_i8;
   E->items[E->count++] = E->b.ty_i16;
@@ -48,6 +53,11 @@ void tenv_init(TypeEnv* E){
   E->items[E->count++] = E->b.ty_u16;
   E->items[E->count++] = E->b.ty_u32;
   E->items[E->count++] = E->b.ty_u64;
+  E->items[E->count++] = E->b.ty_f8_e4m3;
+  E->items[E->count++] = E->b.ty_f8_e5m2;
+  E->items[E->count++] = E->b.ty_f16;
+  E->items[E->count++] = E->b.ty_bf16;
+  E->items[E->count++] = E->b.ty_f32;
   E->items[E->count++] = E->b.ty_f64;
   E->items[E->count++] = E->b.ty_void;
 
@@ -59,6 +69,14 @@ void tenv_init(TypeEnv* E){
   // User-facing aliases (2026 style)
   tenv_add_alias(E, "int", 3, E->b.ty_i64, (SrcLoc){0});
   tenv_add_alias(E, "float", 5, E->b.ty_f64, (SrcLoc){0});
+  tenv_add_alias(E, "double", 6, E->b.ty_f64, (SrcLoc){0});
+  tenv_add_alias(E, "f8", 2, E->b.ty_f8_e4m3, (SrcLoc){0});
+  tenv_add_alias(E, "f8_e4m3", 7, E->b.ty_f8_e4m3, (SrcLoc){0});
+  tenv_add_alias(E, "f8_e5m2", 7, E->b.ty_f8_e5m2, (SrcLoc){0});
+  tenv_add_alias(E, "f16", 3, E->b.ty_f16, (SrcLoc){0});
+  tenv_add_alias(E, "bf16", 4, E->b.ty_bf16, (SrcLoc){0});
+  tenv_add_alias(E, "f32", 3, E->b.ty_f32, (SrcLoc){0});
+  tenv_add_alias(E, "f64", 3, E->b.ty_f64, (SrcLoc){0});
   tenv_add_alias(E, "char", 4, E->b.ty_u8, (SrcLoc){0});
   Type* pchar = type_ptr(E, E->b.ty_u8);
   tenv_add_alias(E, "str", 3, pchar, (SrcLoc){0});
@@ -299,8 +317,15 @@ int type_is_int(Type* t){
   return type_is_signed_int(t) || type_is_unsigned_int(t);
 }
 
+int type_is_float(Type* t){
+  if(!t) return 0;
+  return t->k==TY_F8_E4M3 || t->k==TY_F8_E5M2 ||
+         t->k==TY_F16     || t->k==TY_BF16    ||
+         t->k==TY_F32     || t->k==TY_F64;
+}
+
 int type_is_numeric(Type* t){
-  return type_is_int(t) || (t && t->k==TY_F64);
+  return type_is_int(t) || type_is_float(t);
 }
 
 int type_int_bits(Type* t){
@@ -319,6 +344,11 @@ const char* type_builtin_name(Type* t){
     case TY_U16: return "u16";
     case TY_U32: return "u32";
     case TY_U64: return "u64";
+    case TY_F8_E4M3: return "f8_e4m3";
+    case TY_F8_E5M2: return "f8_e5m2";
+    case TY_F16: return "f16";
+    case TY_BF16: return "bf16";
+    case TY_F32: return "f32";
     case TY_F64: return "f64";
     case TY_VOID: return "void";
     default: return NULL;

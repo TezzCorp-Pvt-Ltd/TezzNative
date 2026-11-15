@@ -91,6 +91,11 @@ static void emit_c_base(FILE* out, Type* t){
     case TY_U16: fputs("uint16_t", out); return;
     case TY_U32: fputs("uint32_t", out); return;
     case TY_U64: fputs("uint64_t", out); return;
+    case TY_F8_E4M3:
+    case TY_F8_E5M2: fputs("uint8_t", out); return;
+    case TY_F16:
+    case TY_BF16: fputs("uint16_t", out); return;
+    case TY_F32: fputs("float", out); return;
     case TY_F64: fputs("double", out); return;
     case TY_VOID: fputs("void", out); return;
     case TY_STRUCT:
@@ -354,7 +359,7 @@ static const char* pyext_type_label(Type* t, int is_ret){
 
 static int pyext_type_supported(Type* t, int is_ret){
   if(!t) return 1;
-  if(type_is_int(t) || t->k == TY_F64) return 1;
+  if(type_is_numeric(t)) return 1;
   if(is_ret && t->k == TY_VOID) return 1;
   if(!is_ret && pyext_is_u8_ptr(t)) return 1;
   return 0;
@@ -488,7 +493,7 @@ static void pyext_emit_wrapper(FILE* out, FnDecl* fn){
       fprintf(out, " v%d = (", p);
       pyext_emit_c_type(out, t);
       fprintf(out, ")v%d_ull;\n", p);
-    } else if(t->k == TY_F64){
+    } else if(type_is_float(t)){
       fprintf(out, "  double v%d = PyFloat_AsDouble(arg%d);\n", p, p);
       fprintf(out, "  if(PyErr_Occurred()) goto error;\n");
     } else if(pyext_is_u8_ptr(t)){
@@ -515,7 +520,7 @@ static void pyext_emit_wrapper(FILE* out, FnDecl* fn){
     fputs("  return PyLong_FromLongLong((long long)result);\n", out);
   } else if(type_is_unsigned_int(fn->ret)){
     fputs("  return PyLong_FromUnsignedLongLong((unsigned long long)result);\n", out);
-  } else if(fn->ret->k == TY_F64){
+  } else if(type_is_float(fn->ret)){
     fputs("  return PyFloat_FromDouble((double)result);\n", out);
   } else if(fn->ret->k == TY_VOID){
     fputs("  Py_RETURN_NONE;\n", out);

@@ -65,6 +65,12 @@ static Type* builtin_type_from_name(TypeEnv* E, const char* s, int n){
   if(n==3 && strncmp(s,"u16",3)==0) return E->b.ty_u16;
   if(n==3 && strncmp(s,"u32",3)==0) return E->b.ty_u32;
   if(n==3 && strncmp(s,"u64",3)==0) return E->b.ty_u64;
+  if(n==2 && strncmp(s,"f8",2)==0) return E->b.ty_f8_e4m3;
+  if(n==7 && strncmp(s,"f8_e4m3",7)==0) return E->b.ty_f8_e4m3;
+  if(n==7 && strncmp(s,"f8_e5m2",7)==0) return E->b.ty_f8_e5m2;
+  if(n==3 && strncmp(s,"f16",3)==0) return E->b.ty_f16;
+  if(n==4 && strncmp(s,"bf16",4)==0) return E->b.ty_bf16;
+  if(n==3 && strncmp(s,"f32",3)==0) return E->b.ty_f32;
   if(n==3 && strncmp(s,"f64",3)==0) return E->b.ty_f64;
   if(n==4 && strncmp(s,"void",4)==0) return E->b.ty_void;
   return NULL;

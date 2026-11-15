@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdint.h>
 
 static void* xmalloc(size_t n){ void* p=malloc(n); if(!p) die("out of memory"); return p; }
 static void* xrealloc(void* p, size_t n){ void* q=realloc(p,n); if(!q) die("out of memory"); return q; }
@@ -15,6 +16,130 @@ static int g_ir_vectorize = 0;
 void ir_set_repro(int on){ g_ir_repro = on ? 1 : 0; }
 void ir_set_async_zero(int on){ g_ir_async_zero = on ? 1 : 0; }
 void ir_set_vectorize(int on){ g_ir_vectorize = on ? 1 : 0; }
+
+static inline uint16_t float_to_bf16(float f) {
+  uint32_t u;
+  memcpy(&u, &f, 4);
+  u += 0x7FFF + ((u >> 16) & 1);
+  return (uint16_t)(u >> 16);
+}
+static inline float bf16_to_float(uint16_t bf) {
+  uint32_t u = (uint32_t)bf << 16;
+  float f;
+  memcpy(&f, &u, 4);
+  return f;
+}
+static inline uint16_t float_to_f16(float f) {
+  uint32_t u;
+  memcpy(&u, &f, 4);
+  uint32_t sign = (u >> 16) & 0x8000;
+  int32_t exp = (int32_t)((u >> 23) & 0xFF) - 127 + 15;
+  uint32_t mant = u & 0x7FFFFF;
+  if (exp <= 0) {
+    if (exp < -10) return (uint16_t)sign;
+    mant = (mant | 0x800000) >> (1 - exp);
+    return (uint16_t)(sign | ((mant + 0xFFF) >> 13));
+  } else if (exp >= 31) {
+    return (uint16_t)(sign | 0x7C00);
+  }
+  return (uint16_t)(sign | (exp << 10) | ((mant + 0xFFF) >> 13));
+}
+static inline float f16_to_float(uint16_t h) {
+  uint32_t sign = (uint32_t)(h & 0x8000) << 16;
+  uint32_t exp  = (h >> 10) & 0x1F;
+  uint32_t mant = h & 0x3FF;
+  uint32_t u;
+  if (exp == 0) {
+    if (mant == 0) {
+      u = sign;
+    } else {
+      exp = 1;
+      while ((mant & 0x400) == 0) {
+        mant <<= 1;
+        exp--;
+      }
+      mant &= 0x3FF;
+      u = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+    }
+  } else if (exp == 31) {
+    u = sign | 0x7F800000 | (mant << 13);
+  } else {
+    u = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+  }
+  float f;
+  memcpy(&f, &u, 4);
+  return f;
+}
+static inline uint8_t float_to_f8_e4m3(float f) {
+  if (f != f) return 0x7F; // NaN
+  uint8_t sign = (f < 0.0f) ? 0x80 : 0x00;
+  float val = (f < 0.0f) ? -f : f;
+  if (val >= 448.0f) return sign | 0x7E;
+  if (val == 0.0f) return sign;
+  uint32_t u;
+  memcpy(&u, &val, 4);
+  int32_t exp = (int32_t)((u >> 23) & 0xFF) - 127 + 7;
+  uint32_t mant = (u & 0x7FFFFF) | 0x800000;
+  if (exp <= 0) {
+    int shift = 1 - exp + 20;
+    uint32_t m = (shift < 31) ? (mant >> shift) : 0;
+    return sign | (m & 0x7);
+  } else if (exp >= 15) {
+    return sign | 0x7E;
+  }
+  uint32_t m = (mant >> 20) & 0x7;
+  return sign | ((exp & 0xF) << 3) | m;
+}
+static inline float f8_e4m3_to_float(uint8_t b) {
+  float sign = (b & 0x80) ? -1.0f : 1.0f;
+  uint32_t exp = (b >> 3) & 0xF;
+  uint32_t mant = b & 0x7;
+  if (exp == 0) {
+    return sign * ((float)mant / 8.0f) * 0.015625f; // 2^-6
+  } else if (exp == 15 && mant == 7) {
+    return 0.0f / 0.0f; // NaN
+  }
+  float pow2 = 1.0f;
+  int shift = (int)exp - 7;
+  if (shift >= 0) while (shift--) pow2 *= 2.0f;
+  else while (shift++) pow2 /= 2.0f;
+  return sign * (1.0f + (float)mant / 8.0f) * pow2;
+}
+static inline uint8_t float_to_f8_e5m2(float f) {
+  if (f != f) return 0x7F; // NaN
+  uint8_t sign = (f < 0.0f) ? 0x80 : 0x00;
+  float val = (f < 0.0f) ? -f : f;
+  if (val >= 57344.0f) return sign | 0x7B;
+  if (val == 0.0f) return sign;
+  uint32_t u;
+  memcpy(&u, &val, 4);
+  int32_t exp = (int32_t)((u >> 23) & 0xFF) - 127 + 15;
+  uint32_t mant = (u & 0x7FFFFF) | 0x800000;
+  if (exp <= 0) {
+    int shift = 1 - exp + 21;
+    uint32_t m = (shift < 31) ? (mant >> shift) : 0;
+    return sign | (m & 0x3);
+  } else if (exp >= 31) {
+    return sign | 0x7B;
+  }
+  uint32_t m = (mant >> 21) & 0x3;
+  return sign | ((exp & 0x1F) << 2) | m;
+}
+static inline float f8_e5m2_to_float(uint8_t b) {
+  float sign = (b & 0x80) ? -1.0f : 1.0f;
+  uint32_t exp = (b >> 2) & 0x1F;
+  uint32_t mant = b & 0x3;
+  if (exp == 0) {
+    return sign * ((float)mant / 4.0f) * 0.00006103515625f; // 2^-14
+  } else if (exp == 31) {
+    return mant != 0 ? (0.0f / 0.0f) : (sign < 0 ? -1.0f/0.0f : 1.0f/0.0f);
+  }
+  float pow2 = 1.0f;
+  int shift = (int)exp - 15;
+  if (shift >= 0) while (shift--) pow2 *= 2.0f;
+  else while (shift++) pow2 /= 2.0f;
+  return sign * (1.0f + (float)mant / 4.0f) * pow2;
+}
 
 /* -------------------------
  * helpers
@@ -450,6 +575,124 @@ static int ir_int_width_cast(IRFunc* F, int v, Type* to){
   ir_emit(F,shr);
   return dst;
 }
+
+static int ir_coerce_to_float(IRFunc* F, int v, Type* from, Type* target_flt){
+  if(!target_flt || !type_is_float(target_flt)) return v;
+  if(!from) return v;
+  if(from->k == target_flt->k) return v;
+
+  if(target_flt->k == TY_F64){
+    if(type_is_int(from)){
+      int dst = new_reg(F);
+      IRIns in; memset(&in, 0, sizeof(in));
+      in.op = I_I2F; in.a = dst; in.b = v; in.size = 8;
+      ir_emit(F, in);
+      return dst;
+    }
+    int v32 = v;
+    if(from->k == TY_BF16){
+      int d = new_reg(F);
+      IRIns in; memset(&in, 0, sizeof(in));
+      in.op = I_BF16_TO_F32; in.a = d; in.b = v;
+      ir_emit(F, in);
+      v32 = d;
+    } else if(from->k == TY_F16){
+      int d = new_reg(F);
+      IRIns in; memset(&in, 0, sizeof(in));
+      in.op = I_F16_TO_F32; in.a = d; in.b = v;
+      ir_emit(F, in);
+      v32 = d;
+    } else if(from->k == TY_F8_E4M3){
+      int d = new_reg(F);
+      IRIns in; memset(&in, 0, sizeof(in));
+      in.op = I_F8_TO_F32; in.a = d; in.b = v;
+      ir_emit(F, in);
+      v32 = d;
+    } else if(from->k == TY_F8_E5M2){
+      int d = new_reg(F);
+      IRIns in; memset(&in, 0, sizeof(in));
+      in.op = I_F8_E5M2_TO_F32; in.a = d; in.b = v;
+      ir_emit(F, in);
+      v32 = d;
+    }
+    int dst = new_reg(F);
+    IRIns in; memset(&in, 0, sizeof(in));
+    in.op = I_F32_TO_F64; in.a = dst; in.b = v32;
+    ir_emit(F, in);
+    return dst;
+  }
+
+  // To f32, f16, bf16, f8: first convert 'from' to f32
+  int v32 = v;
+  if(type_is_int(from)){
+    int dst = new_reg(F);
+    IRIns in; memset(&in, 0, sizeof(in));
+    in.op = I_I2F; in.a = dst; in.b = v; in.size = 4;
+    ir_emit(F, in);
+    v32 = dst;
+  } else if(from->k == TY_F64){
+    int dst = new_reg(F);
+    IRIns in; memset(&in, 0, sizeof(in));
+    in.op = I_F64_TO_F32; in.a = dst; in.b = v;
+    ir_emit(F, in);
+    v32 = dst;
+  } else if(from->k == TY_BF16){
+    int dst = new_reg(F);
+    IRIns in; memset(&in, 0, sizeof(in));
+    in.op = I_BF16_TO_F32; in.a = dst; in.b = v;
+    ir_emit(F, in);
+    v32 = dst;
+  } else if(from->k == TY_F16){
+    int dst = new_reg(F);
+    IRIns in; memset(&in, 0, sizeof(in));
+    in.op = I_F16_TO_F32; in.a = dst; in.b = v;
+    ir_emit(F, in);
+    v32 = dst;
+  } else if(from->k == TY_F8_E4M3){
+    int dst = new_reg(F);
+    IRIns in; memset(&in, 0, sizeof(in));
+    in.op = I_F8_TO_F32; in.a = dst; in.b = v;
+    ir_emit(F, in);
+    v32 = dst;
+  } else if(from->k == TY_F8_E5M2){
+    int dst = new_reg(F);
+    IRIns in; memset(&in, 0, sizeof(in));
+    in.op = I_F8_E5M2_TO_F32; in.a = dst; in.b = v;
+    ir_emit(F, in);
+    v32 = dst;
+  }
+
+  if(target_flt->k == TY_F32) return v32;
+  if(target_flt->k == TY_BF16){
+    int dst = new_reg(F);
+    IRIns in; memset(&in, 0, sizeof(in));
+    in.op = I_F32_TO_BF16; in.a = dst; in.b = v32;
+    ir_emit(F, in);
+    return dst;
+  }
+  if(target_flt->k == TY_F16){
+    int dst = new_reg(F);
+    IRIns in; memset(&in, 0, sizeof(in));
+    in.op = I_F32_TO_F16; in.a = dst; in.b = v32;
+    ir_emit(F, in);
+    return dst;
+  }
+  if(target_flt->k == TY_F8_E4M3){
+    int dst = new_reg(F);
+    IRIns in; memset(&in, 0, sizeof(in));
+    in.op = I_F32_TO_F8; in.a = dst; in.b = v32;
+    ir_emit(F, in);
+    return dst;
+  }
+  if(target_flt->k == TY_F8_E5M2){
+    int dst = new_reg(F);
+    IRIns in; memset(&in, 0, sizeof(in));
+    in.op = I_F32_TO_F8_E5M2; in.a = dst; in.b = v32;
+    ir_emit(F, in);
+    return dst;
+  }
+  return v32;
+}
 static int ir_gep_imm(IRFunc* F, int base, int off){
   int dst=new_reg(F);
   IRIns in; memset(&in,0,sizeof(in));
@@ -551,7 +794,7 @@ static int gen_call(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Expr* 
     int use_multi = (argc > 1);
     if(argc == 1){
       Expr* a = e->call.args[0];
-      if(a && (expr_is_stringy_ir(a) || is_f64(a->ty))) use_multi = 1;
+      if(a && (expr_is_stringy_ir(a) || type_is_float(a->ty))) use_multi = 1;
     }
     if(!use_multi) goto call_direct;
 
@@ -560,14 +803,21 @@ static int gen_call(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Expr* 
     int tags = ir_alloca(F, argc * 8, 8);
     for(int i=0;i<argc;i++){
       Expr* a = e->call.args[i];
-      int v = gen_expr(M, tenv, F, ctx, a, NULL);
+      int v;
+      int is_flt = (a && a->ty && type_is_float(a->ty));
+      if(is_flt){
+        int raw_v = gen_expr(M, tenv, F, ctx, a, tenv->b.ty_f64);
+        v = ir_coerce_to_float(F, raw_v, a->ty, tenv->b.ty_f64);
+      } else {
+        v = gen_expr(M, tenv, F, ctx, a, NULL);
+      }
       int pv = ir_gep_imm(F, vals, i * 8);
       ir_store(F, pv, v, 8);
 
       int tagv = new_reg(F);
       IRIns ic; memset(&ic,0,sizeof(ic));
       if(expr_is_stringy_ir(a)) ic.imm = 2;
-      else if(a && is_f64(a->ty)) ic.imm = 1;
+      else if(is_flt) ic.imm = 1;
       else ic.imm = 0;
       ic.op = I_ICONST; ic.a = tagv;
       ir_emit(F, ic);
@@ -765,6 +1015,7 @@ static int gen_expr(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Expr* 
       long long bits=0;
       memcpy(&bits, &x, sizeof(double));
       in.immf = bits;
+      in.size = 8;
       ir_emit(F,in);
       return r;
     }
@@ -919,12 +1170,17 @@ static int gen_expr(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Expr* 
         return dst;
       }
 
-      int use_f = (e->bin.a && is_f64(e->bin.a->ty)) || (e->bin.b && is_f64(e->bin.b->ty));
-      int a = gen_expr(M, tenv, F, ctx, e->bin.a, use_f ? tenv->b.ty_f64 : tenv->b.ty_i64);
-      int b = gen_expr(M, tenv, F, ctx, e->bin.b, use_f ? tenv->b.ty_f64 : tenv->b.ty_i64);
+      int is_f64_op = (e->bin.a && is_f64(e->bin.a->ty)) || (e->bin.b && is_f64(e->bin.b->ty));
+      int is_flt_op = is_f64_op || (e->bin.a && type_is_float(e->bin.a->ty)) || (e->bin.b && type_is_float(e->bin.b->ty));
+      Type* target_ty = is_f64_op ? tenv->b.ty_f64 : (is_flt_op ? tenv->b.ty_f32 : tenv->b.ty_i64);
+      int a = gen_expr(M, tenv, F, ctx, e->bin.a, target_ty);
+      int b = gen_expr(M, tenv, F, ctx, e->bin.b, target_ty);
       int dst=new_reg(F);
       IRIns in; memset(&in,0,sizeof(in));
-      if(use_f){
+      if(is_flt_op){
+        a = ir_coerce_to_float(F, a, e->bin.a ? e->bin.a->ty : NULL, target_ty);
+        b = ir_coerce_to_float(F, b, e->bin.b ? e->bin.b->ty : NULL, target_ty);
+        in.size = is_f64_op ? 8 : 4;
         if(binop_is_cmp(e->bin.op)){
           in.op=I_FCMP; in.a=dst; in.b=a; in.c=b; in.cmpop=binop_to_cmp(e->bin.op);
         } else {
@@ -948,6 +1204,67 @@ static int gen_expr(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Expr* 
       return dst;
     }
 
+    case EX_UN: {
+      if(e->un.op == UN_POS){
+        return gen_expr(M, tenv, F, ctx, e->un.e, expect);
+      }
+      if(e->un.op == UN_NEG){
+        int is_f64_un = (e->un.e && is_f64(e->un.e->ty)) || (expect && is_f64(expect));
+        int is_flt_un = is_f64_un || (e->un.e && type_is_float(e->un.e->ty)) || (expect && type_is_float(expect));
+        if(is_flt_un){
+          Type* target_ty = is_f64_un ? tenv->b.ty_f64 : tenv->b.ty_f32;
+          int v = gen_expr(M, tenv, F, ctx, e->un.e, target_ty);
+          v = ir_coerce_to_float(F, v, e->un.e ? e->un.e->ty : NULL, target_ty);
+          int zero = new_reg(F);
+          IRIns ic; memset(&ic,0,sizeof(ic));
+          ic.op = I_FCONST; ic.a = zero; ic.immf = 0; ic.size = is_f64_un ? 8 : 4;
+          ir_emit(F, ic);
+          int dst = new_reg(F);
+          IRIns sub; memset(&sub,0,sizeof(sub));
+          sub.op = I_FBIN; sub.a = dst; sub.b = zero; sub.c = v; sub.fop = F_SUB; sub.size = is_f64_un ? 8 : 4;
+          ir_emit(F, sub);
+          return dst;
+        } else {
+          int v = gen_expr(M, tenv, F, ctx, e->un.e, tenv->b.ty_i64);
+          int zero = new_reg(F);
+          IRIns ic; memset(&ic,0,sizeof(ic));
+          ic.op = I_ICONST; ic.a = zero; ic.imm = 0;
+          ir_emit(F, ic);
+          int dst = new_reg(F);
+          IRIns sub; memset(&sub,0,sizeof(sub));
+          sub.op = I_BIN; sub.a = dst; sub.b = zero; sub.c = v; sub.binop = B_SUB;
+          ir_emit(F, sub);
+          return dst;
+        }
+      }
+      if(e->un.op == UN_BNOT){
+        int v = gen_expr(M, tenv, F, ctx, e->un.e, tenv->b.ty_i64);
+        int neg1 = new_reg(F);
+        IRIns ic; memset(&ic,0,sizeof(ic));
+        ic.op = I_ICONST; ic.a = neg1; ic.imm = -1LL;
+        ir_emit(F, ic);
+        int dst = new_reg(F);
+        IRIns xor_ins; memset(&xor_ins,0,sizeof(xor_ins));
+        xor_ins.op = I_BIN; xor_ins.a = dst; xor_ins.b = v; xor_ins.c = neg1; xor_ins.binop = B_XOR;
+        ir_emit(F, xor_ins);
+        return dst;
+      }
+      if(e->un.op == UN_LNOT){
+        int v = gen_expr(M, tenv, F, ctx, e->un.e, tenv->b.ty_i64);
+        int zero = new_reg(F);
+        IRIns ic; memset(&ic,0,sizeof(ic));
+        ic.op = I_ICONST; ic.a = zero; ic.imm = 0;
+        ir_emit(F, ic);
+        int dst = new_reg(F);
+        IRIns cmp; memset(&cmp,0,sizeof(cmp));
+        cmp.op = I_CMP; cmp.a = dst; cmp.b = v; cmp.c = zero; cmp.cmpop = C_EQ;
+        ir_emit(F, cmp);
+        return dst;
+      }
+      err_at(e->loc, "IR: unsupported unary op");
+      return 0;
+    }
+
     case EX_CAST: {
       int v = gen_expr(M, tenv, F, ctx, e->cast.e, NULL);
       Type* from = e->cast.e ? e->cast.e->ty : NULL;
@@ -955,19 +1272,17 @@ static int gen_expr(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Expr* 
       if(from && to && type_is_int(from) && type_is_int(to)){
         return ir_int_width_cast(F, v, to);
       }
-      if(from && to && is_f64(from) && !is_f64(to)){
-        int dst = new_reg(F);
-        IRIns in; memset(&in,0,sizeof(in));
-        in.op=I_F2I; in.a=dst; in.b=v;
-        ir_emit(F,in);
-        return dst;
+      if(from && to && type_is_float(to)){
+        return ir_coerce_to_float(F, v, from, to);
       }
-      if(from && to && !is_f64(from) && is_f64(to)){
+      if(from && to && type_is_float(from) && type_is_int(to)){
+        int cur_v = ir_coerce_to_float(F, v, from, (from->k == TY_F64) ? tenv->b.ty_f64 : tenv->b.ty_f32);
         int dst = new_reg(F);
         IRIns in; memset(&in,0,sizeof(in));
-        in.op=I_I2F; in.a=dst; in.b=v;
-        ir_emit(F,in);
-        return dst;
+        in.op = I_F2I; in.a = dst; in.b = cur_v;
+        in.size = (from->k == TY_F64) ? 8 : 4;
+        ir_emit(F, in);
+        return ir_int_width_cast(F, dst, to);
       }
       return v;
     }
@@ -1012,6 +1327,9 @@ static int gen_expr(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Expr* 
       int kmax = e->arr.n < n ? e->arr.n : n;
       for(int i=0;i<kmax;i++){
         int v = gen_expr(M, tenv, F, ctx, e->arr.items[i], elem);
+        if(elem && type_is_float(elem)){
+          v = ir_coerce_to_float(F, v, e->arr.items[i] ? e->arr.items[i]->ty : NULL, elem);
+        }
         int p = ir_gep_imm(F, addr, i*esz);
         ir_store(F, p, v, esz);
       }
@@ -1033,6 +1351,9 @@ static int gen_expr(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Expr* 
         if(!f) err_at(e->loc, "IR: unknown field in struct literal");
 
         int v = gen_expr(M, tenv, F, ctx, e->stlit.v[i], f->ty);
+        if(f->ty && type_is_float(f->ty)){
+          v = ir_coerce_to_float(F, v, e->stlit.v[i] ? e->stlit.v[i]->ty : NULL, f->ty);
+        }
         int p = ir_gep_imm(F, addr, f->off);
         if(f->ty && (f->ty->k==TY_STRUCT || f->ty->k==TY_ARRAY)){
           int szr=new_reg(F);
@@ -1110,6 +1431,9 @@ static void gen_stmt(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Stmt*
           }
         } else {
           int v = gen_expr(M, tenv, F, ctx, s->let.init, ty);
+          if(ty && type_is_float(ty)){
+            v = ir_coerce_to_float(F, v, s->let.init ? s->let.init->ty : NULL, ty);
+          }
           ir_store(F, addr, v, type_size(ty));
         }
       } else {
@@ -1150,6 +1474,9 @@ static void gen_stmt(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Stmt*
           call.args=callargs; call.argc=3;
           ir_emit(F,call);
           return;
+        }
+        if(lty && type_is_float(lty)){
+          v = ir_coerce_to_float(F, v, s->asg.rhs ? s->asg.rhs->ty : NULL, lty);
         }
         ir_store(F, laddr, v, lsz);
         return;
@@ -1964,6 +2291,16 @@ void ir_dump(IRModule* M){
         case I_FCMP:   printf("  fcmp    r%d = r%d, r%d\n", in->a, in->b, in->c); break;
         case I_I2F:    printf("  i2f     r%d = r%d\n", in->a, in->b); break;
         case I_F2I:    printf("  f2i     r%d = r%d\n", in->a, in->b); break;
+        case I_F32_TO_F64: printf("  f32tof64 r%d = r%d\n", in->a, in->b); break;
+        case I_F64_TO_F32: printf("  f64tof32 r%d = r%d\n", in->a, in->b); break;
+        case I_BF16_TO_F32: printf("  bf16tof32 r%d = r%d\n", in->a, in->b); break;
+        case I_F32_TO_BF16: printf("  f32tobf16 r%d = r%d\n", in->a, in->b); break;
+        case I_F16_TO_F32: printf("  f16tof32 r%d = r%d\n", in->a, in->b); break;
+        case I_F32_TO_F16: printf("  f32tof16 r%d = r%d\n", in->a, in->b); break;
+        case I_F8_TO_F32:  printf("  f8tof32 r%d = r%d\n", in->a, in->b); break;
+        case I_F32_TO_F8:  printf("  f32tof8 r%d = r%d\n", in->a, in->b); break;
+        case I_F8_E5M2_TO_F32: printf("  f8e5m2tof32 r%d = r%d\n", in->a, in->b); break;
+        case I_F32_TO_F8_E5M2: printf("  f32tof8e5m2 r%d = r%d\n", in->a, in->b); break;
         case I_CALL: {
           printf("  call    r%d = %.*s(", in->a, in->nlen, in->name);
           for(int k=0;k<in->argc;k++){ if(k) printf(", "); printf("r%d", in->args[k]); }
@@ -2191,6 +2528,16 @@ static int ins_def_reg(IRIns* in){
     case I_FCMP:
     case I_I2F:
     case I_F2I:
+    case I_F32_TO_F64:
+    case I_F64_TO_F32:
+    case I_BF16_TO_F32:
+    case I_F32_TO_BF16:
+    case I_F16_TO_F32:
+    case I_F32_TO_F16:
+    case I_F8_TO_F32:
+    case I_F32_TO_F8:
+    case I_F8_E5M2_TO_F32:
+    case I_F32_TO_F8_E5M2:
     case I_CALL:
     case I_CALLPTR:
     case I_ALLOCA:
@@ -2255,7 +2602,10 @@ static int strength_reduce_pow2(IRFunc* F){
     if(in.a>=0 && in.a<regs){
       switch(in.op){
         case I_BIN: case I_CMP: case I_FBIN: case I_FCMP:
-        case I_I2F: case I_F2I: case I_CALL: case I_CALLPTR:
+        case I_I2F: case I_F2I: case I_F32_TO_F64: case I_F64_TO_F32:
+        case I_BF16_TO_F32: case I_F32_TO_BF16: case I_F16_TO_F32: case I_F32_TO_F16:
+        case I_F8_TO_F32: case I_F32_TO_F8: case I_F8_E5M2_TO_F32: case I_F32_TO_F8_E5M2:
+        case I_CALL: case I_CALLPTR:
         case I_ALLOCA: case I_LOAD: case I_GEP: case I_MOV:
         case I_ADDRSYM: case I_SCONST:
           is_c[in.a]=0; break;
@@ -2309,6 +2659,16 @@ static void ins_mark_uses(IRIns* in, char* live, int regs){
       break;
     case I_I2F:
     case I_F2I:
+    case I_F32_TO_F64:
+    case I_F64_TO_F32:
+    case I_BF16_TO_F32:
+    case I_F32_TO_BF16:
+    case I_F16_TO_F32:
+    case I_F32_TO_F16:
+    case I_F8_TO_F32:
+    case I_F32_TO_F8:
+    case I_F8_E5M2_TO_F32:
+    case I_F32_TO_F8_E5M2:
     case I_LOAD:
       if(in->b>=0 && in->b<regs) live[in->b]=1;
       break;
@@ -2347,6 +2707,16 @@ static int ins_uses_reg(const IRIns* in, int r){
     case I_FCMP: return in->b==r || in->c==r;
     case I_I2F:
     case I_F2I:
+    case I_F32_TO_F64:
+    case I_F64_TO_F32:
+    case I_BF16_TO_F32:
+    case I_F32_TO_BF16:
+    case I_F16_TO_F32:
+    case I_F32_TO_F16:
+    case I_F8_TO_F32:
+    case I_F32_TO_F8:
+    case I_F8_E5M2_TO_F32:
+    case I_F32_TO_F8_E5M2:
     case I_LOAD: return in->b==r;
     case I_STORE: return in->a==r || in->b==r;
     case I_GEP: return in->b==r;
@@ -2376,6 +2746,16 @@ static int ins_is_pure(const IRIns* in){
     case I_FCMP:
     case I_I2F:
     case I_F2I:
+    case I_F32_TO_F64:
+    case I_F64_TO_F32:
+    case I_BF16_TO_F32:
+    case I_F32_TO_BF16:
+    case I_F16_TO_F32:
+    case I_F32_TO_F16:
+    case I_F8_TO_F32:
+    case I_F32_TO_F8:
+    case I_F8_E5M2_TO_F32:
+    case I_F32_TO_F8_E5M2:
     case I_GEP:
       return 1;
     default:
@@ -2883,6 +3263,16 @@ static int gvn_rewrite_operands(IRIns* in, int* alias){
       break;
     case I_I2F:
     case I_F2I:
+    case I_F32_TO_F64:
+    case I_F64_TO_F32:
+    case I_BF16_TO_F32:
+    case I_F32_TO_BF16:
+    case I_F16_TO_F32:
+    case I_F32_TO_F16:
+    case I_F8_TO_F32:
+    case I_F32_TO_F8:
+    case I_F8_E5M2_TO_F32:
+    case I_F32_TO_F8_E5M2:
     case I_LOAD:
       changed |= rewrite_reg(alias, &in->b);
       break;
@@ -2963,6 +3353,16 @@ static void gvn_key_from_ins(const IRIns* in, GVNKey* key){
       break;
     case I_I2F:
     case I_F2I:
+    case I_F32_TO_F64:
+    case I_F64_TO_F32:
+    case I_BF16_TO_F32:
+    case I_F32_TO_BF16:
+    case I_F16_TO_F32:
+    case I_F32_TO_F16:
+    case I_F8_TO_F32:
+    case I_F32_TO_F8:
+    case I_F8_E5M2_TO_F32:
+    case I_F32_TO_F8_E5M2:
     case I_LOAD:
       key->a = in->b;
       break;
@@ -3045,6 +3445,16 @@ static int reg_uses_loopdef(const IRIns* in, const unsigned char* loop_defs, con
     case I_FCMP: return BAD_REG(in->b) || BAD_REG(in->c);
     case I_I2F:
     case I_F2I:
+    case I_F32_TO_F64:
+    case I_F64_TO_F32:
+    case I_BF16_TO_F32:
+    case I_F32_TO_BF16:
+    case I_F16_TO_F32:
+    case I_F32_TO_F16:
+    case I_F8_TO_F32:
+    case I_F32_TO_F8:
+    case I_F8_E5M2_TO_F32:
+    case I_F32_TO_F8_E5M2:
     case I_LOAD: return BAD_REG(in->b);
     case I_GEP: return BAD_REG(in->b);
     case I_CALL:

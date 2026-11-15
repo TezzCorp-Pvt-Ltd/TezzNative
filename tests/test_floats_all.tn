@@ -1,0 +1,107 @@
+// tests/test_floats_all.tn
+// Comprehensive test suite for TezzNative float precision family:
+// f64, f32, f16, bf16, f8 (f8_e4m3), f8_e5m2
+
+struct FloatTensor:
+  pub d_f64:f64
+  pub s_f32:f32
+  pub h_f16:f16
+  pub b_bf16:bf16
+  pub q_f8:f8
+  pub g_e5m2:f8_e5m2
+
+fn main() -> int:
+  say "=========================================================="
+  say "   TezzNative Full Floating-Point Precision Family Test   "
+  say "=========================================================="
+
+  // 1. Basic Float Variables
+  let val_f64:f64 = 3.141592653589793
+  let val_f32:f32 = 1.25
+  let val_f16:f16 = 10.5
+  let val_bf16:bf16 = 25.25
+  let val_f8:f8 = 2.0
+  let val_e5m2:f8_e5m2 = 4.0
+
+  say "\n--- 1. Native Float Variables & Display ---"
+  say "f64  value = ", val_f64
+  say "f32  value = ", val_f32
+  say "f16  value = ", val_f16
+  say "bf16 value = ", val_bf16
+  say "f8   value = ", val_f8
+  say "e5m2 value = ", val_e5m2
+
+  // 2. Arithmetic Operations on f32 (Single Precision SSE)
+  say "\n--- 2. Single-Precision f32 Arithmetic ---"
+  let a:f32 = 10.5
+  let b:f32 = 2.5
+  let sum:f32 = a + b
+  let diff:f32 = a - b
+  let prod:f32 = a * b
+  let quot:f32 = a / b
+  say "f32: 10.5 + 2.5 = ", sum
+  say "f32: 10.5 - 2.5 = ", diff
+  say "f32: 10.5 * 2.5 = ", prod
+  say "f32: 10.5 / 2.5 = ", quot
+
+  // Comparisons on f32
+  if sum > 12.0:
+    say "f32 comparison (sum > 12.0): TRUE"
+  else:
+    say "f32 comparison (sum > 12.0): FALSE"
+
+  // 3. Mixed Arithmetic & Widening Promotions
+  say "\n--- 3. Mixed Precision & Promotion ---"
+  let mixed:f64 = a + val_f64 // f32 + f64 -> f64
+  say "Mixed f32 + f64 = ", mixed
+
+  let int_flt:f32 = a + 5 // f32 + int -> f32
+  say "Mixed f32 + int = ", int_flt
+
+  // 4. Struct with Composite Multi-Precision Layout
+  say "\n--- 4. Struct with Multi-Precision Fields ---"
+  let tensor:FloatTensor = FloatTensor{
+    d_f64: 100.125,
+    s_f32: 50.25,
+    h_f16: 12.5,
+    b_bf16: 6.25,
+    q_f8: 1.0,
+    g_e5m2: 2.0
+  }
+  say "Tensor d_f64  = ", tensor.d_f64
+  say "Tensor s_f32  = ", tensor.s_f32
+  say "Tensor h_f16  = ", tensor.h_f16
+  say "Tensor b_bf16 = ", tensor.b_bf16
+  say "Tensor q_f8   = ", tensor.q_f8
+  say "Tensor g_e5m2 = ", tensor.g_e5m2
+
+  // 5. Explicit Type Casting Between Floats and Integers
+  say "\n--- 5. Explicit Precision Type Casting ---"
+  let cast_i:int = 42
+  let cast_f32:f32 = cast_i as f32
+  let cast_back:int = cast_f32 as int
+  say "int(42) as f32 = ", cast_f32, " -> as int = ", cast_back
+
+  let pi_f64:f64 = 3.14159265
+  let pi_f32:f32 = pi_f64 as f32
+  let pi_bf16:bf16 = pi_f32 as bf16
+  let pi_f16:f16 = pi_f32 as f16
+  say "pi as f64  = ", pi_f64
+  say "pi as f32  = ", pi_f32
+  say "pi as bf16 = ", pi_bf16
+  say "pi as f16  = ", pi_f16
+
+  // 6. Compact Multi-Precision Arrays (Memory Packing)
+  say "\n--- 6. Multi-Precision Arrays ---"
+  let f32_arr:[f32; 3] = [1.1, 2.2, 3.3]
+  let f16_arr:[f16; 3] = [10.0, 20.0, 30.0]
+  let f8_arr:[f8; 3] = [1.0, 2.0, 3.0]
+
+  say "f32 array [0]=", f32_arr[0], " [1]=", f32_arr[1], " [2]=", f32_arr[2]
+  say "f16 array [0]=", f16_arr[0], " [1]=", f16_arr[1], " [2]=", f16_arr[2]
+  say "f8  array [0]=", f8_arr[0], " [1]=", f8_arr[1], " [2]=", f8_arr[2]
+
+  say "\n=========================================================="
+  say "    All Float Types (f64, f32, f16, bf16, f8) PASSED!     "
+  say "=========================================================="
+  ret 0

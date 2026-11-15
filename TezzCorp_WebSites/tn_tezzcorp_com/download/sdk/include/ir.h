@@ -15,6 +15,16 @@ typedef enum {
   I_FCMP,     // dst = b (fcmp) c (i64 0/1)
   I_I2F,      // dst = (double) b
   I_F2I,      // dst = (i64) b
+  I_F32_TO_F64,
+  I_F64_TO_F32,
+  I_BF16_TO_F32,
+  I_F32_TO_BF16,
+  I_F16_TO_F32,
+  I_F32_TO_F16,
+  I_F8_TO_F32,
+  I_F32_TO_F8,
+  I_F8_E5M2_TO_F32,
+  I_F32_TO_F8_E5M2,
   I_CALL,     // dst = call name(args...)
   I_CALLPTR,  // dst = call *b(args...)
   I_ALLOCA,   // dst = stack addr

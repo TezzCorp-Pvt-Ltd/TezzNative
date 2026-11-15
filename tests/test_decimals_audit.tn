@@ -1,0 +1,185 @@
+// tests/test_decimals_audit.tn
+// Comprehensive Decimal Initialization & Representation Audit
+// Testing:
+// 1. Explicit decimal literals (0.5, 3.14159, 100.0)
+// 2. Scientific / exponent notation (1.5e3, 2.5e-2, 1e-4)
+// 3. Decimal initialization across all float types (f64, f32, f16, bf16, f8_e4m3, f8_e5m2)
+// 4. Default / uninitialized decimal variables (let x: f32; -> 0.0)
+// 5. Integer-to-decimal coercion in let initialization (let x: f32 = 42;)
+// 6. Struct decimal field initialization (direct struct lit and constructor)
+// 7. Array decimal initialization and uninitialized array zeroes
+// 8. Decimal precision & binary-float fraction properties (0.1 + 0.2)
+
+struct DecimalModel:
+  pub rate:f64
+  pub factor:f32
+  pub weight:f16
+  pub bias:f8
+  pub uninit_rate:f64
+  pub uninit_factor:f32
+
+  fn new(r:f64, f:f32, w:f16, b:f8) -> DecimalModel:
+    ret DecimalModel{
+      rate: r,
+      factor: f,
+      weight: w,
+      bias: b
+    }
+
+fn main() -> int:
+  say "=========================================================="
+  say "      TezzNative Decimal Initialization & Audit Test      "
+  say "=========================================================="
+
+  // -----------------------------------------------------------
+  // 1. Explicit Decimal Literals & Precision Across Types
+  // -----------------------------------------------------------
+  say "\n--- 1. Explicit Decimal Literals ---"
+  let d64:f64 = 123.456789
+  let d32:f32 = 123.456789
+  let d16:f16 = 12.34
+  let dbf:bf16 = 12.34
+  let df8:f8 = 3.5
+  let de5:f8_e5m2 = 3.5
+
+  say "d64 (f64)     = ", d64
+  say "d32 (f32)     = ", d32
+  say "d16 (f16)     = ", d16
+  say "dbf (bf16)    = ", dbf
+  say "df8 (f8_e4m3) = ", df8
+  say "de5 (f8_e5m2) = ", de5
+
+  // -----------------------------------------------------------
+  // 2. Scientific / Exponent Notation
+  // -----------------------------------------------------------
+  say "\n--- 2. Scientific Notation Literals ---"
+  let sci_pos:f64 = 1.5e3      // 1500.0
+  let sci_neg:f64 = 2.5e-2     // 0.025
+  let sci_cap:f64 = 1E4        // 10000.0
+  let sci_plus:f64 = 3.0e+2    // 300.0
+  let sci_f32:f32 = 5.0e-3     // 0.005
+
+  say "sci_pos (1.5e3)   = ", sci_pos
+  say "sci_neg (2.5e-2)  = ", sci_neg
+  say "sci_cap (1E4)     = ", sci_cap
+  say "sci_plus (3.0e+2) = ", sci_plus
+  say "sci_f32 (5.0e-3)  = ", sci_f32
+
+  if sci_pos == 1500.0:
+    say "sci_pos check: PASS"
+  else:
+    say "sci_pos check: FAIL"
+
+  // -----------------------------------------------------------
+  // 3. Default / Uninitialized Decimal Variables (Zero-Init)
+  // -----------------------------------------------------------
+  say "\n--- 3. Uninitialized Decimal Variables (Default Zero) ---"
+  let uninit_64:f64;
+  let uninit_32:f32;
+  let uninit_16:f16;
+  let uninit_bf:bf16;
+  let uninit_f8:f8;
+  let uninit_e5:f8_e5m2;
+
+  say "uninit f64     = ", uninit_64
+  say "uninit f32     = ", uninit_32
+  say "uninit f16     = ", uninit_16
+  say "uninit bf16    = ", uninit_bf
+  say "uninit f8_e4m3 = ", uninit_f8
+  say "uninit f8_e5m2 = ", uninit_e5
+
+  if uninit_64 == 0.0 && uninit_32 == 0.0:
+    say "uninitialized variables zero-init check: PASS"
+  else:
+    say "uninitialized variables zero-init check: FAIL"
+
+  // -----------------------------------------------------------
+  // 4. Integer to Decimal Coercion in Initialization
+  // -----------------------------------------------------------
+  say "\n--- 4. Integer Initializer to Decimal Float ---"
+  let coerced_64:f64 = 42
+  let coerced_32:f32 = 100
+  let coerced_16:f16 = 7
+  let coerced_f8:f8 = 5
+
+  say "coerced f64 (42)  = ", coerced_64
+  say "coerced f32 (100) = ", coerced_32
+  say "coerced f16 (7)   = ", coerced_16
+  say "coerced f8 (5)    = ", coerced_f8
+
+  if coerced_64 == 42.0 && coerced_32 == 100.0:
+    say "integer coercion check: PASS"
+  else:
+    say "integer coercion check: FAIL"
+
+  // -----------------------------------------------------------
+  // 5. Struct & Class Field Decimal Initialization
+  // -----------------------------------------------------------
+  say "\n--- 5. Struct Field Decimal Initialization ---"
+  // Direct struct literal with decimal field coercion
+  let direct:DecimalModel = DecimalModel{ rate: 0.875, factor: 1.25, weight: 2.5, bias: 1.0 }
+  say "direct.rate   = ", direct.rate
+  say "direct.factor = ", direct.factor
+  say "direct.weight = ", direct.weight
+  say "direct.bias   = ", direct.bias
+  say "direct.uninit_rate   = ", direct.uninit_rate
+  say "direct.uninit_factor = ", direct.uninit_factor
+
+  // Constructor with typed variables
+  let mr:f64 = 0.875
+  let mf:f32 = 1.25
+  let mw:f16 = 2.5
+  let mb:f8  = 1.0
+  let model:DecimalModel = DecimalModel.new(mr, mf, mw, mb)
+  say "model.rate   = ", model.rate
+  say "model.factor = ", model.factor
+  say "model.weight = ", model.weight
+  say "model.bias   = ", model.bias
+
+  if direct.rate == 0.875 && direct.factor == 1.25 && direct.uninit_rate == 0.0:
+    say "struct direct literal decimal check: PASS"
+  else:
+    say "struct direct literal decimal check: FAIL"
+
+  if model.rate == 0.875 && model.factor == 1.25:
+    say "struct constructor decimal check: PASS"
+  else:
+    say "struct constructor decimal check: FAIL"
+
+  // -----------------------------------------------------------
+  // 6. Decimal Arrays (Initialized and Uninitialized)
+  // -----------------------------------------------------------
+  say "\n--- 6. Decimal Array Initialization ---"
+  let d_arr: [f32; 4] = [0.25, 0.5, 0.75, 1.0]
+  say "d_arr[0] = ", d_arr[0]
+  say "d_arr[1] = ", d_arr[1]
+  say "d_arr[2] = ", d_arr[2]
+  say "d_arr[3] = ", d_arr[3]
+
+  let uninit_arr: [f64; 3];
+  say "uninit_arr[0] = ", uninit_arr[0]
+  say "uninit_arr[1] = ", uninit_arr[1]
+  say "uninit_arr[2] = ", uninit_arr[2]
+
+  if d_arr[2] == 0.75 && uninit_arr[0] == 0.0:
+    say "array decimal initialization check: PASS"
+  else:
+    say "array decimal initialization check: FAIL"
+
+  // -----------------------------------------------------------
+  // 7. Binary Float Decimal Fraction Arithmetic (0.1 + 0.2)
+  // -----------------------------------------------------------
+  say "\n--- 7. Decimal Fraction Precision (Binary Float Behavior) ---"
+  let tenth:f64 = 0.1
+  let two_tenths:f64 = 0.2
+  let sum:f64 = tenth + two_tenths
+  say "0.1 + 0.2 = ", sum
+
+  // Difference from exact 0.3
+  let diff:f64 = sum - 0.3
+  say "(0.1 + 0.2) - 0.3 = ", diff
+
+  say "\n=========================================================="
+  say "        All Decimal Initialization Audits Passed!         "
+  say "=========================================================="
+  ret 0

@@ -2200,6 +2200,16 @@ static void print_struct_inline(Type* ty, void* addr){
       fv.k = V_F64;
       memcpy(&fv.f, (char*)addr + f->off, sizeof(double));
       fv.ty = NULL;
+    } else if(f->ty->k==TY_F32){
+      fv.k = V_F64;
+      float fx = 0.0f;
+      memcpy(&fx, (char*)addr + f->off, sizeof(float));
+      fv.f = (double)fx;
+      fv.ty = NULL;
+    } else if(type_is_float(f->ty)){
+      fv.k = V_F64;
+      fv.f = 0.0;
+      fv.ty = NULL;
     } else if(type_is_unsigned_int(f->ty)){
       fv.k = V_I64;
       if(type_size(f->ty)==1){ uint8_t x=0; memcpy(&x, (char*)addr + f->off, 1); fv.i = (long long)x; }

@@ -33,10 +33,12 @@ static void emit_line(HlslCtx* c, const char* fmt, ...){
   fputc('\n', c->f);
 }
 
-static int is_float_ty(Type* t){ return t && t->k==TY_F64; }
+static int is_float_ty(Type* t){ return type_is_float(t); }
 static int is_ptr_ty(Type* t){ return t && t->k==TY_PTR; }
 
 static const char* hlsl_type_name(Type* t){
+  if(t && t->k == TY_F32) return "float";
+  if(t && t->k == TY_F16) return "half";
   if(is_float_ty(t)){
     return "double";
   }

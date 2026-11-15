@@ -11,6 +11,11 @@ typedef enum {
   TY_U16,
   TY_U32,
   TY_U64,
+  TY_F8_E4M3,
+  TY_F8_E5M2,
+  TY_F16,
+  TY_BF16,
+  TY_F32,
   TY_F64,
   TY_PTR,
   TY_ARRAY,
@@ -50,6 +55,11 @@ typedef struct {
   Type* ty_u16;
   Type* ty_u32;
   Type* ty_u64;
+  Type* ty_f8_e4m3;
+  Type* ty_f8_e5m2;
+  Type* ty_f16;
+  Type* ty_bf16;
+  Type* ty_f32;
   Type* ty_f64;
   Type* ty_void;
 } BuiltinTypes;
@@ -87,6 +97,7 @@ int   type_align(Type* t);
 int   type_is_int(Type* t);
 int   type_is_signed_int(Type* t);
 int   type_is_unsigned_int(Type* t);
+int   type_is_float(Type* t);
 int   type_is_numeric(Type* t);
 int   type_int_bits(Type* t);
 const char* type_builtin_name(Type* t);

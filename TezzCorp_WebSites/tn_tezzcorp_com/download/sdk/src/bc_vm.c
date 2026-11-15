@@ -1324,7 +1324,7 @@ int bc_vm_run_file(const char* path, int debug, int argc, char** argv){
       vm.globals[i] = mem;
       mem_add(&vm, mem, (size_t)g->size);
       if(g->has_init){
-        if(g->ty && g->ty->k==TY_F64){
+        if(g->ty && type_is_float(g->ty)){
           double d = 0.0;
           memcpy(&d, &g->init_fbits, sizeof(double));
           mem_store(&vm, mem, 8, v_f64(d));
