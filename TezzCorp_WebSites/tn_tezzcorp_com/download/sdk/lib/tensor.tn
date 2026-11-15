@@ -28,6 +28,35 @@ struct TensorData:
   cols:int
   size:int
 
+// N-Dimensional Strided Tensor (Rank 0 to 8)
+// Powers deep learning, zero-copy views, autograd, and fused kernels.
+struct Tensor:
+  data:*float
+  ndim:int
+  shape0:int
+  shape1:int
+  shape2:int
+  shape3:int
+  shape4:int
+  shape5:int
+  shape6:int
+  shape7:int
+  stride0:int
+  stride1:int
+  stride2:int
+  stride3:int
+  stride4:int
+  stride5:int
+  stride6:int
+  stride7:int
+  offset:int
+  size:int
+  dtype:int
+  is_view:int
+  requires_grad:int
+  grad:*Tensor
+  node_id:int
+
 struct TensorDesc:
   dtype:int
   rows:int
@@ -267,8 +296,8 @@ fn tensor_dot(a:TensorData, b:TensorData) -> TensorData:
     i = i + 1
   ret c
 
-// Advanced Element-wise Addition using AXPBY SIMD (alpha=1, beta=1)
-fn tensor_add(a:TensorData, b:TensorData) -> TensorData:
+// Advanced Element-wise Addition using AXPBY SIMD (alpha=1, beta=1) for legacy TensorData
+fn tensor_data_add(a:TensorData, b:TensorData) -> TensorData:
   if a.size != b.size:
     ret tensor_new(0, 0)
   c:TensorData = tensor_new(a.rows, a.cols)
@@ -279,27 +308,26 @@ fn tensor_add(a:TensorData, b:TensorData) -> TensorData:
   simd.axpby(c.data, b.data, a.size, 1.0, 1.0)
   ret c
 
-// Apply SIMD-accelerated ReLU (Rectified Linear Unit)
-fn tensor_relu(a:TensorData) -> TensorData:
+// Apply SIMD-accelerated ReLU (Rectified Linear Unit) for TensorData
+fn tensor_data_relu(a:TensorData) -> TensorData:
   c:TensorData = tensor_new(a.rows, a.cols)
   simd.map_relu(c.data, a.data, a.size)
   ret c
 
-// Apply SIMD-accelerated GELU (Gaussian Error Linear Unit)
-// Heavily used in LLM Transformers (GPT, LLaMA).
-fn tensor_gelu(a:TensorData) -> TensorData:
+// Apply SIMD-accelerated GELU (Gaussian Error Linear Unit) for TensorData
+fn tensor_data_gelu(a:TensorData) -> TensorData:
   c:TensorData = tensor_new(a.rows, a.cols)
   simd.map_gelu(c.data, a.data, a.size)
   ret c
 
-// Apply SIMD-accelerated Sigmoid
-fn tensor_sigmoid(a:TensorData) -> TensorData:
+// Apply SIMD-accelerated Sigmoid for TensorData
+fn tensor_data_sigmoid(a:TensorData) -> TensorData:
   c:TensorData = tensor_new(a.rows, a.cols)
   simd.map_sigmoid(c.data, a.data, a.size)
   ret c
 
-// Softmax Layer: Exp(x) / Sum(Exp(x))
-fn tensor_softmax(a:TensorData) -> TensorData:
+// Softmax Layer: Exp(x) / Sum(Exp(x)) for TensorData
+fn tensor_data_softmax(a:TensorData) -> TensorData:
   c:TensorData = tensor_new(a.rows, a.cols)
   i:int = 0
   while i < a.rows:
@@ -338,4 +366,3331 @@ fn tensor_print(t:TensorData) -> int:
       say val
       j = j + 1
     i = i + 1
+  ret 0
+
+// ============================================================
+// Phase 1: N-Dimensional Strided Tensor Primitives & Views
+// ============================================================
+
+fn tensor_shape(t:Tensor, axis:int) -> int:
+  if axis == 0: ret t.shape0
+  if axis == 1: ret t.shape1
+  if axis == 2: ret t.shape2
+  if axis == 3: ret t.shape3
+  if axis == 4: ret t.shape4
+  if axis == 5: ret t.shape5
+  if axis == 6: ret t.shape6
+  if axis == 7: ret t.shape7
+  ret 0
+
+fn tensor_stride(t:Tensor, axis:int) -> int:
+  if axis == 0: ret t.stride0
+  if axis == 1: ret t.stride1
+  if axis == 2: ret t.stride2
+  if axis == 3: ret t.stride3
+  if axis == 4: ret t.stride4
+  if axis == 5: ret t.stride5
+  if axis == 6: ret t.stride6
+  if axis == 7: ret t.stride7
+  ret 0
+
+fn tensor_set_shape(t:Tensor, axis:int, v:int) -> Tensor:
+  out:Tensor = t
+  if axis == 0: out.shape0 = v
+  else if axis == 1: out.shape1 = v
+  else if axis == 2: out.shape2 = v
+  else if axis == 3: out.shape3 = v
+  else if axis == 4: out.shape4 = v
+  else if axis == 5: out.shape5 = v
+  else if axis == 6: out.shape6 = v
+  else if axis == 7: out.shape7 = v
+  ret out
+
+fn tensor_set_stride(t:Tensor, axis:int, v:int) -> Tensor:
+  out:Tensor = t
+  if axis == 0: out.stride0 = v
+  else if axis == 1: out.stride1 = v
+  else if axis == 2: out.stride2 = v
+  else if axis == 3: out.stride3 = v
+  else if axis == 4: out.stride4 = v
+  else if axis == 5: out.stride5 = v
+  else if axis == 6: out.stride6 = v
+  else if axis == 7: out.stride7 = v
+  ret out
+
+// Recompute canonical contiguous strides and total size
+fn tensor_calc_strides(t:Tensor) -> Tensor:
+  out:Tensor = t
+  nd:int = t.ndim
+  if nd <= 0:
+    out.size = 0
+    ret out
+
+  stride:int = 1
+  total:int = 1
+
+  if nd >= 8:
+    out.stride7 = stride
+    stride = stride * out.shape7
+    total = total * out.shape7
+  else:
+    out.shape7 = 0
+    out.stride7 = 0
+
+  if nd >= 7:
+    out.stride6 = stride
+    stride = stride * out.shape6
+    total = total * out.shape6
+  else:
+    out.shape6 = 0
+    out.stride6 = 0
+
+  if nd >= 6:
+    out.stride5 = stride
+    stride = stride * out.shape5
+    total = total * out.shape5
+  else:
+    out.shape5 = 0
+    out.stride5 = 0
+
+  if nd >= 5:
+    out.stride4 = stride
+    stride = stride * out.shape4
+    total = total * out.shape4
+  else:
+    out.shape4 = 0
+    out.stride4 = 0
+
+  if nd >= 4:
+    out.stride3 = stride
+    stride = stride * out.shape3
+    total = total * out.shape3
+  else:
+    out.shape3 = 0
+    out.stride3 = 0
+
+  if nd >= 3:
+    out.stride2 = stride
+    stride = stride * out.shape2
+    total = total * out.shape2
+  else:
+    out.shape2 = 0
+    out.stride2 = 0
+
+  if nd >= 2:
+    out.stride1 = stride
+    stride = stride * out.shape1
+    total = total * out.shape1
+  else:
+    out.shape1 = 0
+    out.stride1 = 0
+
+  if nd >= 1:
+    out.stride0 = stride
+    stride = stride * out.shape0
+    total = total * out.shape0
+  else:
+    out.shape0 = 0
+    out.stride0 = 0
+
+  out.size = total
+  ret out
+
+fn tensor_empty_raw(ndim:int, d0:int, d1:int, d2:int, d3:int) -> Tensor:
+  t:Tensor
+  t.ndim = ndim
+  t.shape0 = d0
+  t.shape1 = d1
+  t.shape2 = d2
+  t.shape3 = d3
+  t.shape4 = 0
+  t.shape5 = 0
+  t.shape6 = 0
+  t.shape7 = 0
+  t.offset = 0
+  t.dtype = TENSOR_DTYPE_F64
+  t.is_view = 0
+  t.requires_grad = 0
+  t.node_id = 0
+  unsafe:
+    t.grad = 0 as *Tensor
+    t.data = 0 as *float
+  t = tensor_calc_strides(t)
+  if t.size > 0:
+    unsafe:
+      raw:*char = malloc(t.size * 8)
+      t.data = raw as *float
+  ret t
+
+fn tensor_1d(d0:int) -> Tensor:
+  ret tensor_empty_raw(1, d0, 0, 0, 0)
+
+fn tensor_2d(d0:int, d1:int) -> Tensor:
+  ret tensor_empty_raw(2, d0, d1, 0, 0)
+
+fn tensor_3d(d0:int, d1:int, d2:int) -> Tensor:
+  ret tensor_empty_raw(3, d0, d1, d2, 0)
+
+fn tensor_4d(d0:int, d1:int, d2:int, d3:int) -> Tensor:
+  ret tensor_empty_raw(4, d0, d1, d2, d3)
+
+fn tensor_fill(t:Tensor, val:float) -> int:
+  unsafe:
+    if t.data == 0 as *float || t.size <= 0:
+      ret 0
+  i:int = 0
+  while i < t.size:
+    unsafe:
+      t.data[i] = val
+    i = i + 1
+  ret 0
+
+fn tensor_zeros_1d(d0:int) -> Tensor:
+  t:Tensor = tensor_1d(d0)
+  tensor_fill(t, 0.0)
+  ret t
+
+fn tensor_zeros_2d(d0:int, d1:int) -> Tensor:
+  t:Tensor = tensor_2d(d0, d1)
+  tensor_fill(t, 0.0)
+  ret t
+
+fn tensor_zeros_3d(d0:int, d1:int, d2:int) -> Tensor:
+  t:Tensor = tensor_3d(d0, d1, d2)
+  tensor_fill(t, 0.0)
+  ret t
+
+fn tensor_zeros_4d(d0:int, d1:int, d2:int, d3:int) -> Tensor:
+  t:Tensor = tensor_4d(d0, d1, d2, d3)
+  tensor_fill(t, 0.0)
+  ret t
+
+fn tensor_ones_1d(d0:int) -> Tensor:
+  t:Tensor = tensor_1d(d0)
+  tensor_fill(t, 1.0)
+  ret t
+
+fn tensor_ones_2d(d0:int, d1:int) -> Tensor:
+  t:Tensor = tensor_2d(d0, d1)
+  tensor_fill(t, 1.0)
+  ret t
+
+fn tensor_ones_3d(d0:int, d1:int, d2:int) -> Tensor:
+  t:Tensor = tensor_3d(d0, d1, d2)
+  tensor_fill(t, 1.0)
+  ret t
+
+fn tensor_ones_4d(d0:int, d1:int, d2:int, d3:int) -> Tensor:
+  t:Tensor = tensor_4d(d0, d1, d2, d3)
+  tensor_fill(t, 1.0)
+  ret t
+
+// PRNG for tensor initialization
+static let _t_seed:int = 1337
+
+fn tensor_set_seed(s:int) -> int:
+  _t_seed = s
+  ret 0
+
+fn tensor_randf() -> float:
+  _t_seed = _t_seed * 1664525 + 1013904223
+  bits:int = (_t_seed >> 8) & 16777215
+  ret (bits as float) / 16777216.0
+
+// Box-Muller normal random distribution
+fn tensor_randn_2d(d0:int, d1:int, mean:float, std:float) -> Tensor:
+  t:Tensor = tensor_2d(d0, d1)
+  i:int = 0
+  while i < t.size:
+    u1:float = tensor_randf()
+    u2:float = tensor_randf()
+    if u1 < 1.0e-07:
+      u1 = 1.0e-07
+    z0:float = math.sqrt((0.0 - 2.0) * math.log(u1)) * math.cos(2.0 * math.PI() * u2)
+    unsafe:
+      t.data[i] = mean + std * z0
+    i = i + 1
+  ret t
+
+// Free tensor data if owner
+fn tensor_free_tensor(t:Tensor) -> int:
+  unsafe:
+    if t.is_view == 0 && t.data != 0 as *float:
+      free(t.data as *char)
+  ret 0
+
+// Fast element accessors
+fn tensor_get1(t:Tensor, i:int) -> float:
+  idx:int = t.offset + i * t.stride0
+  v:float = 0.0
+  unsafe:
+    v = t.data[idx]
+  ret v
+
+fn tensor_set1(t:Tensor, i:int, val:float) -> int:
+  idx:int = t.offset + i * t.stride0
+  unsafe:
+    t.data[idx] = val
+  ret 0
+
+fn tensor_get2(t:Tensor, i:int, j:int) -> float:
+  idx:int = t.offset + i * t.stride0 + j * t.stride1
+  v:float = 0.0
+  unsafe:
+    v = t.data[idx]
+  ret v
+
+fn tensor_set2(t:Tensor, i:int, j:int, val:float) -> int:
+  idx:int = t.offset + i * t.stride0 + j * t.stride1
+  unsafe:
+    t.data[idx] = val
+  ret 0
+
+fn tensor_get3(t:Tensor, i:int, j:int, k:int) -> float:
+  idx:int = t.offset + i * t.stride0 + j * t.stride1 + k * t.stride2
+  v:float = 0.0
+  unsafe:
+    v = t.data[idx]
+  ret v
+
+fn tensor_set3(t:Tensor, i:int, j:int, k:int, val:float) -> int:
+  idx:int = t.offset + i * t.stride0 + j * t.stride1 + k * t.stride2
+  unsafe:
+    t.data[idx] = val
+  ret 0
+
+fn tensor_get4(t:Tensor, b:int, h:int, s:int, d:int) -> float:
+  idx:int = t.offset + b * t.stride0 + h * t.stride1 + s * t.stride2 + d * t.stride3
+  v:float = 0.0
+  unsafe:
+    v = t.data[idx]
+  ret v
+
+fn tensor_set4(t:Tensor, b:int, h:int, s:int, d:int, val:float) -> int:
+  idx:int = t.offset + b * t.stride0 + h * t.stride1 + s * t.stride2 + d * t.stride3
+  unsafe:
+    t.data[idx] = val
+  ret 0
+
+// Check if memory layout is contiguous
+fn tensor_is_contiguous(t:Tensor) -> int:
+  if t.ndim <= 0:
+    ret 1
+  if t.size <= 1:
+    ret 1
+  expected_stride:int = 1
+  d:int = t.ndim - 1
+  while d >= 0:
+    s:int = tensor_shape(t, d)
+    st:int = tensor_stride(t, d)
+    if s > 1:
+      if st != expected_stride:
+        ret 0
+      expected_stride = expected_stride * s
+    d = d - 1
+  ret 1
+
+// Convert multi-index to flat strided offset
+fn _tensor_unravel_offset(t:Tensor, k:int) -> int:
+  off:int = t.offset
+  rem:int = k
+  d:int = t.ndim - 1
+  while d >= 0:
+    s:int = tensor_shape(t, d)
+    st:int = tensor_stride(t, d)
+    coord:int = 0
+    if s > 0:
+      coord = rem % s
+      rem = rem / s
+    off = off + coord * st
+    d = d - 1
+  ret off
+
+// Return contiguous copy of tensor
+fn tensor_contiguous(t:Tensor) -> Tensor:
+  if tensor_is_contiguous(t) != 0 && t.offset == 0:
+    ret t
+
+  out:Tensor
+  out.ndim = t.ndim
+  out.shape0 = t.shape0
+  out.shape1 = t.shape1
+  out.shape2 = t.shape2
+  out.shape3 = t.shape3
+  out.shape4 = t.shape4
+  out.shape5 = t.shape5
+  out.shape6 = t.shape6
+  out.shape7 = t.shape7
+  out.offset = 0
+  out.size = t.size
+  out.dtype = t.dtype
+  out.is_view = 0
+  out.requires_grad = t.requires_grad
+  out.node_id = 0
+  unsafe:
+    out.grad = 0 as *Tensor
+    out.data = 0 as *float
+  out = tensor_calc_strides(out)
+
+  if out.size > 0:
+    unsafe:
+      raw:*char = malloc(out.size * 8)
+      out.data = raw as *float
+    k:int = 0
+    while k < out.size:
+      src_off:int = _tensor_unravel_offset(t, k)
+      unsafe:
+        out.data[k] = t.data[src_off]
+      k = k + 1
+  ret out
+
+// Deep copy of tensor
+fn tensor_clone(t:Tensor) -> Tensor:
+  out:Tensor
+  out.ndim = t.ndim
+  out.shape0 = t.shape0
+  out.shape1 = t.shape1
+  out.shape2 = t.shape2
+  out.shape3 = t.shape3
+  out.shape4 = t.shape4
+  out.shape5 = t.shape5
+  out.shape6 = t.shape6
+  out.shape7 = t.shape7
+  out.offset = 0
+  out.size = t.size
+  out.dtype = t.dtype
+  out.is_view = 0
+  out.requires_grad = t.requires_grad
+  out.node_id = 0
+  unsafe:
+    out.grad = 0 as *Tensor
+    out.data = 0 as *float
+  out = tensor_calc_strides(out)
+
+  if out.size > 0:
+    unsafe:
+      raw:*char = malloc(out.size * 8)
+      out.data = raw as *float
+    k:int = 0
+    while k < out.size:
+      src_off:int = _tensor_unravel_offset(t, k)
+      unsafe:
+        out.data[k] = t.data[src_off]
+      k = k + 1
+  ret out
+
+// Zero-copy Transpose swapping axis0 and axis1
+fn tensor_transpose(t:Tensor, a0:int, a1:int) -> Tensor:
+  v:Tensor = t
+  v.is_view = 1
+
+  s0:int = tensor_shape(t, a0)
+  s1:int = tensor_shape(t, a1)
+  st0:int = tensor_stride(t, a0)
+  st1:int = tensor_stride(t, a1)
+
+  v = tensor_set_shape(v, a0, s1)
+  v = tensor_set_shape(v, a1, s0)
+  v = tensor_set_stride(v, a0, st1)
+  v = tensor_set_stride(v, a1, st0)
+
+  ret v
+
+// 2D Transpose convenience
+fn tensor_t(t:Tensor) -> Tensor:
+  ret tensor_transpose(t, 0, 1)
+
+// Zero-copy 4D Permute (e.g. for attention [B, S, H, D] -> [B, H, S, D] is permute 0, 2, 1, 3)
+fn tensor_permute_4d(t:Tensor, p0:int, p1:int, p2:int, p3:int) -> Tensor:
+  v:Tensor = t
+  v.is_view = 1
+  v.ndim = 4
+  v.shape0 = tensor_shape(t, p0)
+  v.shape1 = tensor_shape(t, p1)
+  v.shape2 = tensor_shape(t, p2)
+  v.shape3 = tensor_shape(t, p3)
+  v.stride0 = tensor_stride(t, p0)
+  v.stride1 = tensor_stride(t, p1)
+  v.stride2 = tensor_stride(t, p2)
+  v.stride3 = tensor_stride(t, p3)
+  ret v
+
+// Zero-copy Strided Slicing along an axis
+fn tensor_slice(t:Tensor, axis:int, start:int, end:int, step:int) -> Tensor:
+  v:Tensor = t
+  v.is_view = 1
+  cur_dim:int = tensor_shape(t, axis)
+  if start < 0:
+    start = 0
+  if end > cur_dim:
+    end = cur_dim
+  if step <= 0:
+    step = 1
+
+  new_len:int = 0
+  if end > start:
+    new_len = (end - start + step - 1) / step
+
+  cur_st:int = tensor_stride(t, axis)
+  v.offset = t.offset + start * cur_st
+  v = tensor_set_shape(v, axis, new_len)
+  v = tensor_set_stride(v, axis, cur_st * step)
+
+  // Recompute total size
+  tot:int = 1
+  i:int = 0
+  while i < v.ndim:
+    tot = tot * tensor_shape(v, i)
+    i = i + 1
+  v.size = tot
+
+  ret v
+
+// Zero-copy Squeeze: removes axis of size 1
+fn tensor_squeeze(t:Tensor, axis:int) -> Tensor:
+  if axis < 0 || axis >= t.ndim || tensor_shape(t, axis) != 1 || t.ndim <= 1:
+    ret t
+  v:Tensor = t
+  v.is_view = 1
+  i:int = axis
+  while i < v.ndim - 1:
+    v = tensor_set_shape(v, i, tensor_shape(v, i + 1))
+    v = tensor_set_stride(v, i, tensor_stride(v, i + 1))
+    i = i + 1
+  v = tensor_set_shape(v, v.ndim - 1, 0)
+  v = tensor_set_stride(v, v.ndim - 1, 0)
+  v.ndim = v.ndim - 1
+  ret v
+
+// Zero-copy Unsqueeze: inserts dimension of size 1 at axis
+fn tensor_unsqueeze(t:Tensor, axis:int) -> Tensor:
+  if axis < 0 || axis > t.ndim || t.ndim >= 8:
+    ret t
+  v:Tensor = t
+  v.is_view = 1
+  i:int = v.ndim
+  while i > axis:
+    v = tensor_set_shape(v, i, tensor_shape(v, i - 1))
+    v = tensor_set_stride(v, i, tensor_stride(v, i - 1))
+    i = i - 1
+  v = tensor_set_shape(v, axis, 1)
+  st:int = 1
+  if axis < v.ndim:
+    st = tensor_stride(v, axis + 1) * tensor_shape(v, axis + 1)
+  v = tensor_set_stride(v, axis, st)
+  v.ndim = v.ndim + 1
+  ret v
+
+// Reshape tensor (zero-copy if contiguous, repack if non-contiguous)
+fn tensor_reshape_2d(t:Tensor, d0:int, d1:int) -> Tensor:
+  if d0 * d1 != t.size:
+    say "Error: reshape size mismatch! expected ", t.size, " got ", d0 * d1
+    ret t
+
+  base:Tensor = t
+  if tensor_is_contiguous(t) == 0:
+    base = tensor_contiguous(t)
+
+  v:Tensor = base
+  v.is_view = 1
+  v.ndim = 2
+  v.shape0 = d0
+  v.shape1 = d1
+  v.shape2 = 0
+  v.shape3 = 0
+  v = tensor_calc_strides(v)
+  ret v
+
+fn tensor_reshape_1d(t:Tensor, d0:int) -> Tensor:
+  if d0 != t.size:
+    say "Error: reshape size mismatch! expected ", t.size, " got ", d0
+    ret t
+
+  base:Tensor = t
+  if tensor_is_contiguous(t) == 0:
+    base = tensor_contiguous(t)
+
+  v:Tensor = base
+  v.is_view = 1
+  v.ndim = 1
+  v.shape0 = d0
+  v.shape1 = 0
+  v.shape2 = 0
+  v.shape3 = 0
+  v = tensor_calc_strides(v)
+  ret v
+
+fn tensor_reshape_4d(t:Tensor, d0:int, d1:int, d2:int, d3:int) -> Tensor:
+  if d0 * d1 * d2 * d3 != t.size:
+    say "Error: reshape 4D size mismatch!"
+    ret t
+
+  base:Tensor = t
+  if tensor_is_contiguous(t) == 0:
+    base = tensor_contiguous(t)
+
+  v:Tensor = base
+  v.is_view = 1
+  v.ndim = 4
+  v.shape0 = d0
+  v.shape1 = d1
+  v.shape2 = d2
+  v.shape3 = d3
+  v = tensor_calc_strides(v)
+  ret v
+
+fn tensor_flatten(t:Tensor) -> Tensor:
+  ret tensor_reshape_1d(t, t.size)
+
+// Neatly print tensor details
+fn tensor_print_t(t:Tensor) -> int:
+  say "Tensor(ndim=", t.ndim, ", size=", t.size, ", offset=", t.offset, ", is_view=", t.is_view, "):"
+  say "  shape=[", t.shape0, ", ", t.shape1, ", ", t.shape2, ", ", t.shape3, "]"
+  say "  strides=[", t.stride0, ", ", t.stride1, ", ", t.stride2, ", ", t.stride3, "]"
+  say "  contiguous=", tensor_is_contiguous(t)
+  if t.ndim == 1:
+    i:int = 0
+    while i < t.shape0 && i < 8:
+      say "    [", i, "] = ", tensor_get1(t, i)
+      i = i + 1
+  else if t.ndim == 2:
+    r:int = 0
+    while r < t.shape0 && r < 4:
+      c:int = 0
+      while c < t.shape1 && c < 4:
+        say "    [", r, ", ", c, "] = ", tensor_get2(t, r, c)
+        c = c + 1
+      r = r + 1
+  else if t.ndim == 3:
+    b:int = 0
+    while b < t.shape0 && b < 2:
+      r:int = 0
+      while r < t.shape1 && r < 4:
+        c:int = 0
+        while c < t.shape2 && c < 4:
+          say "    [", b, ", ", r, ", ", c, "] = ", tensor_get3(t, b, r, c)
+          c = c + 1
+        r = r + 1
+      b = b + 1
+  else if t.ndim >= 4:
+    b0:int = 0
+    while b0 < t.shape0 && b0 < 2:
+      b1:int = 0
+      while b1 < t.shape1 && b1 < 2:
+        r:int = 0
+        while r < t.shape2 && r < 4:
+          c:int = 0
+          while c < t.shape3 && c < 4:
+            say "    [", b0, ", ", b1, ", ", r, ", ", c, "] = ", tensor_get4(t, b0, b1, r, c)
+            c = c + 1
+          r = r + 1
+        b1 = b1 + 1
+      b0 = b0 + 1
+  ret 0
+
+// Compatibility Bridges between legacy TensorData and modern Tensor
+fn tensor_from_data_2d(td:TensorData) -> Tensor:
+  t:Tensor
+  t.ndim = 2
+  t.shape0 = td.rows
+  t.shape1 = td.cols
+  t.shape2 = 0
+  t.shape3 = 0
+  t.shape4 = 0
+  t.shape5 = 0
+  t.shape6 = 0
+  t.shape7 = 0
+  t.offset = 0
+  t.size = td.size
+  t.dtype = TENSOR_DTYPE_F64
+  t.is_view = 1
+  t.requires_grad = 0
+  t.node_id = 0
+  unsafe:
+    t.grad = 0 as *Tensor
+    t.data = td.data
+  t = tensor_calc_strides(t)
+  ret t
+
+fn tensor_to_data_2d(t:Tensor) -> TensorData:
+  c:Tensor = t
+  if tensor_is_contiguous(t) == 0:
+    c = tensor_contiguous(t)
+  td:TensorData
+  td.rows = c.shape0
+  td.cols = c.shape1
+  td.size = c.size
+  td.data = c.data
+  ret td
+
+// ============================================================
+// Phase 2: Native Tensor Math (BLAS, GEMM, Broadcast, Reductions)
+// ============================================================
+
+// -------------------------------------------------------------
+// Matrix Multiplication (GEMM & BMM)
+// -------------------------------------------------------------
+
+fn _tensor_matmul_2d(a:Tensor, b:Tensor) -> Tensor:
+  m:int = a.shape0
+  k:int = a.shape1
+  n:int = b.shape1
+  c:Tensor = tensor_zeros_2d(m, n)
+
+  i:int = 0
+  while i < m:
+    j:int = 0
+    while j < n:
+      sum:float = 0.0
+      p:int = 0
+      lim_k:int = k - (k % 8)
+      s0:float = 0.0
+      s1:float = 0.0
+      s2:float = 0.0
+      s3:float = 0.0
+      s4:float = 0.0
+      s5:float = 0.0
+      s6:float = 0.0
+      s7:float = 0.0
+      while p < lim_k:
+        idx_a0:int = a.offset + i * a.stride0 + (p + 0) * a.stride1
+        idx_b0:int = b.offset + (p + 0) * b.stride0 + j * b.stride1
+        idx_a1:int = a.offset + i * a.stride0 + (p + 1) * a.stride1
+        idx_b1:int = b.offset + (p + 1) * b.stride0 + j * b.stride1
+        idx_a2:int = a.offset + i * a.stride0 + (p + 2) * a.stride1
+        idx_b2:int = b.offset + (p + 2) * b.stride0 + j * b.stride1
+        idx_a3:int = a.offset + i * a.stride0 + (p + 3) * a.stride1
+        idx_b3:int = b.offset + (p + 3) * b.stride0 + j * b.stride1
+        idx_a4:int = a.offset + i * a.stride0 + (p + 4) * a.stride1
+        idx_b4:int = b.offset + (p + 4) * b.stride0 + j * b.stride1
+        idx_a5:int = a.offset + i * a.stride0 + (p + 5) * a.stride1
+        idx_b5:int = b.offset + (p + 5) * b.stride0 + j * b.stride1
+        idx_a6:int = a.offset + i * a.stride0 + (p + 6) * a.stride1
+        idx_b6:int = b.offset + (p + 6) * b.stride0 + j * b.stride1
+        idx_a7:int = a.offset + i * a.stride0 + (p + 7) * a.stride1
+        idx_b7:int = b.offset + (p + 7) * b.stride0 + j * b.stride1
+        unsafe:
+          s0 = s0 + a.data[idx_a0] * b.data[idx_b0]
+          s1 = s1 + a.data[idx_a1] * b.data[idx_b1]
+          s2 = s2 + a.data[idx_a2] * b.data[idx_b2]
+          s3 = s3 + a.data[idx_a3] * b.data[idx_b3]
+          s4 = s4 + a.data[idx_a4] * b.data[idx_b4]
+          s5 = s5 + a.data[idx_a5] * b.data[idx_b5]
+          s6 = s6 + a.data[idx_a6] * b.data[idx_b6]
+          s7 = s7 + a.data[idx_a7] * b.data[idx_b7]
+        p = p + 8
+      sum = s0 + s1 + s2 + s3 + s4 + s5 + s6 + s7
+      while p < k:
+        idx_a:int = a.offset + i * a.stride0 + p * a.stride1
+        idx_b:int = b.offset + p * b.stride0 + j * b.stride1
+        unsafe:
+          sum = sum + a.data[idx_a] * b.data[idx_b]
+        p = p + 1
+      unsafe:
+        c.data[i * n + j] = sum
+      j = j + 1
+    i = i + 1
+  ret c
+
+fn _tensor_matmul_3d(a:Tensor, b:Tensor) -> Tensor:
+  batch:int = a.shape0
+  m:int = a.shape1
+  k:int = a.shape2
+  n:int = b.shape2
+  c:Tensor = tensor_zeros_3d(batch, m, n)
+
+  bat:int = 0
+  while bat < batch:
+    a_slice:Tensor = a
+    a_slice.ndim = 2
+    a_slice.shape0 = m
+    a_slice.shape1 = k
+    a_slice.stride0 = a.stride1
+    a_slice.stride1 = a.stride2
+    a_slice.offset = a.offset + bat * a.stride0
+    a_slice.size = m * k
+    a_slice.is_view = 1
+
+    b_slice:Tensor = b
+    b_slice.ndim = 2
+    b_slice.shape0 = k
+    b_slice.shape1 = n
+    b_slice.stride0 = b.stride1
+    b_slice.stride1 = b.stride2
+    b_slice.offset = b.offset + bat * b.stride0
+    b_slice.size = k * n
+    b_slice.is_view = 1
+
+    c_2d:Tensor = _tensor_matmul_2d(a_slice, b_slice)
+    row:int = 0
+    while row < m:
+      col:int = 0
+      while col < n:
+        unsafe:
+          c.data[bat * c.stride0 + row * c.stride1 + col * c.stride2] = c_2d.data[row * n + col]
+        col = col + 1
+      row = row + 1
+    tensor_free_tensor(c_2d)
+    bat = bat + 1
+  ret c
+
+fn _tensor_matmul_4d(a:Tensor, b:Tensor) -> Tensor:
+  b0:int = a.shape0
+  b1:int = a.shape1
+  m:int = a.shape2
+  k:int = a.shape3
+  n:int = b.shape3
+  c:Tensor = tensor_zeros_4d(b0, b1, m, n)
+
+  i0:int = 0
+  while i0 < b0:
+    i1:int = 0
+    while i1 < b1:
+      a_slice:Tensor = a
+      a_slice.ndim = 2
+      a_slice.shape0 = m
+      a_slice.shape1 = k
+      a_slice.stride0 = a.stride2
+      a_slice.stride1 = a.stride3
+      a_slice.offset = a.offset + i0 * a.stride0 + i1 * a.stride1
+      a_slice.size = m * k
+      a_slice.is_view = 1
+
+      b_slice:Tensor = b
+      b_slice.ndim = 2
+      b_slice.shape0 = k
+      b_slice.shape1 = n
+      b_slice.stride0 = b.stride2
+      b_slice.stride1 = b.stride3
+      b_slice.offset = b.offset + i0 * b.stride0 + i1 * b.stride1
+      b_slice.size = k * n
+      b_slice.is_view = 1
+
+      c_2d:Tensor = _tensor_matmul_2d(a_slice, b_slice)
+      row:int = 0
+      while row < m:
+        col:int = 0
+        while col < n:
+          unsafe:
+            c.data[i0 * c.stride0 + i1 * c.stride1 + row * c.stride2 + col * c.stride3] = c_2d.data[row * n + col]
+          col = col + 1
+        row = row + 1
+      tensor_free_tensor(c_2d)
+      i1 = i1 + 1
+    i0 = i0 + 1
+  ret c
+
+fn _tensor_matmul_raw(a:Tensor, b:Tensor) -> Tensor:
+  if a.ndim == 2 && b.ndim == 2:
+    ret _tensor_matmul_2d(a, b)
+  if a.ndim == 3 && b.ndim == 3:
+    ret _tensor_matmul_3d(a, b)
+  if a.ndim == 4 && b.ndim == 4:
+    ret _tensor_matmul_4d(a, b)
+  say "Error: tensor_matmul unsupported dimensions!"
+  ret a
+
+fn tensor_bmm(a:Tensor, b:Tensor) -> Tensor:
+  ret tensor_matmul(a, b)
+
+// -------------------------------------------------------------
+// Elementwise Broadcast Arithmetic (Add, Sub, Mul, Div)
+// -------------------------------------------------------------
+
+fn _tensor_add_raw(a:Tensor, b:Tensor) -> Tensor:
+  out_ndim:int = a.ndim
+  if b.ndim > out_ndim: out_ndim = b.ndim
+
+  out_s0:int = a.shape0
+  if b.shape0 > out_s0: out_s0 = b.shape0
+  out_s1:int = a.shape1
+  if b.shape1 > out_s1: out_s1 = b.shape1
+  out_s2:int = a.shape2
+  if b.shape2 > out_s2: out_s2 = b.shape2
+  out_s3:int = a.shape3
+  if b.shape3 > out_s3: out_s3 = b.shape3
+
+  c:Tensor = tensor_empty_raw(out_ndim, out_s0, out_s1, out_s2, out_s3)
+
+  // Fast contiguous path
+  if a.shape0 == b.shape0 && a.shape1 == b.shape1 && a.shape2 == b.shape2 && a.shape3 == b.shape3 && tensor_is_contiguous(a) != 0 && tensor_is_contiguous(b) != 0 && a.offset == 0 && b.offset == 0:
+    i:int = 0
+    lim:int = c.size - (c.size % 8)
+    while i < lim:
+      unsafe:
+        c.data[i + 0] = a.data[i + 0] + b.data[i + 0]
+        c.data[i + 1] = a.data[i + 1] + b.data[i + 1]
+        c.data[i + 2] = a.data[i + 2] + b.data[i + 2]
+        c.data[i + 3] = a.data[i + 3] + b.data[i + 3]
+        c.data[i + 4] = a.data[i + 4] + b.data[i + 4]
+        c.data[i + 5] = a.data[i + 5] + b.data[i + 5]
+        c.data[i + 6] = a.data[i + 6] + b.data[i + 6]
+        c.data[i + 7] = a.data[i + 7] + b.data[i + 7]
+      i = i + 8
+    while i < c.size:
+      unsafe:
+        c.data[i] = a.data[i] + b.data[i]
+      i = i + 1
+    ret c
+
+  // General broadcast path
+  k:int = 0
+  while k < c.size:
+    rem:int = k
+    c3:int = 0
+    c2:int = 0
+    c1:int = 0
+    c0:int = 0
+
+    if out_ndim >= 4 && out_s3 > 0:
+      c3 = rem % out_s3
+      rem = rem / out_s3
+    if out_ndim >= 3 && out_s2 > 0:
+      c2 = rem % out_s2
+      rem = rem / out_s2
+    if out_ndim >= 2 && out_s1 > 0:
+      c1 = rem % out_s1
+      rem = rem / out_s1
+    if out_ndim >= 1 && out_s0 > 0:
+      c0 = rem % out_s0
+      rem = rem / out_s0
+
+    idx_a:int = a.offset
+    if a.shape0 > 1: idx_a = idx_a + c0 * a.stride0
+    if a.shape1 > 1: idx_a = idx_a + c1 * a.stride1
+    if a.shape2 > 1: idx_a = idx_a + c2 * a.stride2
+    if a.shape3 > 1: idx_a = idx_a + c3 * a.stride3
+
+    idx_b:int = b.offset
+    if b.shape0 > 1: idx_b = idx_b + c0 * b.stride0
+    if b.shape1 > 1: idx_b = idx_b + c1 * b.stride1
+    if b.shape2 > 1: idx_b = idx_b + c2 * b.stride2
+    if b.shape3 > 1: idx_b = idx_b + c3 * b.stride3
+
+    unsafe:
+      c.data[k] = a.data[idx_a] + b.data[idx_b]
+    k = k + 1
+
+  ret c
+
+fn _tensor_sub_raw(a:Tensor, b:Tensor) -> Tensor:
+  out_ndim:int = a.ndim
+  if b.ndim > out_ndim: out_ndim = b.ndim
+
+  out_s0:int = a.shape0
+  if b.shape0 > out_s0: out_s0 = b.shape0
+  out_s1:int = a.shape1
+  if b.shape1 > out_s1: out_s1 = b.shape1
+  out_s2:int = a.shape2
+  if b.shape2 > out_s2: out_s2 = b.shape2
+  out_s3:int = a.shape3
+  if b.shape3 > out_s3: out_s3 = b.shape3
+
+  c:Tensor = tensor_empty_raw(out_ndim, out_s0, out_s1, out_s2, out_s3)
+
+  if a.shape0 == b.shape0 && a.shape1 == b.shape1 && a.shape2 == b.shape2 && a.shape3 == b.shape3 && tensor_is_contiguous(a) != 0 && tensor_is_contiguous(b) != 0 && a.offset == 0 && b.offset == 0:
+    i:int = 0
+    lim:int = c.size - (c.size % 8)
+    while i < lim:
+      unsafe:
+        c.data[i + 0] = a.data[i + 0] - b.data[i + 0]
+        c.data[i + 1] = a.data[i + 1] - b.data[i + 1]
+        c.data[i + 2] = a.data[i + 2] - b.data[i + 2]
+        c.data[i + 3] = a.data[i + 3] - b.data[i + 3]
+        c.data[i + 4] = a.data[i + 4] - b.data[i + 4]
+        c.data[i + 5] = a.data[i + 5] - b.data[i + 5]
+        c.data[i + 6] = a.data[i + 6] - b.data[i + 6]
+        c.data[i + 7] = a.data[i + 7] - b.data[i + 7]
+      i = i + 8
+    while i < c.size:
+      unsafe:
+        c.data[i] = a.data[i] - b.data[i]
+      i = i + 1
+    ret c
+
+  k:int = 0
+  while k < c.size:
+    rem:int = k
+    c3:int = 0
+    c2:int = 0
+    c1:int = 0
+    c0:int = 0
+
+    if out_ndim >= 4 && out_s3 > 0:
+      c3 = rem % out_s3
+      rem = rem / out_s3
+    if out_ndim >= 3 && out_s2 > 0:
+      c2 = rem % out_s2
+      rem = rem / out_s2
+    if out_ndim >= 2 && out_s1 > 0:
+      c1 = rem % out_s1
+      rem = rem / out_s1
+    if out_ndim >= 1 && out_s0 > 0:
+      c0 = rem % out_s0
+      rem = rem / out_s0
+
+    idx_a:int = a.offset
+    if a.shape0 > 1: idx_a = idx_a + c0 * a.stride0
+    if a.shape1 > 1: idx_a = idx_a + c1 * a.stride1
+    if a.shape2 > 1: idx_a = idx_a + c2 * a.stride2
+    if a.shape3 > 1: idx_a = idx_a + c3 * a.stride3
+
+    idx_b:int = b.offset
+    if b.shape0 > 1: idx_b = idx_b + c0 * b.stride0
+    if b.shape1 > 1: idx_b = idx_b + c1 * b.stride1
+    if b.shape2 > 1: idx_b = idx_b + c2 * b.stride2
+    if b.shape3 > 1: idx_b = idx_b + c3 * b.stride3
+
+    unsafe:
+      c.data[k] = a.data[idx_a] - b.data[idx_b]
+    k = k + 1
+
+  ret c
+
+fn _tensor_mul_raw(a:Tensor, b:Tensor) -> Tensor:
+  out_ndim:int = a.ndim
+  if b.ndim > out_ndim: out_ndim = b.ndim
+
+  out_s0:int = a.shape0
+  if b.shape0 > out_s0: out_s0 = b.shape0
+  out_s1:int = a.shape1
+  if b.shape1 > out_s1: out_s1 = b.shape1
+  out_s2:int = a.shape2
+  if b.shape2 > out_s2: out_s2 = b.shape2
+  out_s3:int = a.shape3
+  if b.shape3 > out_s3: out_s3 = b.shape3
+
+  c:Tensor = tensor_empty_raw(out_ndim, out_s0, out_s1, out_s2, out_s3)
+
+  if a.shape0 == b.shape0 && a.shape1 == b.shape1 && a.shape2 == b.shape2 && a.shape3 == b.shape3 && tensor_is_contiguous(a) != 0 && tensor_is_contiguous(b) != 0 && a.offset == 0 && b.offset == 0:
+    i:int = 0
+    lim:int = c.size - (c.size % 8)
+    while i < lim:
+      unsafe:
+        c.data[i + 0] = a.data[i + 0] * b.data[i + 0]
+        c.data[i + 1] = a.data[i + 1] * b.data[i + 1]
+        c.data[i + 2] = a.data[i + 2] * b.data[i + 2]
+        c.data[i + 3] = a.data[i + 3] * b.data[i + 3]
+        c.data[i + 4] = a.data[i + 4] * b.data[i + 4]
+        c.data[i + 5] = a.data[i + 5] * b.data[i + 5]
+        c.data[i + 6] = a.data[i + 6] * b.data[i + 6]
+        c.data[i + 7] = a.data[i + 7] * b.data[i + 7]
+      i = i + 8
+    while i < c.size:
+      unsafe:
+        c.data[i] = a.data[i] * b.data[i]
+      i = i + 1
+    ret c
+
+  k:int = 0
+  while k < c.size:
+    rem:int = k
+    c3:int = 0
+    c2:int = 0
+    c1:int = 0
+    c0:int = 0
+
+    if out_ndim >= 4 && out_s3 > 0:
+      c3 = rem % out_s3
+      rem = rem / out_s3
+    if out_ndim >= 3 && out_s2 > 0:
+      c2 = rem % out_s2
+      rem = rem / out_s2
+    if out_ndim >= 2 && out_s1 > 0:
+      c1 = rem % out_s1
+      rem = rem / out_s1
+    if out_ndim >= 1 && out_s0 > 0:
+      c0 = rem % out_s0
+      rem = rem / out_s0
+
+    idx_a:int = a.offset
+    if a.shape0 > 1: idx_a = idx_a + c0 * a.stride0
+    if a.shape1 > 1: idx_a = idx_a + c1 * a.stride1
+    if a.shape2 > 1: idx_a = idx_a + c2 * a.stride2
+    if a.shape3 > 1: idx_a = idx_a + c3 * a.stride3
+
+    idx_b:int = b.offset
+    if b.shape0 > 1: idx_b = idx_b + c0 * b.stride0
+    if b.shape1 > 1: idx_b = idx_b + c1 * b.stride1
+    if b.shape2 > 1: idx_b = idx_b + c2 * b.stride2
+    if b.shape3 > 1: idx_b = idx_b + c3 * b.stride3
+
+    unsafe:
+      c.data[k] = a.data[idx_a] * b.data[idx_b]
+    k = k + 1
+
+  ret c
+
+fn _tensor_div_raw(a:Tensor, b:Tensor) -> Tensor:
+  out_ndim:int = a.ndim
+  if b.ndim > out_ndim: out_ndim = b.ndim
+
+  out_s0:int = a.shape0
+  if b.shape0 > out_s0: out_s0 = b.shape0
+  out_s1:int = a.shape1
+  if b.shape1 > out_s1: out_s1 = b.shape1
+  out_s2:int = a.shape2
+  if b.shape2 > out_s2: out_s2 = b.shape2
+  out_s3:int = a.shape3
+  if b.shape3 > out_s3: out_s3 = b.shape3
+
+  c:Tensor = tensor_empty_raw(out_ndim, out_s0, out_s1, out_s2, out_s3)
+
+  k:int = 0
+  while k < c.size:
+    rem:int = k
+    c3:int = 0
+    c2:int = 0
+    c1:int = 0
+    c0:int = 0
+
+    if out_ndim >= 4 && out_s3 > 0:
+      c3 = rem % out_s3
+      rem = rem / out_s3
+    if out_ndim >= 3 && out_s2 > 0:
+      c2 = rem % out_s2
+      rem = rem / out_s2
+    if out_ndim >= 2 && out_s1 > 0:
+      c1 = rem % out_s1
+      rem = rem / out_s1
+    if out_ndim >= 1 && out_s0 > 0:
+      c0 = rem % out_s0
+      rem = rem / out_s0
+
+    idx_a:int = a.offset
+    if a.shape0 > 1: idx_a = idx_a + c0 * a.stride0
+    if a.shape1 > 1: idx_a = idx_a + c1 * a.stride1
+    if a.shape2 > 1: idx_a = idx_a + c2 * a.stride2
+    if a.shape3 > 1: idx_a = idx_a + c3 * a.stride3
+
+    idx_b:int = b.offset
+    if b.shape0 > 1: idx_b = idx_b + c0 * b.stride0
+    if b.shape1 > 1: idx_b = idx_b + c1 * b.stride1
+    if b.shape2 > 1: idx_b = idx_b + c2 * b.stride2
+    if b.shape3 > 1: idx_b = idx_b + c3 * b.stride3
+
+    unsafe:
+      bv:float = b.data[idx_b]
+      if bv != 0.0:
+        c.data[k] = a.data[idx_a] / bv
+      else:
+        c.data[k] = 0.0
+    k = k + 1
+
+  ret c
+
+// -------------------------------------------------------------
+// In-place & Scalar Arithmetic
+// -------------------------------------------------------------
+
+fn _tensor_scale_raw(a:Tensor, s:float) -> Tensor:
+  c:Tensor = tensor_clone(a)
+  i:int = 0
+  while i < c.size:
+    unsafe:
+      c.data[i] = c.data[i] * s
+    i = i + 1
+  ret c
+
+fn tensor_scale_inplace(a:Tensor, s:float) -> int:
+  if a.data == 0 as *float || a.size <= 0:
+    ret 0
+  i:int = 0
+  while i < a.size:
+    unsafe:
+      a.data[i] = a.data[i] * s
+    i = i + 1
+  ret 0
+
+fn tensor_add_scalar(a:Tensor, s:float) -> Tensor:
+  c:Tensor = tensor_clone(a)
+  i:int = 0
+  while i < c.size:
+    unsafe:
+      c.data[i] = c.data[i] + s
+    i = i + 1
+  ret c
+
+fn tensor_sub_scalar(a:Tensor, s:float) -> Tensor:
+  ret tensor_add_scalar(a, 0.0 - s)
+
+fn _tensor_neg_raw(a:Tensor) -> Tensor:
+  ret tensor_scale(a, 0.0 - 1.0)
+
+fn tensor_clamp(a:Tensor, min_val:float, max_val:float) -> Tensor:
+  c:Tensor = tensor_clone(a)
+  i:int = 0
+  while i < c.size:
+    unsafe:
+      v:float = c.data[i]
+      if v < min_val: v = min_val
+      if v > max_val: v = max_val
+      c.data[i] = v
+    i = i + 1
+  ret c
+
+// -------------------------------------------------------------
+// Global Reductions
+// -------------------------------------------------------------
+
+fn tensor_sum_all(t:Tensor) -> float:
+  if t.size <= 0: ret 0.0
+  if tensor_is_contiguous(t) != 0 && t.offset == 0:
+    s0:float = 0.0
+    s1:float = 0.0
+    s2:float = 0.0
+    s3:float = 0.0
+    s4:float = 0.0
+    s5:float = 0.0
+    s6:float = 0.0
+    s7:float = 0.0
+    lim:int = t.size - (t.size % 8)
+    i:int = 0
+    while i < lim:
+      unsafe:
+        s0 = s0 + t.data[i + 0]
+        s1 = s1 + t.data[i + 1]
+        s2 = s2 + t.data[i + 2]
+        s3 = s3 + t.data[i + 3]
+        s4 = s4 + t.data[i + 4]
+        s5 = s5 + t.data[i + 5]
+        s6 = s6 + t.data[i + 6]
+        s7 = s7 + t.data[i + 7]
+      i = i + 8
+    total:float = s0 + s1 + s2 + s3 + s4 + s5 + s6 + s7
+    while i < t.size:
+      unsafe:
+        total = total + t.data[i]
+      i = i + 1
+    ret total
+
+  tot:float = 0.0
+  k:int = 0
+  while k < t.size:
+    off:int = _tensor_unravel_offset(t, k)
+    unsafe:
+      tot = tot + t.data[off]
+    k = k + 1
+  ret tot
+
+fn tensor_mean_all(t:Tensor) -> float:
+  if t.size <= 0: ret 0.0
+  ret tensor_sum_all(t) / (t.size as float)
+
+fn tensor_max_all(t:Tensor) -> float:
+  if t.size <= 0: ret 0.0
+  first:float = 0.0
+  unsafe:
+    first = t.data[t.offset]
+  m:float = first
+  k:int = 1
+  while k < t.size:
+    off:int = _tensor_unravel_offset(t, k)
+    unsafe:
+      v:float = t.data[off]
+      if v > m: m = v
+    k = k + 1
+  ret m
+
+fn tensor_min_all(t:Tensor) -> float:
+  if t.size <= 0: ret 0.0
+  first:float = 0.0
+  unsafe:
+    first = t.data[t.offset]
+  m:float = first
+  k:int = 1
+  while k < t.size:
+    off:int = _tensor_unravel_offset(t, k)
+    unsafe:
+      v:float = t.data[off]
+      if v < m: m = v
+    k = k + 1
+  ret m
+
+fn tensor_norm(t:Tensor) -> float:
+  if t.size <= 0: ret 0.0
+  sum_sq:float = 0.0
+  k:int = 0
+  while k < t.size:
+    off:int = _tensor_unravel_offset(t, k)
+    unsafe:
+      v:float = t.data[off]
+      sum_sq = sum_sq + v * v
+    k = k + 1
+  ret math.sqrt(sum_sq)
+
+// -------------------------------------------------------------
+// Axis Reductions
+// -------------------------------------------------------------
+
+fn tensor_sum(t:Tensor, axis:int, keepdim:int) -> Tensor:
+  s_red:int = tensor_shape(t, axis)
+  if s_red <= 0: ret t
+
+  out_ndim:int = t.ndim
+  out_s0:int = t.shape0
+  out_s1:int = t.shape1
+  out_s2:int = t.shape2
+  out_s3:int = t.shape3
+
+  if keepdim != 0:
+    if axis == 0: out_s0 = 1
+    else if axis == 1: out_s1 = 1
+    else if axis == 2: out_s2 = 1
+    else if axis == 3: out_s3 = 1
+  else:
+    out_ndim = t.ndim - 1
+    if axis == 0:
+      out_s0 = t.shape1
+      out_s1 = t.shape2
+      out_s2 = t.shape3
+      out_s3 = 0
+    else if axis == 1:
+      out_s1 = t.shape2
+      out_s2 = t.shape3
+      out_s3 = 0
+    else if axis == 2:
+      out_s2 = t.shape3
+      out_s3 = 0
+    else if axis == 3:
+      out_s3 = 0
+
+  out:Tensor = tensor_empty_raw(out_ndim, out_s0, out_s1, out_s2, out_s3)
+
+  k:int = 0
+  while k < out.size:
+    rem:int = k
+    c3:int = 0
+    c2:int = 0
+    c1:int = 0
+    c0:int = 0
+
+    if out_ndim >= 4 && out_s3 > 0:
+      c3 = rem % out_s3
+      rem = rem / out_s3
+    if out_ndim >= 3 && out_s2 > 0:
+      c2 = rem % out_s2
+      rem = rem / out_s2
+    if out_ndim >= 2 && out_s1 > 0:
+      c1 = rem % out_s1
+      rem = rem / out_s1
+    if out_ndim >= 1 && out_s0 > 0:
+      c0 = rem % out_s0
+      rem = rem / out_s0
+
+    in_c0:int = c0
+    in_c1:int = c1
+    in_c2:int = c2
+    in_c3:int = c3
+
+    if keepdim == 0:
+      if axis == 0:
+        in_c3 = c2
+        in_c2 = c1
+        in_c1 = c0
+        in_c0 = 0
+      else if axis == 1:
+        in_c3 = c2
+        in_c2 = c1
+        in_c1 = 0
+        in_c0 = c0
+      else if axis == 2:
+        in_c3 = c2
+        in_c2 = 0
+        in_c1 = c1
+        in_c0 = c0
+
+    acc:float = 0.0
+    p:int = 0
+    while p < s_red:
+      if axis == 0: in_c0 = p
+      else if axis == 1: in_c1 = p
+      else if axis == 2: in_c2 = p
+      else if axis == 3: in_c3 = p
+
+      idx:int = t.offset + in_c0 * t.stride0 + in_c1 * t.stride1 + in_c2 * t.stride2 + in_c3 * t.stride3
+      unsafe:
+        acc = acc + t.data[idx]
+      p = p + 1
+
+    unsafe:
+      out.data[k] = acc
+    k = k + 1
+
+  ret out
+
+fn tensor_mean(t:Tensor, axis:int, keepdim:int) -> Tensor:
+  s:Tensor = tensor_sum(t, axis, keepdim)
+  divisor:float = tensor_shape(t, axis) as float
+  if divisor > 0.0:
+    tensor_scale_inplace(s, 1.0 / divisor)
+  ret s
+
+fn tensor_max(t:Tensor, axis:int, keepdim:int) -> Tensor:
+  s_red:int = tensor_shape(t, axis)
+  if s_red <= 0: ret t
+
+  out_ndim:int = t.ndim
+  out_s0:int = t.shape0
+  out_s1:int = t.shape1
+  out_s2:int = t.shape2
+  out_s3:int = t.shape3
+
+  if keepdim != 0:
+    if axis == 0: out_s0 = 1
+    else if axis == 1: out_s1 = 1
+    else if axis == 2: out_s2 = 1
+    else if axis == 3: out_s3 = 1
+  else:
+    out_ndim = t.ndim - 1
+    if axis == 0:
+      out_s0 = t.shape1
+      out_s1 = t.shape2
+      out_s2 = t.shape3
+      out_s3 = 0
+    else if axis == 1:
+      out_s1 = t.shape2
+      out_s2 = t.shape3
+      out_s3 = 0
+    else if axis == 2:
+      out_s2 = t.shape3
+      out_s3 = 0
+    else if axis == 3:
+      out_s3 = 0
+
+  out:Tensor = tensor_empty_raw(out_ndim, out_s0, out_s1, out_s2, out_s3)
+
+  k:int = 0
+  while k < out.size:
+    rem:int = k
+    c3:int = 0
+    c2:int = 0
+    c1:int = 0
+    c0:int = 0
+
+    if out_ndim >= 4 && out_s3 > 0:
+      c3 = rem % out_s3
+      rem = rem / out_s3
+    if out_ndim >= 3 && out_s2 > 0:
+      c2 = rem % out_s2
+      rem = rem / out_s2
+    if out_ndim >= 2 && out_s1 > 0:
+      c1 = rem % out_s1
+      rem = rem / out_s1
+    if out_ndim >= 1 && out_s0 > 0:
+      c0 = rem % out_s0
+      rem = rem / out_s0
+
+    in_c0:int = c0
+    in_c1:int = c1
+    in_c2:int = c2
+    in_c3:int = c3
+
+    if keepdim == 0:
+      if axis == 0:
+        in_c3 = c2
+        in_c2 = c1
+        in_c1 = c0
+        in_c0 = 0
+      else if axis == 1:
+        in_c3 = c2
+        in_c2 = c1
+        in_c1 = 0
+        in_c0 = c0
+      else if axis == 2:
+        in_c3 = c2
+        in_c2 = 0
+        in_c1 = c1
+        in_c0 = c0
+
+    max_v:float = 0.0
+    p:int = 0
+    while p < s_red:
+      if axis == 0: in_c0 = p
+      else if axis == 1: in_c1 = p
+      else if axis == 2: in_c2 = p
+      else if axis == 3: in_c3 = p
+
+      idx:int = t.offset + in_c0 * t.stride0 + in_c1 * t.stride1 + in_c2 * t.stride2 + in_c3 * t.stride3
+      v:float = 0.0
+      unsafe:
+        v = t.data[idx]
+      if p == 0 || v > max_v:
+        max_v = v
+      p = p + 1
+
+    unsafe:
+      out.data[k] = max_v
+    k = k + 1
+
+  ret out
+
+fn tensor_min(t:Tensor, axis:int, keepdim:int) -> Tensor:
+  s_red:int = tensor_shape(t, axis)
+  if s_red <= 0: ret t
+
+  out_ndim:int = t.ndim
+  out_s0:int = t.shape0
+  out_s1:int = t.shape1
+  out_s2:int = t.shape2
+  out_s3:int = t.shape3
+
+  if keepdim != 0:
+    if axis == 0: out_s0 = 1
+    else if axis == 1: out_s1 = 1
+    else if axis == 2: out_s2 = 1
+    else if axis == 3: out_s3 = 1
+  else:
+    out_ndim = t.ndim - 1
+    if axis == 0:
+      out_s0 = t.shape1
+      out_s1 = t.shape2
+      out_s2 = t.shape3
+      out_s3 = 0
+    else if axis == 1:
+      out_s1 = t.shape2
+      out_s2 = t.shape3
+      out_s3 = 0
+    else if axis == 2:
+      out_s2 = t.shape3
+      out_s3 = 0
+    else if axis == 3:
+      out_s3 = 0
+
+  out:Tensor = tensor_empty_raw(out_ndim, out_s0, out_s1, out_s2, out_s3)
+
+  k:int = 0
+  while k < out.size:
+    rem:int = k
+    c3:int = 0
+    c2:int = 0
+    c1:int = 0
+    c0:int = 0
+
+    if out_ndim >= 4 && out_s3 > 0:
+      c3 = rem % out_s3
+      rem = rem / out_s3
+    if out_ndim >= 3 && out_s2 > 0:
+      c2 = rem % out_s2
+      rem = rem / out_s2
+    if out_ndim >= 2 && out_s1 > 0:
+      c1 = rem % out_s1
+      rem = rem / out_s1
+    if out_ndim >= 1 && out_s0 > 0:
+      c0 = rem % out_s0
+      rem = rem / out_s0
+
+    in_c0:int = c0
+    in_c1:int = c1
+    in_c2:int = c2
+    in_c3:int = c3
+
+    if keepdim == 0:
+      if axis == 0:
+        in_c3 = c2
+        in_c2 = c1
+        in_c1 = c0
+        in_c0 = 0
+      else if axis == 1:
+        in_c3 = c2
+        in_c2 = c1
+        in_c1 = 0
+        in_c0 = c0
+      else if axis == 2:
+        in_c3 = c2
+        in_c2 = 0
+        in_c1 = c1
+        in_c0 = c0
+
+    min_v:float = 0.0
+    p:int = 0
+    while p < s_red:
+      if axis == 0: in_c0 = p
+      else if axis == 1: in_c1 = p
+      else if axis == 2: in_c2 = p
+      else if axis == 3: in_c3 = p
+
+      idx:int = t.offset + in_c0 * t.stride0 + in_c1 * t.stride1 + in_c2 * t.stride2 + in_c3 * t.stride3
+      v:float = 0.0
+      unsafe:
+        v = t.data[idx]
+      if p == 0 || v < min_v:
+        min_v = v
+      p = p + 1
+
+    unsafe:
+      out.data[k] = min_v
+    k = k + 1
+
+  ret out
+
+fn tensor_var(t:Tensor, axis:int, keepdim:int) -> Tensor:
+  mean_t:Tensor = tensor_mean(t, axis, 1)
+  diff:Tensor = tensor_sub(t, mean_t)
+  diff_sq:Tensor = tensor_mul(diff, diff)
+  v:Tensor = tensor_mean(diff_sq, axis, keepdim)
+  tensor_free_tensor(mean_t)
+  tensor_free_tensor(diff)
+  tensor_free_tensor(diff_sq)
+  ret v
+
+fn tensor_std(t:Tensor, axis:int, keepdim:int) -> Tensor:
+  v:Tensor = tensor_var(t, axis, keepdim)
+  i:int = 0
+  while i < v.size:
+    unsafe:
+      v.data[i] = math.sqrt(v.data[i])
+    i = i + 1
+  ret v
+
+// ============================================================
+// Phase 3: Activation & LLM Layers
+// ============================================================
+
+// -------------------------------------------------------------
+// Fused Elementwise Activations
+// -------------------------------------------------------------
+
+// ReLU
+fn _tensor_relu_raw(a:Tensor) -> Tensor:
+  c:Tensor = tensor_clone(a)
+  i:int = 0
+  lim:int = c.size - (c.size % 8)
+  while i < lim:
+    unsafe:
+      v0:float = c.data[i + 0]
+      if v0 < 0.0: v0 = 0.0
+      c.data[i + 0] = v0
+      v1:float = c.data[i + 1]
+      if v1 < 0.0: v1 = 0.0
+      c.data[i + 1] = v1
+      v2:float = c.data[i + 2]
+      if v2 < 0.0: v2 = 0.0
+      c.data[i + 2] = v2
+      v3:float = c.data[i + 3]
+      if v3 < 0.0: v3 = 0.0
+      c.data[i + 3] = v3
+      v4:float = c.data[i + 4]
+      if v4 < 0.0: v4 = 0.0
+      c.data[i + 4] = v4
+      v5:float = c.data[i + 5]
+      if v5 < 0.0: v5 = 0.0
+      c.data[i + 5] = v5
+      v6:float = c.data[i + 6]
+      if v6 < 0.0: v6 = 0.0
+      c.data[i + 6] = v6
+      v7:float = c.data[i + 7]
+      if v7 < 0.0: v7 = 0.0
+      c.data[i + 7] = v7
+    i = i + 8
+  while i < c.size:
+    unsafe:
+      v:float = c.data[i]
+      if v < 0.0: v = 0.0
+      c.data[i] = v
+    i = i + 1
+  ret c
+
+fn tensor_relu_inplace(a:Tensor) -> int:
+  if a.data == 0 as *float || a.size <= 0:
+    ret 0
+  if tensor_is_contiguous(a) != 0 && a.offset == 0:
+    i:int = 0
+    while i < a.size:
+      unsafe:
+        v:float = a.data[i]
+        if v < 0.0: v = 0.0
+        a.data[i] = v
+      i = i + 1
+    ret 0
+  k:int = 0
+  while k < a.size:
+    off:int = _tensor_unravel_offset(a, k)
+    unsafe:
+      v:float = a.data[off]
+      if v < 0.0: v = 0.0
+      a.data[off] = v
+    k = k + 1
+  ret 0
+
+// GELU: 0.5 * x * (1.0 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+fn _tensor_gelu_scalar(x:float) -> float:
+  c:float = 0.7978845608028654
+  inner:float = c * (x + 0.044715 * x * x * x)
+  ret 0.5 * x * (1.0 + math.tanh(inner))
+
+fn _tensor_gelu_raw(a:Tensor) -> Tensor:
+  c:Tensor = tensor_clone(a)
+  i:int = 0
+  while i < c.size:
+    unsafe:
+      c.data[i] = _tensor_gelu_scalar(c.data[i])
+    i = i + 1
+  ret c
+
+fn tensor_gelu_inplace(a:Tensor) -> int:
+  if a.data == 0 as *float || a.size <= 0:
+    ret 0
+  if tensor_is_contiguous(a) != 0 && a.offset == 0:
+    i:int = 0
+    while i < a.size:
+      unsafe:
+        a.data[i] = _tensor_gelu_scalar(a.data[i])
+      i = i + 1
+    ret 0
+  k:int = 0
+  while k < a.size:
+    off:int = _tensor_unravel_offset(a, k)
+    unsafe:
+      a.data[off] = _tensor_gelu_scalar(a.data[off])
+    k = k + 1
+  ret 0
+
+// SiLU / Swish: x * sigmoid(x) = x / (1.0 + exp(-x))
+fn _tensor_silu_scalar(x:float) -> float:
+  if x < 0.0 - 50.0:
+    ret 0.0
+  if x > 50.0:
+    ret x
+  sig:float = 1.0 / (1.0 + math.exp(0.0 - x))
+  ret x * sig
+
+fn _tensor_silu_raw(a:Tensor) -> Tensor:
+  c:Tensor = tensor_clone(a)
+  i:int = 0
+  while i < c.size:
+    unsafe:
+      c.data[i] = _tensor_silu_scalar(c.data[i])
+    i = i + 1
+  ret c
+
+fn tensor_silu_inplace(a:Tensor) -> int:
+  if a.data == 0 as *float || a.size <= 0:
+    ret 0
+  if tensor_is_contiguous(a) != 0 && a.offset == 0:
+    i:int = 0
+    while i < a.size:
+      unsafe:
+        a.data[i] = _tensor_silu_scalar(a.data[i])
+      i = i + 1
+    ret 0
+  k:int = 0
+  while k < a.size:
+    off:int = _tensor_unravel_offset(a, k)
+    unsafe:
+      a.data[off] = _tensor_silu_scalar(a.data[off])
+    k = k + 1
+  ret 0
+
+// Sigmoid: 1.0 / (1.0 + exp(-x))
+fn _tensor_sigmoid_scalar(x:float) -> float:
+  if x < 0.0 - 50.0:
+    ret 0.0
+  if x > 50.0:
+    ret 1.0
+  ret 1.0 / (1.0 + math.exp(0.0 - x))
+
+fn _tensor_sigmoid_raw(a:Tensor) -> Tensor:
+  c:Tensor = tensor_clone(a)
+  i:int = 0
+  while i < c.size:
+    unsafe:
+      c.data[i] = _tensor_sigmoid_scalar(c.data[i])
+    i = i + 1
+  ret c
+
+fn tensor_sigmoid_inplace(a:Tensor) -> int:
+  if a.data == 0 as *float || a.size <= 0:
+    ret 0
+  if tensor_is_contiguous(a) != 0 && a.offset == 0:
+    i:int = 0
+    while i < a.size:
+      unsafe:
+        a.data[i] = _tensor_sigmoid_scalar(a.data[i])
+      i = i + 1
+    ret 0
+  k:int = 0
+  while k < a.size:
+    off:int = _tensor_unravel_offset(a, k)
+    unsafe:
+      a.data[off] = _tensor_sigmoid_scalar(a.data[off])
+    k = k + 1
+  ret 0
+
+// Tanh
+fn _tensor_tanh_raw(a:Tensor) -> Tensor:
+  c:Tensor = tensor_clone(a)
+  i:int = 0
+  while i < c.size:
+    unsafe:
+      c.data[i] = math.tanh(c.data[i])
+    i = i + 1
+  ret c
+
+fn tensor_tanh_inplace(a:Tensor) -> int:
+  if a.data == 0 as *float || a.size <= 0:
+    ret 0
+  if tensor_is_contiguous(a) != 0 && a.offset == 0:
+    i:int = 0
+    while i < a.size:
+      unsafe:
+        a.data[i] = math.tanh(a.data[i])
+      i = i + 1
+    ret 0
+  k:int = 0
+  while k < a.size:
+    off:int = _tensor_unravel_offset(a, k)
+    unsafe:
+      a.data[off] = math.tanh(a.data[off])
+    k = k + 1
+  ret 0
+
+// -------------------------------------------------------------
+// Fused RMSNorm & LayerNorm
+// -------------------------------------------------------------
+
+// RMSNorm: y = x / sqrt(mean(x^2) + eps) * weight
+fn tensor_rmsnorm(x:Tensor, weight:Tensor, eps:float) -> Tensor:
+  d:int = tensor_shape(x, x.ndim - 1)
+  if d <= 0 || x.size <= 0:
+    ret x
+
+  m:int = x.size / d
+  out:Tensor = tensor_clone(x)
+
+  row:int = 0
+  while row < m:
+    offset:int = row * d
+    ss:float = 0.0
+    j:int = 0
+    while j < d:
+      unsafe:
+        v:float = out.data[offset + j]
+        ss = ss + v * v
+      j = j + 1
+    
+    mean_sq:float = ss / (d as float)
+    inv_rms:float = 1.0 / math.sqrt(mean_sq + eps)
+
+    j = 0
+    while j < d:
+      w:float = 1.0
+      if weight.data != 0 as *float && j < weight.size:
+        unsafe:
+          w = weight.data[weight.offset + j * weight.stride0]
+      unsafe:
+        out.data[offset + j] = out.data[offset + j] * inv_rms * w
+      j = j + 1
+    row = row + 1
+
+  ret out
+
+fn tensor_rmsnorm_inplace(x:Tensor, weight:Tensor, eps:float) -> int:
+  d:int = tensor_shape(x, x.ndim - 1)
+  if d <= 0 || x.size <= 0:
+    ret 0
+
+  if tensor_is_contiguous(x) != 0 && x.offset == 0:
+    m:int = x.size / d
+    row:int = 0
+    while row < m:
+      offset:int = row * d
+      ss:float = 0.0
+      j:int = 0
+      while j < d:
+        unsafe:
+          v:float = x.data[offset + j]
+          ss = ss + v * v
+        j = j + 1
+      mean_sq:float = ss / (d as float)
+      inv_rms:float = 1.0 / math.sqrt(mean_sq + eps)
+      j = 0
+      while j < d:
+        w:float = 1.0
+        if weight.data != 0 as *float && j < weight.size:
+          unsafe:
+            w = weight.data[weight.offset + j * weight.stride0]
+        unsafe:
+          x.data[offset + j] = x.data[offset + j] * inv_rms * w
+        j = j + 1
+      row = row + 1
+    ret 0
+
+  normed:Tensor = tensor_rmsnorm(x, weight, eps)
+  k:int = 0
+  while k < x.size:
+    off:int = _tensor_unravel_offset(x, k)
+    unsafe:
+      x.data[off] = normed.data[k]
+    k = k + 1
+  tensor_free_tensor(normed)
+  ret 0
+
+// LayerNorm: y = (x - mean) / sqrt(var + eps) * gamma + beta
+fn tensor_layernorm(x:Tensor, gamma:Tensor, beta:Tensor, eps:float) -> Tensor:
+  d:int = tensor_shape(x, x.ndim - 1)
+  if d <= 0 || x.size <= 0:
+    ret x
+
+  m:int = x.size / d
+  out:Tensor = tensor_clone(x)
+
+  row:int = 0
+  while row < m:
+    offset:int = row * d
+    
+    // 1. Mean
+    sum:float = 0.0
+    j:int = 0
+    while j < d:
+      unsafe:
+        sum = sum + out.data[offset + j]
+      j = j + 1
+    mean:float = sum / (d as float)
+
+    // 2. Variance
+    var_sum:float = 0.0
+    j = 0
+    while j < d:
+      unsafe:
+        diff:float = out.data[offset + j] - mean
+        var_sum = var_sum + diff * diff
+      j = j + 1
+    variance:float = var_sum / (d as float)
+    inv_std:float = 1.0 / math.sqrt(variance + eps)
+
+    // 3. Normalize & affine transform
+    j = 0
+    while j < d:
+      g:float = 1.0
+      if gamma.data != 0 as *float && j < gamma.size:
+        unsafe:
+          g = gamma.data[gamma.offset + j * gamma.stride0]
+      b:float = 0.0
+      if beta.data != 0 as *float && j < beta.size:
+        unsafe:
+          b = beta.data[beta.offset + j * beta.stride0]
+      unsafe:
+        out.data[offset + j] = (out.data[offset + j] - mean) * inv_std * g + b
+      j = j + 1
+    row = row + 1
+
+  ret out
+
+fn tensor_layernorm_inplace(x:Tensor, gamma:Tensor, beta:Tensor, eps:float) -> int:
+  d:int = tensor_shape(x, x.ndim - 1)
+  if d <= 0 || x.size <= 0:
+    ret 0
+
+  if tensor_is_contiguous(x) != 0 && x.offset == 0:
+    m:int = x.size / d
+    row:int = 0
+    while row < m:
+      offset:int = row * d
+      sum:float = 0.0
+      j:int = 0
+      while j < d:
+        unsafe:
+          sum = sum + x.data[offset + j]
+        j = j + 1
+      mean:float = sum / (d as float)
+
+      var_sum:float = 0.0
+      j = 0
+      while j < d:
+        unsafe:
+          diff:float = x.data[offset + j] - mean
+          var_sum = var_sum + diff * diff
+        j = j + 1
+      variance:float = var_sum / (d as float)
+      inv_std:float = 1.0 / math.sqrt(variance + eps)
+
+      j = 0
+      while j < d:
+        g:float = 1.0
+        if gamma.data != 0 as *float && j < gamma.size:
+          unsafe:
+            g = gamma.data[gamma.offset + j * gamma.stride0]
+        b:float = 0.0
+        if beta.data != 0 as *float && j < beta.size:
+          unsafe:
+            b = beta.data[beta.offset + j * beta.stride0]
+        unsafe:
+          x.data[offset + j] = (x.data[offset + j] - mean) * inv_std * g + b
+        j = j + 1
+      row = row + 1
+    ret 0
+
+  normed:Tensor = tensor_layernorm(x, gamma, beta, eps)
+  k:int = 0
+  while k < x.size:
+    off:int = _tensor_unravel_offset(x, k)
+    unsafe:
+      x.data[off] = normed.data[k]
+    k = k + 1
+  tensor_free_tensor(normed)
+  ret 0
+
+// -------------------------------------------------------------
+// Numerically Stable Softmax
+// -------------------------------------------------------------
+
+fn tensor_softmax(t:Tensor, axis:int) -> Tensor:
+  ax:int = axis
+  if ax < 0:
+    ax = t.ndim + ax
+
+  // Fast contiguous path for last dimension (primary in deep learning)
+  if ax == t.ndim - 1:
+    d:int = tensor_shape(t, ax)
+    if d <= 0: ret t
+    m:int = t.size / d
+    out:Tensor = tensor_clone(t)
+
+    row:int = 0
+    while row < m:
+      offset:int = row * d
+
+      // 1. Max
+      max_v:float = 0.0
+      unsafe:
+        max_v = out.data[offset]
+      j:int = 1
+      while j < d:
+        unsafe:
+          v:float = out.data[offset + j]
+          if v > max_v: max_v = v
+        j = j + 1
+
+      // 2. Exp(v - max) & sum
+      sum_exp:float = 0.0
+      j = 0
+      while j < d:
+        unsafe:
+          e:float = math.exp(out.data[offset + j] - max_v)
+          out.data[offset + j] = e
+          sum_exp = sum_exp + e
+        j = j + 1
+
+      // 3. Normalize
+      inv_sum:float = 1.0 / sum_exp
+      j = 0
+      while j < d:
+        unsafe:
+          out.data[offset + j] = out.data[offset + j] * inv_sum
+        j = j + 1
+      row = row + 1
+
+    ret out
+
+  // General path for any other axis using axis reductions
+  max_t:Tensor = tensor_max(t, ax, 1)
+  shifted:Tensor = tensor_sub(t, max_t)
+  exp_t:Tensor = tensor_clone(shifted)
+  i:int = 0
+  while i < exp_t.size:
+    unsafe:
+      exp_t.data[i] = math.exp(exp_t.data[i])
+    i = i + 1
+  sum_exp_t:Tensor = tensor_sum(exp_t, ax, 1)
+  out_t:Tensor = tensor_div(exp_t, sum_exp_t)
+
+  tensor_free_tensor(max_t)
+  tensor_free_tensor(shifted)
+  tensor_free_tensor(exp_t)
+  tensor_free_tensor(sum_exp_t)
+  ret out_t
+
+fn tensor_softmax_inplace(t:Tensor, axis:int) -> int:
+  s:Tensor = tensor_softmax(t, axis)
+  if tensor_is_contiguous(t) != 0 && t.offset == 0:
+    i:int = 0
+    while i < t.size:
+      unsafe:
+        t.data[i] = s.data[i]
+      i = i + 1
+  else:
+    k:int = 0
+    while k < t.size:
+      off:int = _tensor_unravel_offset(t, k)
+      unsafe:
+        t.data[off] = s.data[k]
+      k = k + 1
+  tensor_free_tensor(s)
+  ret 0
+
+// -------------------------------------------------------------
+// Rotary Position Embeddings (RoPE)
+// -------------------------------------------------------------
+
+fn tensor_rope_2d(q:Tensor, k:Tensor, pos_offset:int, base:float) -> int:
+  seq_len:int = q.shape0
+  dim:int = q.shape1
+  if dim % 2 != 0:
+    ret 0 - 1
+
+  s:int = 0
+  while s < seq_len:
+    pos:int = pos_offset + s
+    i:int = 0
+    half_dim:int = dim / 2
+    while i < half_dim:
+      j0:int = 2 * i
+      j1:int = j0 + 1
+      theta:float = 1.0 / math.pow(base, (2.0 * (i as float)) / (dim as float))
+      alpha:float = (pos as float) * theta
+      cos_v:float = math.cos(alpha)
+      sin_v:float = math.sin(alpha)
+
+      q0:float = tensor_get2(q, s, j0)
+      q1:float = tensor_get2(q, s, j1)
+      tensor_set2(q, s, j0, q0 * cos_v - q1 * sin_v)
+      tensor_set2(q, s, j1, q0 * sin_v + q1 * cos_v)
+
+      if k.data != 0 as *float:
+        k0:float = tensor_get2(k, s, j0)
+        k1:float = tensor_get2(k, s, j1)
+        tensor_set2(k, s, j0, k0 * cos_v - k1 * sin_v)
+        tensor_set2(k, s, j1, k0 * sin_v + k1 * cos_v)
+
+      i = i + 1
+    s = s + 1
+  ret 0
+
+fn tensor_rope_4d(q:Tensor, k:Tensor, pos_offset:int, base:float) -> int:
+  batch:int = q.shape0
+  heads_q:int = q.shape1
+  seq_len:int = q.shape2
+  dim:int = q.shape3
+  if dim % 2 != 0:
+    ret 0 - 1
+
+  b:int = 0
+  while b < batch:
+    h:int = 0
+    while h < heads_q:
+      s:int = 0
+      while s < seq_len:
+        pos:int = pos_offset + s
+        i:int = 0
+        half_dim:int = dim / 2
+        while i < half_dim:
+          j0:int = 2 * i
+          j1:int = j0 + 1
+          theta:float = 1.0 / math.pow(base, (2.0 * (i as float)) / (dim as float))
+          alpha:float = (pos as float) * theta
+          cos_v:float = math.cos(alpha)
+          sin_v:float = math.sin(alpha)
+
+          q0:float = tensor_get4(q, b, h, s, j0)
+          q1:float = tensor_get4(q, b, h, s, j1)
+          tensor_set4(q, b, h, s, j0, q0 * cos_v - q1 * sin_v)
+          tensor_set4(q, b, h, s, j1, q0 * sin_v + q1 * cos_v)
+
+          if k.data != 0 as *float:
+            hk:int = h % k.shape1
+            k0:float = tensor_get4(k, b, hk, s, j0)
+            k1:float = tensor_get4(k, b, hk, s, j1)
+            tensor_set4(k, b, hk, s, j0, k0 * cos_v - k1 * sin_v)
+            tensor_set4(k, b, hk, s, j1, k0 * sin_v + k1 * cos_v)
+
+          i = i + 1
+        s = s + 1
+      h = h + 1
+    b = b + 1
+  ret 0
+
+fn tensor_rope(q:Tensor, k:Tensor, pos_offset:int, base:float) -> int:
+  if q.ndim == 2:
+    ret tensor_rope_2d(q, k, pos_offset, base)
+  if q.ndim == 4:
+    ret tensor_rope_4d(q, k, pos_offset, base)
+  if q.ndim == 3:
+    batch:int = q.shape0
+    seq_len:int = q.shape1
+    dim:int = q.shape2
+    if dim % 2 != 0:
+      ret 0 - 1
+    b:int = 0
+    while b < batch:
+      s:int = 0
+      while s < seq_len:
+        pos:int = pos_offset + s
+        i:int = 0
+        half_dim:int = dim / 2
+        while i < half_dim:
+          j0:int = 2 * i
+          j1:int = j0 + 1
+          theta:float = 1.0 / math.pow(base, (2.0 * (i as float)) / (dim as float))
+          alpha:float = (pos as float) * theta
+          cos_v:float = math.cos(alpha)
+          sin_v:float = math.sin(alpha)
+
+          q0:float = tensor_get3(q, b, s, j0)
+          q1:float = tensor_get3(q, b, s, j1)
+          tensor_set3(q, b, s, j0, q0 * cos_v - q1 * sin_v)
+          tensor_set3(q, b, s, j1, q0 * sin_v + q1 * cos_v)
+
+          if k.data != 0 as *float:
+            k0:float = tensor_get3(k, b, s, j0)
+            k1:float = tensor_get3(k, b, s, j1)
+            tensor_set3(k, b, s, j0, k0 * cos_v - k1 * sin_v)
+            tensor_set3(k, b, s, j1, k0 * sin_v + k1 * cos_v)
+          i = i + 1
+        s = s + 1
+      b = b + 1
+    ret 0
+  ret 0 - 1
+
+// -------------------------------------------------------------
+// Scaled Dot-Product Attention (SDPA)
+// -------------------------------------------------------------
+
+fn tensor_sdpa(q:Tensor, k:Tensor, v:Tensor, is_causal:int) -> Tensor:
+  // 2D Attention: Q: [Sq, D], K: [Sk, D], V: [Sk, Dv] -> Out: [Sq, Dv]
+  if q.ndim == 2:
+    sq:int = q.shape0
+    dk:int = q.shape1
+    sk:int = k.shape0
+    dv:int = v.shape1
+
+    kt:Tensor = tensor_t(k)
+    scores:Tensor = tensor_matmul(q, kt)
+    tensor_free_tensor(kt)
+
+    scale:float = 1.0 / math.sqrt(dk as float)
+    tensor_scale_inplace(scores, scale)
+
+    if is_causal != 0:
+      row:int = 0
+      while row < sq:
+        col:int = 0
+        while col < sk:
+          if col > row:
+            tensor_set2(scores, row, col, 0.0 - 10000.0)
+          col = col + 1
+        row = row + 1
+
+    attn_probs:Tensor = tensor_softmax(scores, 1)
+    tensor_free_tensor(scores)
+
+    out:Tensor = tensor_matmul(attn_probs, v)
+    tensor_free_tensor(attn_probs)
+    ret out
+
+  // 3D Batched Attention: Q: [B, Sq, D], K: [B, Sk, D], V: [B, Sk, Dv] -> Out: [B, Sq, Dv]
+  if q.ndim == 3:
+    batch:int = q.shape0
+    sq:int = q.shape1
+    dk:int = q.shape2
+    sk:int = k.shape1
+    dv:int = v.shape2
+
+    kt:Tensor = tensor_transpose(k, 1, 2)
+    scores:Tensor = tensor_matmul(q, kt)
+    tensor_free_tensor(kt)
+
+    scale:float = 1.0 / math.sqrt(dk as float)
+    tensor_scale_inplace(scores, scale)
+
+    if is_causal != 0:
+      b:int = 0
+      while b < batch:
+        row:int = 0
+        while row < sq:
+          col:int = 0
+          while col < sk:
+            if col > row:
+              tensor_set3(scores, b, row, col, 0.0 - 10000.0)
+            col = col + 1
+          row = row + 1
+        b = b + 1
+
+    attn_probs:Tensor = tensor_softmax(scores, 2)
+    tensor_free_tensor(scores)
+
+    out:Tensor = tensor_matmul(attn_probs, v)
+    tensor_free_tensor(attn_probs)
+    ret out
+
+  // 4D Multi-Head Attention: Q: [B, H, Sq, D], K: [B, H, Sk, D], V: [B, H, Sk, Dv] -> Out: [B, H, Sq, Dv]
+  if q.ndim == 4:
+    batch:int = q.shape0
+    heads:int = q.shape1
+    sq:int = q.shape2
+    dk:int = q.shape3
+    sk:int = k.shape2
+    dv:int = v.shape3
+
+    kt:Tensor = tensor_transpose(k, 2, 3)
+    scores:Tensor = tensor_matmul(q, kt)
+    tensor_free_tensor(kt)
+
+    scale:float = 1.0 / math.sqrt(dk as float)
+    tensor_scale_inplace(scores, scale)
+
+    if is_causal != 0:
+      b:int = 0
+      while b < batch:
+        h:int = 0
+        while h < heads:
+          row:int = 0
+          while row < sq:
+            col:int = 0
+            while col < sk:
+              if col > row:
+                tensor_set4(scores, b, h, row, col, 0.0 - 10000.0)
+              col = col + 1
+            row = row + 1
+          h = h + 1
+        b = b + 1
+
+    attn_probs:Tensor = tensor_softmax(scores, 3)
+    tensor_free_tensor(scores)
+
+    out:Tensor = tensor_matmul(attn_probs, v)
+    tensor_free_tensor(attn_probs)
+    ret out
+
+  say "Error: tensor_sdpa unsupported dimension ", q.ndim
+  ret q
+
+// ============================================================
+// Phase 4: Reverse-Mode Autograd Engine
+// ============================================================
+
+let AUTOGRAD_OP_NONE:int = 0
+let AUTOGRAD_OP_ADD:int = 1
+let AUTOGRAD_OP_SUB:int = 2
+let AUTOGRAD_OP_MUL:int = 3
+let AUTOGRAD_OP_DIV:int = 4
+let AUTOGRAD_OP_MATMUL:int = 5
+let AUTOGRAD_OP_SCALE:int = 6
+let AUTOGRAD_OP_NEG:int = 7
+let AUTOGRAD_OP_RELU:int = 8
+let AUTOGRAD_OP_GELU:int = 9
+let AUTOGRAD_OP_SILU:int = 10
+let AUTOGRAD_OP_SIGMOID:int = 11
+let AUTOGRAD_OP_TANH:int = 12
+let AUTOGRAD_OP_SUM_ALL:int = 13
+let AUTOGRAD_OP_MEAN_ALL:int = 14
+let AUTOGRAD_OP_SUM:int = 15
+let AUTOGRAD_OP_MEAN:int = 16
+let AUTOGRAD_OP_RMSNORM:int = 17
+let AUTOGRAD_OP_LAYERNORM:int = 18
+let AUTOGRAD_OP_SOFTMAX:int = 19
+let AUTOGRAD_OP_MSE_LOSS:int = 20
+let AUTOGRAD_OP_CROSS_ENTROPY:int = 21
+
+struct TapeNode:
+  op_type:int
+  out_grad:*Tensor
+  has_arg0:int
+  arg0_grad:*Tensor
+  arg0:*Tensor
+  has_arg1:int
+  arg1_grad:*Tensor
+  arg1:*Tensor
+  saved_out:*Tensor
+  scalar_val:float
+  axis:int
+  keepdim:int
+
+let _tape_cap:int = 8192
+let _tape_len:int = 0
+let _tape_raw:str = ""
+let _tape_enabled:int = 1
+
+fn tape_get() -> *TapeNode:
+  unsafe:
+    if _tape_raw == 0 as str || _tape_raw == "":
+      _tape_raw = malloc(_tape_cap * 96)
+    ret _tape_raw as *TapeNode
+
+fn tape_init() -> int:
+  tape_get()
+  _tape_len = 0
+  ret 0
+
+fn tape_reset() -> int:
+  if _tape_len > 0:
+    tape:*TapeNode = tape_get()
+    i:int = 0
+    while i < _tape_len:
+      unsafe:
+        node:*TapeNode = tape + i
+        if node.has_arg0 != 0 && node.arg0 != 0 as *Tensor:
+          _tape_free_saved_tensor(node.arg0)
+          node.arg0 = 0 as *Tensor
+        if node.has_arg1 != 0 && node.arg1 != 0 as *Tensor:
+          _tape_free_saved_tensor(node.arg1)
+          node.arg1 = 0 as *Tensor
+        if node.saved_out != 0 as *Tensor:
+          _tape_free_saved_tensor(node.saved_out)
+          node.saved_out = 0 as *Tensor
+      i = i + 1
+  _tape_len = 0
+  ret 0
+
+fn tape_set_enabled(en:int) -> int:
+  _tape_enabled = en
+  ret 0
+
+fn tape_is_enabled() -> int:
+  ret _tape_enabled
+
+fn tape_len() -> int:
+  ret _tape_len
+
+// Safe Struct Load and Store helpers
+fn tensor_load_p(p:*Tensor) -> Tensor:
+  t:Tensor
+  unsafe:
+    t.data = p.data
+    t.ndim = p.ndim
+    t.shape0 = p.shape0
+    t.shape1 = p.shape1
+    t.shape2 = p.shape2
+    t.shape3 = p.shape3
+    t.shape4 = p.shape4
+    t.shape5 = p.shape5
+    t.shape6 = p.shape6
+    t.shape7 = p.shape7
+    t.stride0 = p.stride0
+    t.stride1 = p.stride1
+    t.stride2 = p.stride2
+    t.stride3 = p.stride3
+    t.stride4 = p.stride4
+    t.stride5 = p.stride5
+    t.stride6 = p.stride6
+    t.stride7 = p.stride7
+    t.offset = p.offset
+    t.size = p.size
+    t.dtype = p.dtype
+    t.is_view = p.is_view
+    t.requires_grad = p.requires_grad
+    t.grad = p.grad
+    t.node_id = p.node_id
+  ret t
+
+fn tensor_store_p(dst:*Tensor, src:Tensor) -> int:
+  unsafe:
+    dst.data = src.data
+    dst.ndim = src.ndim
+    dst.shape0 = src.shape0
+    dst.shape1 = src.shape1
+    dst.shape2 = src.shape2
+    dst.shape3 = src.shape3
+    dst.shape4 = src.shape4
+    dst.shape5 = src.shape5
+    dst.shape6 = src.shape6
+    dst.shape7 = src.shape7
+    dst.stride0 = src.stride0
+    dst.stride1 = src.stride1
+    dst.stride2 = src.stride2
+    dst.stride3 = src.stride3
+    dst.stride4 = src.stride4
+    dst.stride5 = src.stride5
+    dst.stride6 = src.stride6
+    dst.stride7 = src.stride7
+    dst.offset = src.offset
+    dst.size = src.size
+    dst.dtype = src.dtype
+    dst.is_view = src.is_view
+    dst.requires_grad = src.requires_grad
+    dst.grad = src.grad
+    dst.node_id = src.node_id
+  ret 0
+
+fn _tape_save_tensor(t:Tensor) -> *Tensor:
+  unsafe:
+    raw:*char = malloc(256)
+    p:*Tensor = raw as *Tensor
+    tensor_store_p(p, tensor_clone(t))
+    ret p
+
+fn _tape_free_saved_tensor(p:*Tensor) -> int:
+  unsafe:
+    if p != 0 as *Tensor:
+      t:Tensor = tensor_load_p(p)
+      tensor_free_tensor(t)
+      free(p as *char)
+  ret 0
+
+fn tensor_zeros_raw(ndim:int, d0:int, d1:int, d2:int, d3:int) -> Tensor:
+  t:Tensor = tensor_empty_raw(ndim, d0, d1, d2, d3)
+  tensor_fill(t, 0.0)
+  ret t
+
+fn tensor_ones_raw(ndim:int, d0:int, d1:int, d2:int, d3:int) -> Tensor:
+  t:Tensor = tensor_empty_raw(ndim, d0, d1, d2, d3)
+  tensor_fill(t, 1.0)
+  ret t
+
+fn tensor_require_grad(t:Tensor) -> Tensor:
+  out:Tensor = t
+  out.requires_grad = 1
+  unsafe:
+    if out.grad == 0 as *Tensor:
+      raw:*char = malloc(256)
+      g_ptr:*Tensor = raw as *Tensor
+      t_z:Tensor = tensor_zeros_raw(out.ndim, out.shape0, out.shape1, out.shape2, out.shape3)
+      tensor_store_p(g_ptr, t_z)
+      out.grad = g_ptr
+  ret out
+
+fn tensor_get_grad(t:Tensor) -> Tensor:
+  unsafe:
+    if t.grad != 0 as *Tensor:
+      ret tensor_load_p(t.grad)
+  ret tensor_empty_raw(0, 0, 0, 0, 0)
+
+fn tensor_grad_item(t:Tensor, idx:int) -> float:
+  unsafe:
+    if t.grad != 0 as *Tensor:
+      if idx >= 0 && idx < t.grad.size && t.grad.data != 0 as *float:
+        ret t.grad.data[idx]
+  ret 0.0
+
+fn tensor_zero_grad_p(p:*Tensor) -> int:
+  unsafe:
+    if p != 0 as *Tensor && p.grad != 0 as *Tensor:
+      g:*Tensor = p.grad
+      if g.data != 0 as *float:
+        i:int = 0
+        while i < g.size:
+          g.data[i] = 0.0
+          i = i + 1
+  ret 0
+
+fn tensor_zero_grad(t:Tensor) -> int:
+  unsafe:
+    if t.grad != 0 as *Tensor:
+      g:*Tensor = t.grad
+      if g.data != 0 as *float:
+        i:int = 0
+        while i < g.size:
+          g.data[i] = 0.0
+          i = i + 1
+  ret 0
+
+fn tensor_accumulate_grad(target_grad:*Tensor, g:Tensor) -> int:
+  unsafe:
+    if target_grad == 0 as *Tensor:
+      ret 0
+    if target_grad.data == 0 as *float || target_grad.size <= 0:
+      tensor_store_p(target_grad, tensor_clone(g))
+      ret 0
+    i:int = 0
+    lim:int = target_grad.size - (target_grad.size % 8)
+    while i < lim && i + 7 < g.size:
+      target_grad.data[i + 0] = target_grad.data[i + 0] + g.data[i + 0]
+      target_grad.data[i + 1] = target_grad.data[i + 1] + g.data[i + 1]
+      target_grad.data[i + 2] = target_grad.data[i + 2] + g.data[i + 2]
+      target_grad.data[i + 3] = target_grad.data[i + 3] + g.data[i + 3]
+      target_grad.data[i + 4] = target_grad.data[i + 4] + g.data[i + 4]
+      target_grad.data[i + 5] = target_grad.data[i + 5] + g.data[i + 5]
+      target_grad.data[i + 6] = target_grad.data[i + 6] + g.data[i + 6]
+      target_grad.data[i + 7] = target_grad.data[i + 7] + g.data[i + 7]
+      i = i + 8
+    while i < target_grad.size && i < g.size:
+      target_grad.data[i] = target_grad.data[i] + g.data[i]
+      i = i + 1
+  ret 0
+
+// Automatic broadcast gradient collapse
+fn tensor_collapse_to_shape(grad:Tensor, target:Tensor) -> Tensor:
+  if grad.shape0 == target.shape0 && grad.shape1 == target.shape1 && grad.shape2 == target.shape2 && grad.shape3 == target.shape3 && grad.ndim == target.ndim:
+    ret tensor_clone(grad)
+  cur:Tensor = tensor_clone(grad)
+  while cur.ndim > target.ndim:
+    s0:Tensor = tensor_sum(cur, 0, 0)
+    tensor_free_tensor(cur)
+    cur = s0
+  if target.ndim >= 1 && target.shape0 == 1 && cur.shape0 > 1:
+    s:Tensor = tensor_sum(cur, 0, 1)
+    tensor_free_tensor(cur)
+    cur = s
+  if target.ndim >= 2 && target.shape1 == 1 && cur.shape1 > 1:
+    s2:Tensor = tensor_sum(cur, 1, 1)
+    tensor_free_tensor(cur)
+    cur = s2
+  if target.ndim >= 3 && target.shape2 == 1 && cur.shape2 > 1:
+    s3:Tensor = tensor_sum(cur, 2, 1)
+    tensor_free_tensor(cur)
+    cur = s3
+  if target.ndim >= 4 && target.shape3 == 1 && cur.shape3 > 1:
+    s4:Tensor = tensor_sum(cur, 3, 1)
+    tensor_free_tensor(cur)
+    cur = s4
+  ret cur
+
+// Tape recording helpers
+fn tape_record_binary(op:int, out:Tensor, arg0:Tensor, arg1:Tensor, s:float, ax:int, kd:int) -> int:
+  if _tape_enabled == 0 || _tape_len >= _tape_cap:
+    ret 0
+  tape:*TapeNode = tape_get()
+  unsafe:
+    node:*TapeNode = tape + _tape_len
+    node.op_type = op
+    node.out_grad = out.grad
+    node.has_arg0 = 1
+    node.arg0_grad = arg0.grad
+    node.arg0 = _tape_save_tensor(arg0)
+    node.has_arg1 = 1
+    node.arg1_grad = arg1.grad
+    node.arg1 = _tape_save_tensor(arg1)
+    node.saved_out = 0 as *Tensor
+    node.scalar_val = s
+    node.axis = ax
+    node.keepdim = kd
+  _tape_len = _tape_len + 1
+  ret 0
+
+fn tape_record_unary(op:int, out:Tensor, arg0:Tensor, saved_out:Tensor, s:float, ax:int, kd:int) -> int:
+  if _tape_enabled == 0 || _tape_len >= _tape_cap:
+    ret 0
+  tape:*TapeNode = tape_get()
+  unsafe:
+    node:*TapeNode = tape + _tape_len
+    node.op_type = op
+    node.out_grad = out.grad
+    node.has_arg0 = 1
+    node.arg0_grad = arg0.grad
+    node.arg0 = _tape_save_tensor(arg0)
+    node.has_arg1 = 0
+    node.arg1_grad = 0 as *Tensor
+    node.arg1 = 0 as *Tensor
+    if saved_out.data != 0 as *float:
+      node.saved_out = _tape_save_tensor(saved_out)
+    else:
+      node.saved_out = 0 as *Tensor
+    node.scalar_val = s
+    node.axis = ax
+    node.keepdim = kd
+  _tape_len = _tape_len + 1
+  ret 0
+
+// Loss Functions with Autograd Tape Integration
+fn tensor_mse_loss(pred:Tensor, target:Tensor) -> Tensor:
+  diff:Tensor = _tensor_sub_raw(pred, target)
+  diff_sq:Tensor = _tensor_mul_raw(diff, diff)
+  loss_val:float = tensor_mean_all(diff_sq)
+  tensor_free_tensor(diff)
+  tensor_free_tensor(diff_sq)
+
+  loss:Tensor = tensor_1d(1)
+  tensor_set1(loss, 0, loss_val)
+
+  if _tape_enabled != 0 && (pred.requires_grad != 0 || target.requires_grad != 0):
+    loss = tensor_require_grad(loss)
+    tape_record_binary(AUTOGRAD_OP_MSE_LOSS, loss, pred, target, 0.0, 0, 0)
+  ret loss
+
+fn tensor_cross_entropy_loss(logits:Tensor, target_probs:Tensor) -> Tensor:
+  probs:Tensor = tensor_softmax(logits, logits.ndim - 1)
+  b_dim:int = logits.shape0
+  if b_dim <= 0: b_dim = 1
+
+  total_loss:float = 0.0
+  i:int = 0
+  while i < probs.size:
+    p:float = 0.0
+    tgt:float = 0.0
+    unsafe:
+      p = probs.data[i]
+      tgt = target_probs.data[i]
+    if tgt > 0.0:
+      if p < 1.0e-12: p = 1.0e-12
+      total_loss = total_loss - tgt * math.log(p)
+    i = i + 1
+  total_loss = total_loss / (b_dim as float)
+
+  loss:Tensor = tensor_1d(1)
+  tensor_set1(loss, 0, total_loss)
+
+  if _tape_enabled != 0 && (logits.requires_grad != 0 || target_probs.requires_grad != 0):
+    loss = tensor_require_grad(loss)
+    tape_record_unary(AUTOGRAD_OP_CROSS_ENTROPY, loss, logits, probs, 0.0, 0, 0)
+    tape:*TapeNode = tape_get()
+    unsafe:
+      node:*TapeNode = tape + (_tape_len - 1)
+      node.has_arg1 = 1
+      node.arg1_grad = target_probs.grad
+      node.arg1 = _tape_save_tensor(target_probs)
+  tensor_free_tensor(probs)
+  ret loss
+
+fn tensor_sum_all_t(a:Tensor) -> Tensor:
+  s_val:float = tensor_sum_all(a)
+  c:Tensor = tensor_1d(1)
+  tensor_set1(c, 0, s_val)
+  if _tape_enabled != 0 && a.requires_grad != 0:
+    c = tensor_require_grad(c)
+    tape_record_unary(AUTOGRAD_OP_SUM_ALL, c, a, tensor_empty_raw(0, 0, 0, 0, 0), 0.0, 0, 0)
+  ret c
+
+fn tensor_mean_all_t(a:Tensor) -> Tensor:
+  m_val:float = tensor_mean_all(a)
+  c:Tensor = tensor_1d(1)
+  tensor_set1(c, 0, m_val)
+  if _tape_enabled != 0 && a.requires_grad != 0:
+    c = tensor_require_grad(c)
+    tape_record_unary(AUTOGRAD_OP_MEAN_ALL, c, a, tensor_empty_raw(0, 0, 0, 0, 0), 0.0, 0, 0)
+  ret c
+
+// Reverse-Mode Backward Pass Execution
+fn tensor_backward(loss:Tensor) -> int:
+  if _tape_len <= 0:
+    ret 0
+
+  tape:*TapeNode = tape_get()
+
+  // Seed scalar loss gradient with 1.0
+  last_idx:int = _tape_len - 1
+  unsafe:
+    node_last:*TapeNode = tape + last_idx
+    if node_last.out_grad != 0 as *Tensor:
+      if node_last.out_grad.data == 0 as *float || node_last.out_grad.size <= 0:
+        tensor_store_p(node_last.out_grad, tensor_ones_1d(1))
+      else:
+        g_t:Tensor = tensor_load_p(node_last.out_grad)
+        tensor_fill(g_t, 1.0)
+
+  // Topological reverse traversal
+  step:int = _tape_len - 1
+  while step >= 0:
+    unsafe:
+      node:*TapeNode = tape + step
+      if node.out_grad != 0 as *Tensor && node.out_grad.data != 0 as *float:
+        out_g:Tensor = tensor_load_p(node.out_grad)
+
+        if node.op_type == AUTOGRAD_OP_ADD:
+          a0:Tensor = tensor_load_p(node.arg0)
+          a1:Tensor = tensor_load_p(node.arg1)
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            g0:Tensor = tensor_collapse_to_shape(out_g, a0)
+            tensor_accumulate_grad(node.arg0_grad, g0)
+            tensor_free_tensor(g0)
+          if node.has_arg1 != 0 && node.arg1_grad != 0 as *Tensor:
+            g1:Tensor = tensor_collapse_to_shape(out_g, a1)
+            tensor_accumulate_grad(node.arg1_grad, g1)
+            tensor_free_tensor(g1)
+
+        else if node.op_type == AUTOGRAD_OP_SUB:
+          a0:Tensor = tensor_load_p(node.arg0)
+          a1:Tensor = tensor_load_p(node.arg1)
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            g0:Tensor = tensor_collapse_to_shape(out_g, a0)
+            tensor_accumulate_grad(node.arg0_grad, g0)
+            tensor_free_tensor(g0)
+          if node.has_arg1 != 0 && node.arg1_grad != 0 as *Tensor:
+            neg_g:Tensor = tensor_neg(out_g)
+            g1:Tensor = tensor_collapse_to_shape(neg_g, a1)
+            tensor_accumulate_grad(node.arg1_grad, g1)
+            tensor_free_tensor(neg_g)
+            tensor_free_tensor(g1)
+
+        else if node.op_type == AUTOGRAD_OP_MUL:
+          a0:Tensor = tensor_load_p(node.arg0)
+          a1:Tensor = tensor_load_p(node.arg1)
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            prod0:Tensor = tensor_mul(out_g, a1)
+            g0:Tensor = tensor_collapse_to_shape(prod0, a0)
+            tensor_accumulate_grad(node.arg0_grad, g0)
+            tensor_free_tensor(prod0)
+            tensor_free_tensor(g0)
+          if node.has_arg1 != 0 && node.arg1_grad != 0 as *Tensor:
+            prod1:Tensor = tensor_mul(out_g, a0)
+            g1:Tensor = tensor_collapse_to_shape(prod1, a1)
+            tensor_accumulate_grad(node.arg1_grad, g1)
+            tensor_free_tensor(prod1)
+            tensor_free_tensor(g1)
+
+        else if node.op_type == AUTOGRAD_OP_DIV:
+          a0:Tensor = tensor_load_p(node.arg0)
+          a1:Tensor = tensor_load_p(node.arg1)
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            d0:Tensor = tensor_div(out_g, a1)
+            g0:Tensor = tensor_collapse_to_shape(d0, a0)
+            tensor_accumulate_grad(node.arg0_grad, g0)
+            tensor_free_tensor(d0)
+            tensor_free_tensor(g0)
+          if node.has_arg1 != 0 && node.arg1_grad != 0 as *Tensor:
+            b_sq:Tensor = tensor_mul(a1, a1)
+            num:Tensor = tensor_mul(out_g, a0)
+            d1:Tensor = tensor_div(num, b_sq)
+            neg_d1:Tensor = tensor_neg(d1)
+            g1:Tensor = tensor_collapse_to_shape(neg_d1, a1)
+            tensor_accumulate_grad(node.arg1_grad, g1)
+            tensor_free_tensor(b_sq)
+            tensor_free_tensor(num)
+            tensor_free_tensor(d1)
+            tensor_free_tensor(neg_d1)
+            tensor_free_tensor(g1)
+
+        else if node.op_type == AUTOGRAD_OP_MATMUL:
+          a0:Tensor = tensor_load_p(node.arg0)
+          a1:Tensor = tensor_load_p(node.arg1)
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            ax0:int = a1.ndim - 2
+            ax1:int = a1.ndim - 1
+            if ax0 < 0: ax0 = 0
+            if ax1 < 0: ax1 = 1
+            bt:Tensor = tensor_transpose(a1, ax0, ax1)
+            ga:Tensor = tensor_matmul(out_g, bt)
+            ga_c:Tensor = tensor_collapse_to_shape(ga, a0)
+            tensor_accumulate_grad(node.arg0_grad, ga_c)
+            tensor_free_tensor(bt)
+            tensor_free_tensor(ga)
+            tensor_free_tensor(ga_c)
+          if node.has_arg1 != 0 && node.arg1_grad != 0 as *Tensor:
+            ax0:int = a0.ndim - 2
+            ax1:int = a0.ndim - 1
+            if ax0 < 0: ax0 = 0
+            if ax1 < 0: ax1 = 1
+            at:Tensor = tensor_transpose(a0, ax0, ax1)
+            gb:Tensor = tensor_matmul(at, out_g)
+            gb_c:Tensor = tensor_collapse_to_shape(gb, a1)
+            tensor_accumulate_grad(node.arg1_grad, gb_c)
+            tensor_free_tensor(at)
+            tensor_free_tensor(gb)
+            tensor_free_tensor(gb_c)
+
+        else if node.op_type == AUTOGRAD_OP_SCALE:
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            ga:Tensor = tensor_scale(out_g, node.scalar_val)
+            tensor_accumulate_grad(node.arg0_grad, ga)
+            tensor_free_tensor(ga)
+
+        else if node.op_type == AUTOGRAD_OP_NEG:
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            ga:Tensor = tensor_neg(out_g)
+            tensor_accumulate_grad(node.arg0_grad, ga)
+            tensor_free_tensor(ga)
+
+        else if node.op_type == AUTOGRAD_OP_RELU:
+          a0:Tensor = tensor_load_p(node.arg0)
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            ga:Tensor = tensor_clone(out_g)
+            i:int = 0
+            while i < ga.size:
+              if a0.data[i] <= 0.0:
+                ga.data[i] = 0.0
+              i = i + 1
+            tensor_accumulate_grad(node.arg0_grad, ga)
+            tensor_free_tensor(ga)
+
+        else if node.op_type == AUTOGRAD_OP_SIGMOID:
+          y_out:Tensor = tensor_load_p(node.saved_out)
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            ga:Tensor = tensor_clone(out_g)
+            i:int = 0
+            while i < ga.size:
+              y_v:float = y_out.data[i]
+              ga.data[i] = ga.data[i] * y_v * (1.0 - y_v)
+              i = i + 1
+            tensor_accumulate_grad(node.arg0_grad, ga)
+            tensor_free_tensor(ga)
+
+        else if node.op_type == AUTOGRAD_OP_TANH:
+          y_out:Tensor = tensor_load_p(node.saved_out)
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            ga:Tensor = tensor_clone(out_g)
+            i:int = 0
+            while i < ga.size:
+              y_v:float = y_out.data[i]
+              ga.data[i] = ga.data[i] * (1.0 - y_v * y_v)
+              i = i + 1
+            tensor_accumulate_grad(node.arg0_grad, ga)
+            tensor_free_tensor(ga)
+
+        else if node.op_type == AUTOGRAD_OP_SILU:
+          a0:Tensor = tensor_load_p(node.arg0)
+          y_out:Tensor = tensor_load_p(node.saved_out)
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            ga:Tensor = tensor_clone(out_g)
+            i:int = 0
+            while i < ga.size:
+              x_val:float = a0.data[i]
+              sig:float = 1.0 / (1.0 + math.exp(0.0 - x_val))
+              c_val:float = y_out.data[i]
+              deriv:float = sig + c_val * (1.0 - sig)
+              ga.data[i] = ga.data[i] * deriv
+              i = i + 1
+            tensor_accumulate_grad(node.arg0_grad, ga)
+            tensor_free_tensor(ga)
+
+        else if node.op_type == AUTOGRAD_OP_GELU:
+          a0:Tensor = tensor_load_p(node.arg0)
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            ga:Tensor = tensor_clone(out_g)
+            c_const:float = 0.7978845608028654
+            i:int = 0
+            while i < ga.size:
+              x_val:float = a0.data[i]
+              u:float = c_const * (x_val + 0.044715 * x_val * x_val * x_val)
+              th:float = math.tanh(u)
+              u_p:float = c_const * (1.0 + 0.134145 * x_val * x_val)
+              deriv:float = 0.5 * (1.0 + th) + 0.5 * x_val * (1.0 - th * th) * u_p
+              ga.data[i] = ga.data[i] * deriv
+              i = i + 1
+            tensor_accumulate_grad(node.arg0_grad, ga)
+            tensor_free_tensor(ga)
+
+        else if node.op_type == AUTOGRAD_OP_SUM_ALL:
+          a0:Tensor = tensor_load_p(node.arg0)
+          grad_val:float = out_g.data[0]
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            ga:Tensor = tensor_clone(a0)
+            tensor_fill(ga, grad_val)
+            tensor_accumulate_grad(node.arg0_grad, ga)
+            tensor_free_tensor(ga)
+
+        else if node.op_type == AUTOGRAD_OP_MEAN_ALL:
+          a0:Tensor = tensor_load_p(node.arg0)
+          grad_val:float = out_g.data[0]
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            ga:Tensor = tensor_clone(a0)
+            scale_val:float = grad_val / (a0.size as float)
+            tensor_fill(ga, scale_val)
+            tensor_accumulate_grad(node.arg0_grad, ga)
+            tensor_free_tensor(ga)
+
+        else if node.op_type == AUTOGRAD_OP_MSE_LOSS:
+          a0:Tensor = tensor_load_p(node.arg0)
+          a1:Tensor = tensor_load_p(node.arg1)
+          l_grad:float = out_g.data[0]
+          scale_fac:float = 2.0 * l_grad / (a0.size as float)
+          diff:Tensor = tensor_sub(a0, a1)
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            g0:Tensor = tensor_scale(diff, scale_fac)
+            tensor_accumulate_grad(node.arg0_grad, g0)
+            tensor_free_tensor(g0)
+          if node.has_arg1 != 0 && node.arg1_grad != 0 as *Tensor:
+            g1:Tensor = tensor_scale(diff, 0.0 - scale_fac)
+            tensor_accumulate_grad(node.arg1_grad, g1)
+            tensor_free_tensor(g1)
+          tensor_free_tensor(diff)
+
+        else if node.op_type == AUTOGRAD_OP_CROSS_ENTROPY:
+          a0:Tensor = tensor_load_p(node.arg0)
+          a1:Tensor = tensor_load_p(node.arg1)
+          probs:Tensor = tensor_load_p(node.saved_out)
+          l_grad:float = out_g.data[0]
+          b_size:float = a0.shape0 as float
+          if b_size <= 0.0: b_size = 1.0
+          scale_fac:float = l_grad / b_size
+          diff:Tensor = tensor_sub(probs, a1)
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            g0:Tensor = tensor_scale(diff, scale_fac)
+            tensor_accumulate_grad(node.arg0_grad, g0)
+            tensor_free_tensor(g0)
+          tensor_free_tensor(diff)
+
+    step = step - 1
+  ret 0
+
+// -------------------------------------------------------------
+// Autograd-Aware Math Operations
+// -------------------------------------------------------------
+
+fn tensor_matmul(a:Tensor, b:Tensor) -> Tensor:
+  res:Tensor = _tensor_matmul_raw(a, b)
+  if _tape_enabled != 0 && (a.requires_grad != 0 || b.requires_grad != 0):
+    res = tensor_require_grad(res)
+    tape_record_binary(AUTOGRAD_OP_MATMUL, res, a, b, 0.0, 0, 0)
+  ret res
+
+fn tensor_add(a:Tensor, b:Tensor) -> Tensor:
+  c:Tensor = _tensor_add_raw(a, b)
+  if _tape_enabled != 0 && (a.requires_grad != 0 || b.requires_grad != 0):
+    c = tensor_require_grad(c)
+    tape_record_binary(AUTOGRAD_OP_ADD, c, a, b, 0.0, 0, 0)
+  ret c
+
+fn tensor_sub(a:Tensor, b:Tensor) -> Tensor:
+  c:Tensor = _tensor_sub_raw(a, b)
+  if _tape_enabled != 0 && (a.requires_grad != 0 || b.requires_grad != 0):
+    c = tensor_require_grad(c)
+    tape_record_binary(AUTOGRAD_OP_SUB, c, a, b, 0.0, 0, 0)
+  ret c
+
+fn tensor_mul(a:Tensor, b:Tensor) -> Tensor:
+  c:Tensor = _tensor_mul_raw(a, b)
+  if _tape_enabled != 0 && (a.requires_grad != 0 || b.requires_grad != 0):
+    c = tensor_require_grad(c)
+    tape_record_binary(AUTOGRAD_OP_MUL, c, a, b, 0.0, 0, 0)
+  ret c
+
+fn tensor_div(a:Tensor, b:Tensor) -> Tensor:
+  c:Tensor = _tensor_div_raw(a, b)
+  if _tape_enabled != 0 && (a.requires_grad != 0 || b.requires_grad != 0):
+    c = tensor_require_grad(c)
+    tape_record_binary(AUTOGRAD_OP_DIV, c, a, b, 0.0, 0, 0)
+  ret c
+
+fn tensor_scale(a:Tensor, s:float) -> Tensor:
+  c:Tensor = _tensor_scale_raw(a, s)
+  if _tape_enabled != 0 && a.requires_grad != 0:
+    c = tensor_require_grad(c)
+    tape_record_unary(AUTOGRAD_OP_SCALE, c, a, tensor_empty_raw(0, 0, 0, 0, 0), s, 0, 0)
+  ret c
+
+fn tensor_neg(a:Tensor) -> Tensor:
+  c:Tensor = _tensor_neg_raw(a)
+  if _tape_enabled != 0 && a.requires_grad != 0:
+    c = tensor_require_grad(c)
+    tape_record_unary(AUTOGRAD_OP_NEG, c, a, tensor_empty_raw(0, 0, 0, 0, 0), 0.0, 0, 0)
+  ret c
+
+fn tensor_relu(a:Tensor) -> Tensor:
+  c:Tensor = _tensor_relu_raw(a)
+  if _tape_enabled != 0 && a.requires_grad != 0:
+    c = tensor_require_grad(c)
+    tape_record_unary(AUTOGRAD_OP_RELU, c, a, tensor_empty_raw(0, 0, 0, 0, 0), 0.0, 0, 0)
+  ret c
+
+fn tensor_gelu(a:Tensor) -> Tensor:
+  c:Tensor = _tensor_gelu_raw(a)
+  if _tape_enabled != 0 && a.requires_grad != 0:
+    c = tensor_require_grad(c)
+    tape_record_unary(AUTOGRAD_OP_GELU, c, a, tensor_empty_raw(0, 0, 0, 0, 0), 0.0, 0, 0)
+  ret c
+
+fn tensor_silu(a:Tensor) -> Tensor:
+  c:Tensor = _tensor_silu_raw(a)
+  if _tape_enabled != 0 && a.requires_grad != 0:
+    c = tensor_require_grad(c)
+    tape_record_unary(AUTOGRAD_OP_SILU, c, a, c, 0.0, 0, 0)
+  ret c
+
+fn tensor_sigmoid(a:Tensor) -> Tensor:
+  c:Tensor = _tensor_sigmoid_raw(a)
+  if _tape_enabled != 0 && a.requires_grad != 0:
+    c = tensor_require_grad(c)
+    tape_record_unary(AUTOGRAD_OP_SIGMOID, c, a, c, 0.0, 0, 0)
+  ret c
+
+fn tensor_tanh(a:Tensor) -> Tensor:
+  c:Tensor = _tensor_tanh_raw(a)
+  if _tape_enabled != 0 && a.requires_grad != 0:
+    c = tensor_require_grad(c)
+    tape_record_unary(AUTOGRAD_OP_TANH, c, a, c, 0.0, 0, 0)
+  ret c
+
+// ============================================================
+// Phase 5: Optimizers, Schedulers & Training Loop
+// ============================================================
+
+struct OptimizerParam:
+  p:*Tensor
+  m:*float
+  v:*float
+  size:int
+
+struct AdamW:
+  params_raw:*char
+  num_params:int
+  cap:int
+  lr:float
+  beta1:float
+  beta2:float
+  eps:float
+  weight_decay:float
+  step:int
+
+struct SGD:
+  params_raw:*char
+  num_params:int
+  cap:int
+  lr:float
+  momentum:float
+  weight_decay:float
+  nesterov:int
+  step:int
+
+// -------------------------------------------------------------
+// Learning Rate Schedulers
+// -------------------------------------------------------------
+
+fn lr_linear_schedule(initial_lr:float, min_lr:float, cur_step:int, total_steps:int) -> float:
+  if cur_step >= total_steps:
+    ret min_lr
+  frac:float = 1.0 - (cur_step as float) / (total_steps as float)
+  ret min_lr + (initial_lr - min_lr) * frac
+
+fn lr_cosine_schedule(max_lr:float, min_lr:float, cur_step:int, warmup_steps:int, total_steps:int) -> float:
+  if cur_step < warmup_steps:
+    if warmup_steps <= 0: ret max_lr
+    ret min_lr + (max_lr - min_lr) * ((cur_step as float) / (warmup_steps as float))
+  
+  if cur_step >= total_steps:
+    ret min_lr
+  
+  decay_steps:float = (total_steps - warmup_steps) as float
+  if decay_steps <= 0.0: ret min_lr
+  progress:float = ((cur_step - warmup_steps) as float) / decay_steps
+  if progress > 1.0: progress = 1.0
+  factor:float = 0.5 * (1.0 + math.cos(math.PI() * progress))
+  ret min_lr + (max_lr - min_lr) * factor
+
+// -------------------------------------------------------------
+// AdamW Optimizer (Decoupled Weight Decay Adam)
+// -------------------------------------------------------------
+
+fn adamw_create(lr:float, beta1:float, beta2:float, eps:float, weight_decay:float) -> AdamW:
+  opt:AdamW
+  opt.cap = 128
+  opt.num_params = 0
+  unsafe:
+    opt.params_raw = malloc(opt.cap * 32)
+  opt.lr = lr
+  opt.beta1 = beta1
+  opt.beta2 = beta2
+  opt.eps = eps
+  opt.weight_decay = weight_decay
+  opt.step = 0
+  ret opt
+
+fn adamw_add_param(opt:*AdamW, p:*Tensor) -> int:
+  unsafe:
+    if opt.num_params >= opt.cap || p == 0 as *Tensor:
+      ret 0 - 1
+    entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+    entry:*OptimizerParam = entries + opt.num_params
+    entry.p = p
+    entry.size = p.size
+
+    m_raw:*char = malloc(p.size * 8)
+    v_raw:*char = malloc(p.size * 8)
+    entry.m = m_raw as *float
+    entry.v = v_raw as *float
+    i:int = 0
+    while i < p.size:
+      entry.m[i] = 0.0
+      entry.v[i] = 0.0
+      i = i + 1
+    opt.num_params = opt.num_params + 1
+  ret 0
+
+fn adamw_zero_grad(opt:*AdamW) -> int:
+  p_idx:int = 0
+  while p_idx < opt.num_params:
+    unsafe:
+      entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+      entry:*OptimizerParam = entries + p_idx
+      tensor_zero_grad_p(entry.p)
+    p_idx = p_idx + 1
+  ret 0
+
+fn adamw_clip_grad_norm(opt:*AdamW, max_norm:float) -> float:
+  total_sq:float = 0.0
+  p_idx:int = 0
+  while p_idx < opt.num_params:
+    unsafe:
+      entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+      entry:*OptimizerParam = entries + p_idx
+      param:*Tensor = entry.p
+      if param != 0 as *Tensor && param.grad != 0 as *Tensor && param.grad.data != 0 as *float:
+        i:int = 0
+        while i < entry.size:
+          g:float = param.grad.data[i]
+          total_sq = total_sq + g * g
+          i = i + 1
+    p_idx = p_idx + 1
+
+  total_norm:float = math.sqrt(total_sq)
+  if total_norm > max_norm && total_norm > 0.0:
+    scale:float = max_norm / (total_norm + 1.0e-06)
+    p_idx = 0
+    while p_idx < opt.num_params:
+      unsafe:
+        entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+        entry:*OptimizerParam = entries + p_idx
+        param:*Tensor = entry.p
+        if param != 0 as *Tensor && param.grad != 0 as *Tensor && param.grad.data != 0 as *float:
+          i:int = 0
+          while i < entry.size:
+            param.grad.data[i] = param.grad.data[i] * scale
+            i = i + 1
+      p_idx = p_idx + 1
+  ret total_norm
+
+fn adamw_step(opt:*AdamW) -> int:
+  opt.step = opt.step + 1
+  bc1:float = 1.0 - math.pow(opt.beta1, opt.step as float)
+  bc2:float = 1.0 - math.pow(opt.beta2, opt.step as float)
+  if bc1 <= 0.0: bc1 = 1.0e-07
+  if bc2 <= 0.0: bc2 = 1.0e-07
+
+  p_idx:int = 0
+  while p_idx < opt.num_params:
+    unsafe:
+      entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+      entry:*OptimizerParam = entries + p_idx
+      param:*Tensor = entry.p
+      if param != 0 as *Tensor && param.grad != 0 as *Tensor && param.grad.data != 0 as *float:
+        i:int = 0
+        while i < entry.size:
+          g:float = param.grad.data[i]
+          w:float = param.data[i]
+
+          // 1. Decoupled weight decay
+          if opt.weight_decay > 0.0:
+            w = w * (1.0 - opt.lr * opt.weight_decay)
+
+          // 2. Update biased 1st and 2nd moment estimates
+          m_val:float = opt.beta1 * entry.m[i] + (1.0 - opt.beta1) * g
+          v_val:float = opt.beta2 * entry.v[i] + (1.0 - opt.beta2) * (g * g)
+          entry.m[i] = m_val
+          entry.v[i] = v_val
+
+          // 3. Compute bias-corrected moments
+          m_hat:float = m_val / bc1
+          v_hat:float = v_val / bc2
+
+          // 4. Update parameter
+          step_val:float = opt.lr * (m_hat / (math.sqrt(v_hat) + opt.eps))
+          param.data[i] = w - step_val
+          i = i + 1
+    p_idx = p_idx + 1
+  ret 0
+
+fn adamw_free(opt:*AdamW) -> int:
+  p_idx:int = 0
+  while p_idx < opt.num_params:
+    unsafe:
+      entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+      entry:*OptimizerParam = entries + p_idx
+      if entry.m != 0 as *float:
+        free(entry.m as *char)
+      if entry.v != 0 as *float:
+        free(entry.v as *char)
+    p_idx = p_idx + 1
+  unsafe:
+    if opt.params_raw != 0 as *char:
+      free(opt.params_raw)
+  ret 0
+
+// -------------------------------------------------------------
+// SGD Optimizer with Momentum & Weight Decay
+// -------------------------------------------------------------
+
+fn sgd_create(lr:float, momentum:float, weight_decay:float, nesterov:int) -> SGD:
+  opt:SGD
+  opt.cap = 128
+  opt.num_params = 0
+  unsafe:
+    opt.params_raw = malloc(opt.cap * 32)
+  opt.lr = lr
+  opt.momentum = momentum
+  opt.weight_decay = weight_decay
+  opt.nesterov = nesterov
+  opt.step = 0
+  ret opt
+
+fn sgd_add_param(opt:*SGD, p:*Tensor) -> int:
+  unsafe:
+    if opt.num_params >= opt.cap || p == 0 as *Tensor:
+      ret 0 - 1
+    entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+    entry:*OptimizerParam = entries + opt.num_params
+    entry.p = p
+    entry.size = p.size
+
+    v_raw:*char = malloc(p.size * 8)
+    entry.v = v_raw as *float
+    entry.m = 0 as *float
+    i:int = 0
+    while i < p.size:
+      entry.v[i] = 0.0
+      i = i + 1
+    opt.num_params = opt.num_params + 1
+  ret 0
+
+fn sgd_zero_grad(opt:*SGD) -> int:
+  p_idx:int = 0
+  while p_idx < opt.num_params:
+    unsafe:
+      entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+      entry:*OptimizerParam = entries + p_idx
+      tensor_zero_grad_p(entry.p)
+    p_idx = p_idx + 1
+  ret 0
+
+fn sgd_clip_grad_norm(opt:*SGD, max_norm:float) -> float:
+  total_sq:float = 0.0
+  p_idx:int = 0
+  while p_idx < opt.num_params:
+    unsafe:
+      entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+      entry:*OptimizerParam = entries + p_idx
+      param:*Tensor = entry.p
+      if param != 0 as *Tensor && param.grad != 0 as *Tensor && param.grad.data != 0 as *float:
+        i:int = 0
+        while i < entry.size:
+          g:float = param.grad.data[i]
+          total_sq = total_sq + g * g
+          i = i + 1
+    p_idx = p_idx + 1
+
+  total_norm:float = math.sqrt(total_sq)
+  if total_norm > max_norm && total_norm > 0.0:
+    scale:float = max_norm / (total_norm + 1.0e-06)
+    p_idx = 0
+    while p_idx < opt.num_params:
+      unsafe:
+        entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+        entry:*OptimizerParam = entries + p_idx
+        param:*Tensor = entry.p
+        if param != 0 as *Tensor && param.grad != 0 as *Tensor && param.grad.data != 0 as *float:
+          i:int = 0
+          while i < entry.size:
+            param.grad.data[i] = param.grad.data[i] * scale
+            i = i + 1
+      p_idx = p_idx + 1
+  ret total_norm
+
+fn sgd_step(opt:*SGD) -> int:
+  opt.step = opt.step + 1
+  p_idx:int = 0
+  while p_idx < opt.num_params:
+    unsafe:
+      entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+      entry:*OptimizerParam = entries + p_idx
+      param:*Tensor = entry.p
+      if param != 0 as *Tensor && param.grad != 0 as *Tensor && param.grad.data != 0 as *float:
+        i:int = 0
+        while i < entry.size:
+          g:float = param.grad.data[i]
+          w:float = param.data[i]
+
+          if opt.weight_decay > 0.0:
+            g = g + opt.weight_decay * w
+
+          if opt.momentum > 0.0:
+            entry.v[i] = opt.momentum * entry.v[i] + g
+            if opt.nesterov != 0:
+              g = g + opt.momentum * entry.v[i]
+            else:
+              g = entry.v[i]
+
+          param.data[i] = w - opt.lr * g
+          i = i + 1
+    p_idx = p_idx + 1
+  ret 0
+
+fn sgd_free(opt:*SGD) -> int:
+  p_idx:int = 0
+  while p_idx < opt.num_params:
+    unsafe:
+      entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+      entry:*OptimizerParam = entries + p_idx
+      if entry.v != 0 as *float:
+        free(entry.v as *char)
+    p_idx = p_idx + 1
+  unsafe:
+    if opt.params_raw != 0 as *char:
+      free(opt.params_raw)
   ret 0

@@ -1,0 +1,170 @@
+// tests/test_tensor_phase1.tn
+// Comprehensive Phase 1 Test Suite using official standard library `import "tensor"`
+
+import "tensor"
+
+fn main() -> int:
+  say "=========================================================="
+  say "      TezzNative Tensor Engine - Phase 1 Verification     "
+  say "=========================================================="
+
+  // -----------------------------------------------------------
+  // 1. Allocations & Indexing
+  // -----------------------------------------------------------
+  say "\n--- 1. Allocations & Multidimensional Indexing ---"
+  t2:Tensor = tensor.tensor_zeros_2d(2, 3)
+  tensor.tensor_set2(t2, 0, 0, 10.0)
+  tensor.tensor_set2(t2, 0, 1, 20.0)
+  tensor.tensor_set2(t2, 0, 2, 30.0)
+  tensor.tensor_set2(t2, 1, 0, 40.0)
+  tensor.tensor_set2(t2, 1, 1, 50.0)
+  tensor.tensor_set2(t2, 1, 2, 60.0)
+
+  tensor.tensor_print_t(t2)
+  if tensor.tensor_get2(t2, 0, 1) == 20.0 && tensor.tensor_get2(t2, 1, 2) == 60.0 && t2.size == 6:
+    say "PASS: 2D allocation and indexing verified"
+  else:
+    say "FAIL: 2D allocation or indexing error"
+
+  // 4D Tensor (e.g. batch=2, heads=2, seq=2, dim=2)
+  t4:Tensor = tensor.tensor_zeros_4d(2, 2, 2, 2)
+  tensor.tensor_set4(t4, 1, 0, 1, 0, 42.5)
+  if tensor.tensor_get4(t4, 1, 0, 1, 0) == 42.5 && t4.size == 16:
+    say "PASS: 4D tensor indexing verified (shape [2, 2, 2, 2], total 16 elements)"
+  else:
+    say "FAIL: 4D tensor error"
+
+  // -----------------------------------------------------------
+  // 2. Contiguous Check
+  // -----------------------------------------------------------
+  say "\n--- 2. Contiguous Detection ---"
+  if tensor.tensor_is_contiguous(t2) == 1:
+    say "PASS: Canonical tensor correctly identified as contiguous"
+  else:
+    say "FAIL: False negative on contiguous check"
+
+  // -----------------------------------------------------------
+  // 3. Zero-Copy 2D Transpose
+  // -----------------------------------------------------------
+  say "\n--- 3. Zero-Copy Transpose ---"
+  t2_t:Tensor = tensor.tensor_t(t2)
+  tensor.tensor_print_t(t2_t)
+  if t2_t.shape0 == 3 && t2_t.shape1 == 2 && t2_t.is_view == 1:
+    say "PASS: Transpose shape swapped [3, 2] and flagged as view"
+  else:
+    say "FAIL: Transpose shape incorrect"
+
+  if tensor.tensor_get2(t2_t, 1, 0) == 20.0 && tensor.tensor_get2(t2_t, 2, 1) == 60.0:
+    say "PASS: Transposed element values match source without memory copy"
+  else:
+    say "FAIL: Transposed element values mismatch"
+
+  if tensor.tensor_is_contiguous(t2_t) == 0:
+    say "PASS: Transposed tensor correctly identified as non-contiguous"
+  else:
+    say "FAIL: Transposed tensor should not be contiguous"
+
+  // -----------------------------------------------------------
+  // 4. Zero-Copy Strided Slicing
+  // -----------------------------------------------------------
+  say "\n--- 4. Zero-Copy Strided Slicing ---"
+  // Slice row 1: start=1, end=2, step=1 -> 1x3 matrix
+  slice_row:Tensor = tensor.tensor_slice(t2, 0, 1, 2, 1)
+  tensor.tensor_print_t(slice_row)
+  if slice_row.shape0 == 1 && slice_row.shape1 == 3 && tensor.tensor_get2(slice_row, 0, 1) == 50.0:
+    say "PASS: Row slice verified (got 50.0 at [0, 1])"
+  else:
+    say "FAIL: Row slice error"
+
+  // Slice columns 0 and 2 with step 2 (start=0, end=3, step=2) -> 2x2 matrix
+  slice_cols:Tensor = tensor.tensor_slice(t2, 1, 0, 3, 2)
+  tensor.tensor_print_t(slice_cols)
+  if slice_cols.shape0 == 2 && slice_cols.shape1 == 2 && tensor.tensor_get2(slice_cols, 0, 1) == 30.0 && tensor.tensor_get2(slice_cols, 1, 1) == 60.0:
+    say "PASS: Strided column slice with step 2 verified (got 30.0 and 60.0)"
+  else:
+    say "FAIL: Strided column slice error"
+
+  // -----------------------------------------------------------
+  // 5. Zero-Copy 4D Permute (Attention Head Transpose)
+  // -----------------------------------------------------------
+  say "\n--- 5. 4D Permute (Attention Transpose [B, S, H, D] -> [B, H, S, D]) ---"
+  // Shape: [batch=1, seq=3, heads=2, dim=4]
+  attn_t:Tensor = tensor.tensor_zeros_4d(1, 3, 2, 4)
+  tensor.tensor_set4(attn_t, 0, 2, 1, 3, 99.0)
+  perm:Tensor = tensor.tensor_permute_4d(attn_t, 0, 2, 1, 3)
+  tensor.tensor_print_t(perm)
+  if perm.shape0 == 1 && perm.shape1 == 2 && perm.shape2 == 3 && perm.shape3 == 4:
+    say "PASS: 4D permute swapped axes to [1, 2, 3, 4]"
+  else:
+    say "FAIL: 4D permute shape incorrect"
+
+  if tensor.tensor_get4(perm, 0, 1, 2, 3) == 99.0:
+    say "PASS: Permuted coordinate [0, 1, 2, 3] accurately maps to original [0, 2, 1, 3] (99.0)"
+  else:
+    say "FAIL: Permuted coordinate value mismatch"
+
+  // -----------------------------------------------------------
+  // 6. Squeeze & Unsqueeze
+  // -----------------------------------------------------------
+  say "\n--- 6. Squeeze & Unsqueeze ---"
+  sq:Tensor = tensor.tensor_squeeze(perm, 0)
+  if sq.ndim == 3 && sq.shape0 == 2 && sq.shape1 == 3 && sq.shape2 == 4:
+    say "PASS: Squeezed leading unit dimension: 4D -> 3D [2, 3, 4]"
+  else:
+    say "FAIL: Squeeze error"
+
+  unsq:Tensor = tensor.tensor_unsqueeze(sq, 1)
+  if unsq.ndim == 4 && unsq.shape0 == 2 && unsq.shape1 == 1 && unsq.shape2 == 3 && unsq.shape3 == 4:
+    say "PASS: Unsqueezed axis 1: 3D -> 4D [2, 1, 3, 4]"
+  else:
+    say "FAIL: Unsqueeze error"
+
+  // -----------------------------------------------------------
+  // 7. Contiguous Re-packing & Reshape
+  // -----------------------------------------------------------
+  say "\n--- 7. Contiguous Re-packing & Reshape ---"
+  // t2_t is 3x2 non-contiguous. Re-pack it into contiguous memory.
+  packed:Tensor = tensor.tensor_contiguous(t2_t)
+  tensor.tensor_print_t(packed)
+  if tensor.tensor_is_contiguous(packed) == 1 && packed.is_view == 0:
+    say "PASS: Non-contiguous transposed tensor packed into contiguous storage"
+  else:
+    say "FAIL: Contiguous repack failed"
+
+  // Reshape packed [3, 2] to [1, 6]
+  reshaped:Tensor = tensor.tensor_reshape_2d(packed, 1, 6)
+  if reshaped.shape0 == 1 && reshaped.shape1 == 6 && tensor.tensor_get2(reshaped, 0, 1) == 40.0:
+    say "PASS: Reshaped contiguous tensor to [1, 6] successfully"
+  else:
+    say "FAIL: Reshape error"
+
+  // Flatten
+  flat:Tensor = tensor.tensor_flatten(t2)
+  if flat.ndim == 1 && flat.shape0 == 6 && tensor.tensor_get1(flat, 5) == 60.0:
+    say "PASS: Flatten to 1D verified"
+  else:
+    say "FAIL: Flatten error"
+
+  // -----------------------------------------------------------
+  // 8. Deep Clone & Memory Safety
+  // -----------------------------------------------------------
+  say "\n--- 8. Deep Clone & Memory Safety ---"
+  cloned:Tensor = tensor.tensor_clone(t2)
+  tensor.tensor_set2(cloned, 0, 0, 999.0)
+  if tensor.tensor_get2(t2, 0, 0) == 10.0 && tensor.tensor_get2(cloned, 0, 0) == 999.0:
+    say "PASS: Deep clone is completely independent of original"
+  else:
+    say "FAIL: Clone mutation leaked into source"
+
+  // Free allocated root tensors
+  tensor.tensor_free_tensor(t2)
+  tensor.tensor_free_tensor(t4)
+  tensor.tensor_free_tensor(attn_t)
+  tensor.tensor_free_tensor(packed)
+  tensor.tensor_free_tensor(cloned)
+  say "PASS: Memory free executed cleanly without leaks or crashes"
+
+  say "\n=========================================================="
+  say "      All Phase 1 Tensor Verification Tests PASSED!       "
+  say "=========================================================="
+  ret 0

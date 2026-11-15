@@ -1,0 +1,242 @@
+// tests/test_tensor_phase2.tn
+// Comprehensive Phase 2 Test Suite: Native Tensor Math & BLAS
+
+import "tensor"
+import "math"
+
+fn main() -> int:
+  say "=========================================================="
+  say "      TezzNative Tensor Engine - Phase 2 Verification     "
+  say "=========================================================="
+
+  // -----------------------------------------------------------
+  // 1. 2D GEMM (Matrix Multiplication)
+  // -----------------------------------------------------------
+  say "\n--- 1. 2D Matrix Multiplication (A[2, 3] @ B[3, 2]) ---"
+  a:Tensor = tensor.tensor_zeros_2d(2, 3)
+  // Row 0: [1, 2, 3]
+  tensor.tensor_set2(a, 0, 0, 1.0)
+  tensor.tensor_set2(a, 0, 1, 2.0)
+  tensor.tensor_set2(a, 0, 2, 3.0)
+  // Row 1: [4, 5, 6]
+  tensor.tensor_set2(a, 1, 0, 4.0)
+  tensor.tensor_set2(a, 1, 1, 5.0)
+  tensor.tensor_set2(a, 1, 2, 6.0)
+
+  b:Tensor = tensor.tensor_zeros_2d(3, 2)
+  // Row 0: [7, 8]
+  tensor.tensor_set2(b, 0, 0, 7.0)
+  tensor.tensor_set2(b, 0, 1, 8.0)
+  // Row 1: [9, 1]
+  tensor.tensor_set2(b, 1, 0, 9.0)
+  tensor.tensor_set2(b, 1, 1, 1.0)
+  // Row 2: [2, 3]
+  tensor.tensor_set2(b, 2, 0, 2.0)
+  tensor.tensor_set2(b, 2, 1, 3.0)
+
+  c:Tensor = tensor.tensor_matmul(a, b)
+  tensor.tensor_print_t(c)
+
+  if tensor.tensor_get2(c, 0, 0) == 31.0 && tensor.tensor_get2(c, 0, 1) == 19.0 && tensor.tensor_get2(c, 1, 0) == 85.0 && tensor.tensor_get2(c, 1, 1) == 55.0:
+    say "PASS: 2D GEMM matches exact analytical result [31, 19; 85, 55]"
+  else:
+    say "FAIL: 2D GEMM calculation error"
+
+  // -----------------------------------------------------------
+  // 2. GEMM with Transposed B: A[2, 3] @ B_trans[2, 3]^T
+  // -----------------------------------------------------------
+  say "\n--- 2. GEMM with Transposed B view ---"
+  // Let b2 be 2x3: row 0 = [7, 9, 2], row 1 = [8, 1, 3]
+  // b2^T is identical to b [3x2]
+  b2:Tensor = tensor.tensor_zeros_2d(2, 3)
+  tensor.tensor_set2(b2, 0, 0, 7.0)
+  tensor.tensor_set2(b2, 0, 1, 9.0)
+  tensor.tensor_set2(b2, 0, 2, 2.0)
+  tensor.tensor_set2(b2, 1, 0, 8.0)
+  tensor.tensor_set2(b2, 1, 1, 1.0)
+  tensor.tensor_set2(b2, 1, 2, 3.0)
+  b2_t:Tensor = tensor.tensor_t(b2) // 3x2 non-contiguous view
+
+  c_trans:Tensor = tensor.tensor_matmul(a, b2_t)
+  if tensor.tensor_get2(c_trans, 0, 0) == 31.0 && tensor.tensor_get2(c_trans, 0, 1) == 19.0:
+    say "PASS: GEMM with transposed B view verified"
+  else:
+    say "FAIL: Transposed B GEMM calculation error"
+
+  // -----------------------------------------------------------
+  // 3. Batched Matrix Multiplication (BMM: 3D [2, 2, 3] @ [2, 3, 2])
+  // -----------------------------------------------------------
+  say "\n--- 3. 3D Batched Matrix Multiplication (BMM) ---"
+  bmm_a:Tensor = tensor.tensor_zeros_3d(2, 2, 3)
+  bmm_b:Tensor = tensor.tensor_zeros_3d(2, 3, 2)
+  // Fill batch 0 with a and b
+  tensor.tensor_set3(bmm_a, 0, 0, 0, 1.0)
+  tensor.tensor_set3(bmm_a, 0, 0, 1, 2.0)
+  tensor.tensor_set3(bmm_a, 0, 0, 2, 3.0)
+  tensor.tensor_set3(bmm_a, 0, 1, 0, 4.0)
+  tensor.tensor_set3(bmm_a, 0, 1, 1, 5.0)
+  tensor.tensor_set3(bmm_a, 0, 1, 2, 6.0)
+
+  tensor.tensor_set3(bmm_b, 0, 0, 0, 7.0)
+  tensor.tensor_set3(bmm_b, 0, 0, 1, 8.0)
+  tensor.tensor_set3(bmm_b, 0, 1, 0, 9.0)
+  tensor.tensor_set3(bmm_b, 0, 1, 1, 1.0)
+  tensor.tensor_set3(bmm_b, 0, 2, 0, 2.0)
+  tensor.tensor_set3(bmm_b, 0, 2, 1, 3.0)
+
+  // Fill batch 1 with 2x scale
+  tensor.tensor_set3(bmm_a, 1, 0, 0, 2.0)
+  tensor.tensor_set3(bmm_a, 1, 0, 1, 4.0)
+  tensor.tensor_set3(bmm_a, 1, 0, 2, 6.0)
+  tensor.tensor_set3(bmm_a, 1, 1, 0, 8.0)
+  tensor.tensor_set3(bmm_a, 1, 1, 1, 10.0)
+  tensor.tensor_set3(bmm_a, 1, 1, 2, 12.0)
+
+  tensor.tensor_set3(bmm_b, 1, 0, 0, 7.0)
+  tensor.tensor_set3(bmm_b, 1, 0, 1, 8.0)
+  tensor.tensor_set3(bmm_b, 1, 1, 0, 9.0)
+  tensor.tensor_set3(bmm_b, 1, 1, 1, 1.0)
+  tensor.tensor_set3(bmm_b, 1, 2, 0, 2.0)
+  tensor.tensor_set3(bmm_b, 1, 2, 1, 3.0)
+
+  bmm_c:Tensor = tensor.tensor_bmm(bmm_a, bmm_b)
+  tensor.tensor_print_t(bmm_c)
+
+  v_bat0:float = tensor.tensor_get3(bmm_c, 0, 0, 0)
+  v_bat1:float = tensor.tensor_get3(bmm_c, 1, 0, 0)
+  if v_bat0 == 31.0 && v_bat1 == 62.0 && bmm_c.size == 8:
+    say "PASS: 3D BMM verified across batch slices (bat0=31.0, bat1=62.0)"
+  else:
+    say "FAIL: 3D BMM calculation error"
+
+  // -----------------------------------------------------------
+  // 4. Elementwise Operations & Broadcasting
+  // -----------------------------------------------------------
+  say "\n--- 4. Elementwise Arithmetic & Broadcasting ---"
+  bias:Tensor = tensor.tensor_zeros_2d(1, 3)
+  tensor.tensor_set2(bias, 0, 0, 10.0)
+  tensor.tensor_set2(bias, 0, 1, 20.0)
+  tensor.tensor_set2(bias, 0, 2, 30.0)
+
+  // a is [2, 3]: [1, 2, 3; 4, 5, 6]
+  // a + bias -> [11, 22, 33; 14, 25, 36]
+  add_res:Tensor = tensor.tensor_add(a, bias)
+  tensor.tensor_print_t(add_res)
+  if tensor.tensor_get2(add_res, 0, 0) == 11.0 && tensor.tensor_get2(add_res, 1, 2) == 36.0:
+    say "PASS: Broadcast addition A[2, 3] + Bias[1, 3] verified"
+  else:
+    say "FAIL: Broadcast addition error"
+
+  // Subtraction
+  sub_res:Tensor = tensor.tensor_sub(add_res, bias)
+  if tensor.tensor_get2(sub_res, 0, 0) == 1.0 && tensor.tensor_get2(sub_res, 1, 2) == 6.0:
+    say "PASS: Broadcast subtraction verified"
+  else:
+    say "FAIL: Broadcast subtraction error"
+
+  // Elementwise multiplication (Hadamard)
+  mul_res:Tensor = tensor.tensor_mul(a, a)
+  if tensor.tensor_get2(mul_res, 0, 1) == 4.0 && tensor.tensor_get2(mul_res, 1, 2) == 36.0:
+    say "PASS: Elementwise multiplication verified (2^2=4, 6^2=36)"
+  else:
+    say "FAIL: Elementwise multiplication error"
+
+  // -----------------------------------------------------------
+  // 5. Scalar Operations & In-place Scaling
+  // -----------------------------------------------------------
+  say "\n--- 5. Scalar Operations & Scaling ---"
+  scaled:Tensor = tensor.tensor_scale(a, 2.5)
+  if tensor.tensor_get2(scaled, 0, 0) == 2.5 && tensor.tensor_get2(scaled, 1, 2) == 15.0:
+    say "PASS: Scalar scaling verified (1*2.5=2.5, 6*2.5=15.0)"
+  else:
+    say "FAIL: Scalar scaling error"
+
+  clamped:Tensor = tensor.tensor_clamp(a, 2.0, 5.0)
+  if tensor.tensor_get2(clamped, 0, 0) == 2.0 && tensor.tensor_get2(clamped, 1, 2) == 5.0:
+    say "PASS: Tensor clamp verified (1 clamped to 2, 6 clamped to 5)"
+  else:
+    say "FAIL: Tensor clamp error"
+
+  // -----------------------------------------------------------
+  // 6. Global Reductions
+  // -----------------------------------------------------------
+  say "\n--- 6. Global Reductions ---"
+  // a = [1, 2, 3; 4, 5, 6] -> sum = 21, mean = 3.5, max = 6, min = 1
+  tot_sum:float = tensor.tensor_sum_all(a)
+  tot_mean:float = tensor.tensor_mean_all(a)
+  tot_max:float = tensor.tensor_max_all(a)
+  tot_min:float = tensor.tensor_min_all(a)
+  tot_norm:float = tensor.tensor_norm(a)
+
+  say "sum_all = ", tot_sum
+  say "mean_all = ", tot_mean
+  say "max_all = ", tot_max
+  say "min_all = ", tot_min
+  say "norm = ", tot_norm
+
+  if tot_sum == 21.0 && tot_mean == 3.5 && tot_max == 6.0 && tot_min == 1.0:
+    say "PASS: Global reductions (sum, mean, max, min) verified"
+  else:
+    say "FAIL: Global reductions mismatch"
+
+  // -----------------------------------------------------------
+  // 7. Axis Reductions
+  // -----------------------------------------------------------
+  say "\n--- 7. Axis Reductions ---"
+  // a = [1, 2, 3; 4, 5, 6]
+  // Row sum (axis 1): [1+2+3=6; 4+5+6=15] -> shape [2, 1]
+  r_sum:Tensor = tensor.tensor_sum(a, 1, 1)
+  tensor.tensor_print_t(r_sum)
+  if tensor.tensor_get2(r_sum, 0, 0) == 6.0 && tensor.tensor_get2(r_sum, 1, 0) == 15.0:
+    say "PASS: Row sum (axis 1) verified [6; 15]"
+  else:
+    say "FAIL: Row sum error"
+
+  // Column sum (axis 0): [1+4=5, 2+5=7, 3+6=9] -> shape [1, 3]
+  c_sum:Tensor = tensor.tensor_sum(a, 0, 1)
+  tensor.tensor_print_t(c_sum)
+  if tensor.tensor_get2(c_sum, 0, 0) == 5.0 && tensor.tensor_get2(c_sum, 0, 1) == 7.0 && tensor.tensor_get2(c_sum, 0, 2) == 9.0:
+    say "PASS: Column sum (axis 0) verified [5, 7, 9]"
+  else:
+    say "FAIL: Column sum error"
+
+  // Row mean (axis 1): [2.0; 5.0]
+  r_mean:Tensor = tensor.tensor_mean(a, 1, 1)
+  if tensor.tensor_get2(r_mean, 0, 0) == 2.0 && tensor.tensor_get2(r_mean, 1, 0) == 5.0:
+    say "PASS: Row mean (axis 1) verified [2.0; 5.0]"
+  else:
+    say "FAIL: Row mean error"
+
+  // Row max (axis 1): [3.0; 6.0]
+  r_max:Tensor = tensor.tensor_max(a, 1, 1)
+  if tensor.tensor_get2(r_max, 0, 0) == 3.0 && tensor.tensor_get2(r_max, 1, 0) == 6.0:
+    say "PASS: Row max (axis 1) verified [3.0; 6.0]"
+  else:
+    say "FAIL: Row max error"
+
+  // -----------------------------------------------------------
+  // Clean Up Memory
+  // -----------------------------------------------------------
+  tensor.tensor_free_tensor(a)
+  tensor.tensor_free_tensor(b)
+  tensor.tensor_free_tensor(c)
+  tensor.tensor_free_tensor(b2)
+  tensor.tensor_free_tensor(c_trans)
+  tensor.tensor_free_tensor(bmm_a)
+  tensor.tensor_free_tensor(bmm_b)
+  tensor.tensor_free_tensor(bmm_c)
+  tensor.tensor_free_tensor(bias)
+  tensor.tensor_free_tensor(add_res)
+  tensor.tensor_free_tensor(sub_res)
+  tensor.tensor_free_tensor(mul_res)
+  tensor.tensor_free_tensor(scaled)
+  tensor.tensor_free_tensor(clamped)
+  tensor.tensor_free_tensor(r_sum)
+  tensor.tensor_free_tensor(c_sum)
+  tensor.tensor_free_tensor(r_mean)
+  tensor.tensor_free_tensor(r_max)
+
+  say "\n=========================================================="
+  say "      All Phase 2 Tensor Verification Tests PASSED!       "
+  say "=========================================================="
+  ret 0

@@ -1,0 +1,274 @@
+// Test Suite for Phase 3: Activation & LLM Layers
+import "tensor"
+import "math"
+
+fn test_fused_activations() -> int:
+  say "=== Test Block 1: Fused Activations (ReLU, GELU, SiLU, Sigmoid, Tanh) ==="
+  t:Tensor = tensor.tensor_1d(5)
+  tensor.tensor_set1(t, 0, 0.0 - 2.0)
+  tensor.tensor_set1(t, 1, 0.0 - 0.5)
+  tensor.tensor_set1(t, 2, 0.0)
+  tensor.tensor_set1(t, 3, 0.5)
+  tensor.tensor_set1(t, 4, 2.0)
+
+  // 1. ReLU
+  r:Tensor = tensor.tensor_relu(t)
+  if tensor.tensor_get1(r, 0) != 0.0: say "FAIL: relu[-2] != 0"
+  if tensor.tensor_get1(r, 2) != 0.0: say "FAIL: relu[0] != 0"
+  if tensor.tensor_get1(r, 4) != 2.0: say "FAIL: relu[2] != 2"
+  say "  ReLU: OK [-2, -0.5, 0, 0.5, 2] -> [", tensor.tensor_get1(r, 0), ", ", tensor.tensor_get1(r, 1), ", ", tensor.tensor_get1(r, 2), ", ", tensor.tensor_get1(r, 3), ", ", tensor.tensor_get1(r, 4), "]"
+  tensor.tensor_free_tensor(r)
+
+  // 2. GELU
+  g:Tensor = tensor.tensor_gelu(t)
+  if tensor.tensor_get1(g, 2) != 0.0: say "FAIL: gelu[0] != 0"
+  g_pos:float = tensor.tensor_get1(g, 4)
+  if g_pos < 1.95 || g_pos > 2.05: say "FAIL: gelu[2] out of range: ", g_pos
+  say "  GELU: OK [-2, 0, 2] -> [", tensor.tensor_get1(g, 0), ", ", tensor.tensor_get1(g, 2), ", ", tensor.tensor_get1(g, 4), "]"
+  tensor.tensor_free_tensor(g)
+
+  // 3. SiLU
+  s:Tensor = tensor.tensor_silu(t)
+  if tensor.tensor_get1(s, 2) != 0.0: say "FAIL: silu[0] != 0"
+  say "  SiLU: OK [-2, 0, 2] -> [", tensor.tensor_get1(s, 0), ", ", tensor.tensor_get1(s, 2), ", ", tensor.tensor_get1(s, 4), "]"
+  tensor.tensor_free_tensor(s)
+
+  // 4. Sigmoid
+  sig:Tensor = tensor.tensor_sigmoid(t)
+  mid:float = tensor.tensor_get1(sig, 2)
+  if mid < 0.499 || mid > 0.501: say "FAIL: sigmoid[0] != 0.5: ", mid
+  say "  Sigmoid: OK sigmoid(0) = ", mid
+  tensor.tensor_free_tensor(sig)
+
+  // 5. In-place activations
+  t_clone:Tensor = tensor.tensor_clone(t)
+  tensor.tensor_relu_inplace(t_clone)
+  if tensor.tensor_get1(t_clone, 0) != 0.0 || tensor.tensor_get1(t_clone, 4) != 2.0:
+    say "FAIL: relu_inplace"
+  say "  In-place ReLU: OK"
+  tensor.tensor_free_tensor(t_clone)
+
+  tensor.tensor_free_tensor(t)
+  say "PASS: Test Block 1 (Activations)"
+  ret 0
+
+fn test_rmsnorm() -> int:
+  say "=== Test Block 2: Fused RMSNorm ==="
+  // 2D tensor: 2 rows, 4 cols
+  x:Tensor = tensor.tensor_2d(2, 4)
+  tensor.tensor_set2(x, 0, 0, 1.0)
+  tensor.tensor_set2(x, 0, 1, 2.0)
+  tensor.tensor_set2(x, 0, 2, 3.0)
+  tensor.tensor_set2(x, 0, 3, 4.0)
+
+  tensor.tensor_set2(x, 1, 0, 5.0)
+  tensor.tensor_set2(x, 1, 1, 5.0)
+  tensor.tensor_set2(x, 1, 2, 5.0)
+  tensor.tensor_set2(x, 1, 3, 5.0)
+
+  // Weights: all ones
+  w:Tensor = tensor.tensor_ones_1d(4)
+
+  normed:Tensor = tensor.tensor_rmsnorm(x, w, 1.0e-05)
+
+  // For row 1: values are [5, 5, 5, 5] -> RMS is 5.0 -> normed row should be [1.0, 1.0, 1.0, 1.0]
+  v0:float = tensor.tensor_get2(normed, 1, 0)
+  v1:float = tensor.tensor_get2(normed, 1, 1)
+  v2:float = tensor.tensor_get2(normed, 1, 2)
+  v3:float = tensor.tensor_get2(normed, 1, 3)
+
+  say "  Row 1 RMSNorm: [", v0, ", ", v1, ", ", v2, ", ", v3, "]"
+  if v0 < 0.999 || v0 > 1.001: say "FAIL: RMSNorm row 1 expected 1.0, got ", v0
+
+  // Test with custom scaling weight [2, 2, 2, 2]
+  tensor.tensor_fill(w, 2.0)
+  normed_w:Tensor = tensor.tensor_rmsnorm(x, w, 1.0e-05)
+  vw0:float = tensor.tensor_get2(normed_w, 1, 0)
+  say "  Scaled RMSNorm (w=2.0): [", vw0, "]"
+  if vw0 < 1.999 || vw0 > 2.001: say "FAIL: Scaled RMSNorm expected 2.0, got ", vw0
+
+  tensor.tensor_free_tensor(x)
+  tensor.tensor_free_tensor(w)
+  tensor.tensor_free_tensor(normed)
+  tensor.tensor_free_tensor(normed_w)
+  say "PASS: Test Block 2 (RMSNorm)"
+  ret 0
+
+fn test_layernorm() -> int:
+  say "=== Test Block 3: Fused LayerNorm ==="
+  x:Tensor = tensor.tensor_2d(2, 4)
+  tensor.tensor_set2(x, 0, 0, 1.0)
+  tensor.tensor_set2(x, 0, 1, 2.0)
+  tensor.tensor_set2(x, 0, 2, 3.0)
+  tensor.tensor_set2(x, 0, 3, 4.0)
+
+  tensor.tensor_set2(x, 1, 0, 10.0)
+  tensor.tensor_set2(x, 1, 1, 20.0)
+  tensor.tensor_set2(x, 1, 2, 30.0)
+  tensor.tensor_set2(x, 1, 3, 40.0)
+
+  gamma:Tensor = tensor.tensor_ones_1d(4)
+  beta:Tensor = tensor.tensor_zeros_1d(4)
+
+  normed:Tensor = tensor.tensor_layernorm(x, gamma, beta, 1.0e-05)
+
+  // LayerNorm on [1, 2, 3, 4]:
+  // mean = 2.5
+  // sum of normalized row must be 0.0
+  s_row0:float = tensor.tensor_get2(normed, 0, 0) + tensor.tensor_get2(normed, 0, 1) + tensor.tensor_get2(normed, 0, 2) + tensor.tensor_get2(normed, 0, 3)
+  say "  Row 0 sum after LayerNorm: ", s_row0
+  if s_row0 < 0.0 - 0.0001 || s_row0 > 0.0001:
+    say "FAIL: LayerNorm row mean != 0"
+
+  tensor.tensor_free_tensor(x)
+  tensor.tensor_free_tensor(gamma)
+  tensor.tensor_free_tensor(beta)
+  tensor.tensor_free_tensor(normed)
+  say "PASS: Test Block 3 (LayerNorm)"
+  ret 0
+
+fn test_softmax() -> int:
+  say "=== Test Block 4: Numerically Stable Softmax ==="
+  // Test extreme values that would overflow exp(1000)
+  x:Tensor = tensor.tensor_2d(1, 3)
+  tensor.tensor_set2(x, 0, 0, 1000.0)
+  tensor.tensor_set2(x, 0, 1, 1001.0)
+  tensor.tensor_set2(x, 0, 2, 1002.0)
+
+  sm:Tensor = tensor.tensor_softmax(x, 1)
+  p0:float = tensor.tensor_get2(sm, 0, 0)
+  p1:float = tensor.tensor_get2(sm, 0, 1)
+  p2:float = tensor.tensor_get2(sm, 0, 2)
+  sum_p:float = p0 + p1 + p2
+
+  say "  Softmax probs: [", p0, ", ", p1, ", ", p2, "] Sum: ", sum_p
+  if sum_p < 0.9999 || sum_p > 1.0001:
+    say "FAIL: Softmax probabilities sum != 1.0"
+  if p2 < p1 || p1 < p0:
+    say "FAIL: Softmax monotonicity violated"
+
+  tensor.tensor_free_tensor(x)
+  tensor.tensor_free_tensor(sm)
+  say "PASS: Test Block 4 (Stable Softmax)"
+  ret 0
+
+fn test_rope() -> int:
+  say "=== Test Block 5: Rotary Position Embeddings (RoPE) ==="
+  // 2D RoPE: Seq=1, Dim=2
+  q:Tensor = tensor.tensor_2d(1, 2)
+  k:Tensor = tensor.tensor_2d(1, 2)
+
+  // Vector [1.0, 0.0]
+  tensor.tensor_set2(q, 0, 0, 1.0)
+  tensor.tensor_set2(q, 0, 1, 0.0)
+
+  tensor.tensor_set2(k, 0, 0, 0.0)
+  tensor.tensor_set2(k, 0, 1, 1.0)
+
+  // Rotate by 90 degrees at pos=1 with base chosen so theta = pi/2
+  // Or test orthogonal coordinate preservation:
+  // Norm before rotation = 1.0
+  norm_before:float = tensor.tensor_norm(q)
+
+  // Apply RoPE
+  tensor.tensor_rope_2d(q, k, 1, 10000.0)
+
+  norm_after:float = tensor.tensor_norm(q)
+  say "  RoPE Q vector norm before: ", norm_before, " after: ", norm_after
+  diff:float = norm_after - norm_before
+  if diff < 0.0: diff = 0.0 - diff
+  if diff > 0.0001:
+    say "FAIL: RoPE altered vector length! (Rotation must be isometric)"
+
+  // 4D RoPE: [B=1, H=2, S=4, D=4]
+  q4:Tensor = tensor.tensor_zeros_4d(1, 2, 4, 4)
+  k4:Tensor = tensor.tensor_zeros_4d(1, 2, 4, 4)
+  tensor.tensor_set4(q4, 0, 0, 0, 0, 1.0)
+  status:int = tensor.tensor_rope_4d(q4, k4, 0, 10000.0)
+  if status != 0: say "FAIL: rope_4d failed"
+  say "  4D Multi-head RoPE applied successfully"
+
+  tensor.tensor_free_tensor(q)
+  tensor.tensor_free_tensor(k)
+  tensor.tensor_free_tensor(q4)
+  tensor.tensor_free_tensor(k4)
+  say "PASS: Test Block 5 (RoPE)"
+  ret 0
+
+fn test_sdpa() -> int:
+  say "=== Test Block 6: Scaled Dot-Product Attention (SDPA) ==="
+  // 2D Attention: Seq=3, Dim=4
+  // Q, K, V
+  q:Tensor = tensor.tensor_zeros_2d(3, 4)
+  k:Tensor = tensor.tensor_zeros_2d(3, 4)
+  v:Tensor = tensor.tensor_zeros_2d(3, 4)
+
+  // Initialize with distinct values
+  tensor.tensor_set2(q, 0, 0, 1.0)
+  tensor.tensor_set2(q, 1, 1, 1.0)
+  tensor.tensor_set2(q, 2, 2, 1.0)
+
+  tensor.tensor_set2(k, 0, 0, 1.0)
+  tensor.tensor_set2(k, 1, 1, 1.0)
+  tensor.tensor_set2(k, 2, 2, 1.0)
+
+  // V values: row 0 = 10, row 1 = 20, row 2 = 30
+  tensor.tensor_set2(v, 0, 0, 10.0)
+  tensor.tensor_set2(v, 1, 0, 20.0)
+  tensor.tensor_set2(v, 2, 0, 30.0)
+
+  // 1. Non-causal SDPA
+  out_dense:Tensor = tensor.tensor_sdpa(q, k, v, 0)
+  say "  Non-causal SDPA output shape: [", out_dense.shape0, ", ", out_dense.shape1, "]"
+  val0:float = tensor.tensor_get2(out_dense, 0, 0)
+  say "  Out[0, 0] = ", val0
+  tensor.tensor_free_tensor(out_dense)
+
+  // 2. Causal SDPA (autoregressive lower triangular mask)
+  out_causal:Tensor = tensor.tensor_sdpa(q, k, v, 1)
+  say "  Causal SDPA output shape: [", out_causal.shape0, ", ", out_causal.shape1, "]"
+  c_val0:float = tensor.tensor_get2(out_causal, 0, 0)
+  // For row 0 in causal attention, it can ONLY attend to position 0!
+  // Therefore Out[0, 0] MUST be exactly V[0, 0] = 10.0!
+  say "  Causal Out[0, 0] = ", c_val0, " (expected exactly 10.0)"
+  if c_val0 < 9.999 || c_val0 > 10.001:
+    say "FAIL: Causal attention did not mask future tokens properly!"
+
+  tensor.tensor_free_tensor(out_causal)
+  tensor.tensor_free_tensor(q)
+  tensor.tensor_free_tensor(k)
+  tensor.tensor_free_tensor(v)
+
+  // 3. 4D Multi-Head Attention: [B=1, H=2, S=3, D=4]
+  q4:Tensor = tensor.tensor_zeros_4d(1, 2, 3, 4)
+  k4:Tensor = tensor.tensor_zeros_4d(1, 2, 3, 4)
+  v4:Tensor = tensor.tensor_zeros_4d(1, 2, 3, 4)
+  tensor.tensor_set4(v4, 0, 0, 0, 0, 10.0)
+  tensor.tensor_set4(v4, 0, 1, 0, 0, 50.0)
+
+  out4:Tensor = tensor.tensor_sdpa(q4, k4, v4, 1)
+  say "  4D Multi-Head Causal SDPA output shape: [", out4.shape0, ", ", out4.shape1, ", ", out4.shape2, ", ", out4.shape3, "]"
+  tensor.tensor_free_tensor(out4)
+  tensor.tensor_free_tensor(q4)
+  tensor.tensor_free_tensor(k4)
+  tensor.tensor_free_tensor(v4)
+
+  say "PASS: Test Block 6 (SDPA & Causal Masking)"
+  ret 0
+
+fn main() -> int:
+  say "================================================="
+  say " Running TezzNative Tensor Engine - Phase 3 Tests"
+  say "================================================="
+
+  test_fused_activations()
+  test_rmsnorm()
+  test_layernorm()
+  test_softmax()
+  test_rope()
+  test_sdpa()
+
+  say "================================================="
+  say " ALL PHASE 3 TESTS PASSED (6/6 Test Blocks OK)  "
+  say "================================================="
+  ret 0

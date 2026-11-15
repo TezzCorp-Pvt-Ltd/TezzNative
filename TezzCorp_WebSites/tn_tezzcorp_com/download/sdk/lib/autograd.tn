@@ -1,0 +1,589 @@
+// lib/autograd.tn - Native Reverse-Mode Autograd Engine for TezzNative
+// Provides dynamic computational tape, automatic differentiation,
+// gradient accumulation, and exact backward passes for deep learning.
+
+import "tensor"
+import "math"
+
+// Operation Codes for Autograd Tape
+let AG_OP_NONE:int     = 0
+let AG_OP_ADD:int      = 1
+let AG_OP_SUB:int      = 2
+let AG_OP_MUL:int      = 3
+let AG_OP_MATMUL:int   = 4
+let AG_OP_RELU:int     = 5
+let AG_OP_SIGMOID:int  = 6
+let AG_OP_SILU:int     = 7
+let AG_OP_GELU:int     = 8
+let AG_OP_SCALE:int    = 9
+let AG_OP_SUM:int      = 10
+let AG_OP_MEAN:int     = 11
+let AG_OP_MSE_LOSS:int = 12
+
+struct TapeNode:
+  op:int
+  in0_node:int
+  in1_node:int
+  in0_req:int
+  in1_req:int
+  in0_grad:int
+  in1_grad:int
+  in0_data:int
+  in1_data:int
+  out_data:int
+  grad_data:int
+  in0_size:int
+  in1_size:int
+  out_size:int
+  in0_r:int
+  in0_c:int
+  in1_r:int
+  in1_c:int
+  out_r:int
+  out_c:int
+  aux_f:float
+
+let G_TAPE_BUF:int = 0
+let G_TAPE_COUNT:int = 0
+let G_TAPE_CAP:int = 0
+
+// Initialize or reset the global Autograd Tape
+fn autograd_init(cap:int) -> int:
+  if G_TAPE_BUF != 0 && G_TAPE_CAP >= cap:
+    G_TAPE_COUNT = 0
+    ret 0
+  if G_TAPE_BUF != 0:
+    unsafe:
+      free(G_TAPE_BUF as *char)
+  actual_cap:int = cap
+  if actual_cap < 128:
+    actual_cap = 128
+  unsafe:
+    bytes:int = (actual_cap + 1) * sizeof(TapeNode)
+    raw:*char = malloc(bytes)
+    G_TAPE_BUF = raw as int
+  G_TAPE_CAP = actual_cap
+  G_TAPE_COUNT = 0
+  ret 0
+
+fn autograd_reset() -> int:
+  if G_TAPE_BUF == 0:
+    autograd_init(512)
+  G_TAPE_COUNT = 0
+  ret 0
+
+// Mark a tensor as a trainable parameter
+fn ag_parameter(t:Tensor) -> Tensor:
+  out:Tensor = t
+  out.requires_grad = 1
+  out.node_id = 0
+  unsafe:
+    g_raw:*char = malloc(sizeof(Tensor))
+    g_ptr:*Tensor = g_raw as *Tensor
+    g_val:Tensor = tensor.tensor_clone(t)
+    tensor.tensor_fill(g_val, 0.0)
+    g_val_p:*Tensor = &g_val
+    memcpy(g_ptr as *char, g_val_p as *char, sizeof(Tensor))
+    out.grad = g_ptr
+  ret out
+
+// Retrieve accumulated gradient tensor
+fn ag_grad(t:Tensor) -> Tensor:
+  out:Tensor = tensor.tensor_empty_raw(0, 0, 0, 0, 0)
+  unsafe:
+    if t.grad != 0 as *Tensor:
+      out_p:*Tensor = &out
+      memcpy(out_p as *char, t.grad as *char, sizeof(Tensor))
+  ret out
+
+// Reset gradients to zero
+fn ag_zero_grad(t:Tensor) -> int:
+  unsafe:
+    if t.grad != 0 as *Tensor:
+      tgt_tensor:Tensor
+      tgt_p:*Tensor = &tgt_tensor
+      memcpy(tgt_p as *char, t.grad as *char, sizeof(Tensor))
+      tensor.tensor_fill(tgt_tensor, 0.0)
+  ret 0
+
+// Record operation on tape
+fn _record_node(op:int, a:Tensor, b:Tensor, out:Tensor, aux:float) -> int:
+  if G_TAPE_BUF == 0:
+    autograd_init(512)
+  if G_TAPE_COUNT >= G_TAPE_CAP - 1:
+    old_buf:int = G_TAPE_BUF
+    old_cap:int = G_TAPE_CAP
+    new_cap:int = old_cap * 2
+    unsafe:
+      new_raw:*char = malloc((new_cap + 1) * sizeof(TapeNode))
+      memcpy(new_raw, old_buf as *char, (old_cap + 1) * sizeof(TapeNode))
+      free(old_buf as *char)
+      G_TAPE_BUF = new_raw as int
+    G_TAPE_CAP = new_cap
+
+  idx:int = G_TAPE_COUNT + 1
+  unsafe:
+    base:*TapeNode = G_TAPE_BUF as *TapeNode
+    base[idx].op = op
+    base[idx].in0_node = a.node_id
+    base[idx].in1_node = b.node_id
+    base[idx].in0_req = a.requires_grad
+    base[idx].in1_req = b.requires_grad
+    base[idx].in0_grad = a.grad as int
+    base[idx].in1_grad = b.grad as int
+    base[idx].in0_data = a.data as int
+    base[idx].in1_data = b.data as int
+    base[idx].out_data = out.data as int
+    base[idx].in0_size = a.size
+    base[idx].in1_size = b.size
+    base[idx].out_size = out.size
+    base[idx].in0_r = a.shape0
+    base[idx].in0_c = a.shape1
+    base[idx].in1_r = b.shape0
+    base[idx].in1_c = b.shape1
+    base[idx].out_r = out.shape0
+    base[idx].out_c = out.shape1
+    base[idx].aux_f = aux
+
+    g_bytes:int = out.size * 8
+    g_raw:*char = malloc(g_bytes)
+    g_buf:*float = g_raw as *float
+    zi:int = 0
+    while zi < out.size:
+      g_buf[zi] = 0.0
+      zi = zi + 1
+    base[idx].grad_data = g_raw as int
+  G_TAPE_COUNT = idx
+  ret idx
+
+// Accumulate gradients into parameter gradient buffer or tape node
+fn _accum_grad_to_target(grad_ptr:int, tgt_r:int, tgt_c:int, g_src:*float, g_size:int, out_r:int, out_c:int) -> int:
+  if grad_ptr == 0:
+    ret 0
+  unsafe:
+    tgt:*Tensor = grad_ptr as *Tensor
+    tgt_buf:*float = tgt[0].data
+    if tgt_r == out_r && tgt_c == out_c:
+      i:int = 0
+      while i < g_size:
+        tgt_buf[i] = tgt_buf[i] + g_src[i]
+        i = i + 1
+    else if tgt_r == 1 && out_r > 1:
+      // Broadcast over rows (axis 0)
+      c:int = 0
+      while c < out_c:
+        s:float = 0.0
+        r:int = 0
+        while r < out_r:
+          s = s + g_src[r * out_c + c]
+          r = r + 1
+        tgt_buf[c] = tgt_buf[c] + s
+        c = c + 1
+    else:
+      i:int = 0
+      while i < g_size:
+        tgt_buf[i] = tgt_buf[i] + g_src[i]
+        i = i + 1
+  ret 0
+
+fn _accum_to_node(node_id:int, g_src:*float, g_size:int) -> int:
+  if node_id <= 0 || node_id > G_TAPE_COUNT:
+    ret 0
+  unsafe:
+    base:*TapeNode = G_TAPE_BUF as *TapeNode
+    dst:*float = base[node_id].grad_data as *float
+    i:int = 0
+    while i < g_size:
+      dst[i] = dst[i] + g_src[i]
+      i = i + 1
+  ret 0
+
+
+// ============================================================
+// Differentiable Operations
+// ============================================================
+
+// Addition: C = A + B
+fn ag_add(a:Tensor, b:Tensor) -> Tensor:
+  c:Tensor = tensor.tensor_add_t(a, b)
+  if a.requires_grad != 0 || b.requires_grad != 0:
+    c.requires_grad = 1
+    c.node_id = _record_node(AG_OP_ADD, a, b, c, 0.0)
+  ret c
+
+// Subtraction: C = A - B
+fn ag_sub(a:Tensor, b:Tensor) -> Tensor:
+  c:Tensor = tensor.tensor_sub_t(a, b)
+  if a.requires_grad != 0 || b.requires_grad != 0:
+    c.requires_grad = 1
+    c.node_id = _record_node(AG_OP_SUB, a, b, c, 0.0)
+  ret c
+
+// Elementwise Multiplication: C = A * B
+fn ag_mul(a:Tensor, b:Tensor) -> Tensor:
+  c:Tensor = tensor.tensor_mul_t(a, b)
+  if a.requires_grad != 0 || b.requires_grad != 0:
+    c.requires_grad = 1
+    c.node_id = _record_node(AG_OP_MUL, a, b, c, 0.0)
+  ret c
+
+// Matrix Multiplication: C = A @ B
+fn ag_matmul(a:Tensor, b:Tensor) -> Tensor:
+  c:Tensor = tensor.tensor_matmul(a, b)
+  if a.requires_grad != 0 || b.requires_grad != 0:
+    c.requires_grad = 1
+    c.node_id = _record_node(AG_OP_MATMUL, a, b, c, 0.0)
+  ret c
+
+// Scalar Scaling: C = A * s
+fn ag_scale(a:Tensor, s:float) -> Tensor:
+  c:Tensor = tensor.tensor_scale(a, s)
+  if a.requires_grad != 0:
+    c.requires_grad = 1
+    dummy:Tensor = tensor.tensor_empty_raw(0, 0, 0, 0, 0)
+    c.node_id = _record_node(AG_OP_SCALE, a, dummy, c, s)
+  ret c
+
+// ReLU Activation: C = max(0, A)
+fn ag_relu(a:Tensor) -> Tensor:
+  c:Tensor = tensor.tensor_relu_t(a)
+  if a.requires_grad != 0:
+    c.requires_grad = 1
+    dummy:Tensor = tensor.tensor_empty_raw(0, 0, 0, 0, 0)
+    c.node_id = _record_node(AG_OP_RELU, a, dummy, c, 0.0)
+  ret c
+
+// Sigmoid Activation: C = 1 / (1 + exp(-A))
+fn ag_sigmoid(a:Tensor) -> Tensor:
+  c:Tensor = tensor.tensor_sigmoid_t(a)
+  if a.requires_grad != 0:
+    c.requires_grad = 1
+    dummy:Tensor = tensor.tensor_empty_raw(0, 0, 0, 0, 0)
+    c.node_id = _record_node(AG_OP_SIGMOID, a, dummy, c, 0.0)
+  ret c
+
+// SiLU Activation (Swish): C = A * sigmoid(A)
+fn ag_silu(a:Tensor) -> Tensor:
+  c:Tensor = tensor.tensor_silu(a)
+  if a.requires_grad != 0:
+    c.requires_grad = 1
+    dummy:Tensor = tensor.tensor_empty_raw(0, 0, 0, 0, 0)
+    c.node_id = _record_node(AG_OP_SILU, a, dummy, c, 0.0)
+  ret c
+
+// GELU Activation
+fn ag_gelu(a:Tensor) -> Tensor:
+  c:Tensor = tensor.tensor_gelu_t(a)
+  if a.requires_grad != 0:
+    c.requires_grad = 1
+    dummy:Tensor = tensor.tensor_empty_raw(0, 0, 0, 0, 0)
+    c.node_id = _record_node(AG_OP_GELU, a, dummy, c, 0.0)
+  ret c
+
+// Global Sum Reduction: C = sum(A)
+fn ag_sum(a:Tensor) -> Tensor:
+  s:float = tensor.tensor_sum_all(a)
+  c:Tensor = tensor.tensor_zeros_1d(1)
+  tensor.tensor_set1(c, 0, s)
+  if a.requires_grad != 0:
+    c.requires_grad = 1
+    dummy:Tensor = tensor.tensor_empty_raw(0, 0, 0, 0, 0)
+    c.node_id = _record_node(AG_OP_SUM, a, dummy, c, 0.0)
+  ret c
+
+// Global Mean Reduction: C = mean(A)
+fn ag_mean(a:Tensor) -> Tensor:
+  m:float = tensor.tensor_mean_all(a)
+  c:Tensor = tensor.tensor_zeros_1d(1)
+  tensor.tensor_set1(c, 0, m)
+  if a.requires_grad != 0:
+    c.requires_grad = 1
+    dummy:Tensor = tensor.tensor_empty_raw(0, 0, 0, 0, 0)
+    c.node_id = _record_node(AG_OP_MEAN, a, dummy, c, 0.0)
+  ret c
+
+// Mean Squared Error Loss: L = mean((pred - target)^2)
+fn ag_mse_loss(pred:Tensor, target:Tensor) -> Tensor:
+  diff:Tensor = tensor.tensor_sub_t(pred, target)
+  sq:Tensor = tensor.tensor_mul_t(diff, diff)
+  loss_val:float = tensor.tensor_mean_all(sq)
+  tensor.tensor_free_tensor(diff)
+  tensor.tensor_free_tensor(sq)
+
+  loss:Tensor = tensor.tensor_zeros_1d(1)
+  tensor.tensor_set1(loss, 0, loss_val)
+  if pred.requires_grad != 0 || target.requires_grad != 0:
+    loss.requires_grad = 1
+    loss.node_id = _record_node(AG_OP_MSE_LOSS, pred, target, loss, 0.0)
+  ret loss
+
+
+// ============================================================
+// Reverse-Mode Backward Pass
+// ============================================================
+
+fn autograd_backward(loss:Tensor) -> int:
+  if loss.node_id <= 0 || loss.node_id > G_TAPE_COUNT:
+    say "Error: autograd_backward called on tensor with no graph history"
+    ret 0 - 1
+
+  // Set seed gradient of loss = 1.0
+  unsafe:
+    base:*TapeNode = G_TAPE_BUF as *TapeNode
+    loss_g:*float = base[loss.node_id].grad_data as *float
+    loss_g[0] = 1.0
+
+  // Traverse tape in reverse topological order
+  k:int = loss.node_id
+  while k >= 1:
+    unsafe:
+      base:*TapeNode = G_TAPE_BUF as *TapeNode
+      op:int = base[k].op
+      in0_node:int = base[k].in0_node
+      in1_node:int = base[k].in1_node
+      in0_req:int = base[k].in0_req
+      in1_req:int = base[k].in1_req
+      in0_grad:int = base[k].in0_grad
+      in1_grad:int = base[k].in1_grad
+
+      in0_d:*float = base[k].in0_data as *float
+      in1_d:*float = base[k].in1_data as *float
+      out_d:*float = base[k].out_data as *float
+      G:*float = base[k].grad_data as *float
+
+      in0_sz:int = base[k].in0_size
+      in1_sz:int = base[k].in1_size
+      out_sz:int = base[k].out_size
+
+      in0_r:int = base[k].in0_r
+      in0_c:int = base[k].in0_c
+      in1_r:int = base[k].in1_r
+      in1_c:int = base[k].in1_c
+      out_r:int = base[k].out_r
+      out_c:int = base[k].out_c
+      aux:float = base[k].aux_f
+
+      // 1. ADD: C = A + B -> gA = G, gB = G
+      if op == AG_OP_ADD:
+        if in0_req != 0:
+          _accum_to_node(in0_node, G, out_sz)
+          _accum_grad_to_target(in0_grad, in0_r, in0_c, G, out_sz, out_r, out_c)
+        if in1_req != 0:
+          _accum_to_node(in1_node, G, out_sz)
+          _accum_grad_to_target(in1_grad, in1_r, in1_c, G, out_sz, out_r, out_c)
+
+      // 2. SUB: C = A - B -> gA = G, gB = -G
+      else if op == AG_OP_SUB:
+        if in0_req != 0:
+          _accum_to_node(in0_node, G, out_sz)
+          _accum_grad_to_target(in0_grad, in0_r, in0_c, G, out_sz, out_r, out_c)
+        if in1_req != 0:
+          tmp_raw:*char = malloc(out_sz * 8)
+          neg_G:*float = tmp_raw as *float
+          i:int = 0
+          while i < out_sz:
+            neg_G[i] = 0.0 - G[i]
+            i = i + 1
+          _accum_to_node(in1_node, neg_G, out_sz)
+          _accum_grad_to_target(in1_grad, in1_r, in1_c, neg_G, out_sz, out_r, out_c)
+          free(tmp_raw)
+
+      // 3. MUL: C = A * B -> gA = G * B, gB = G * A
+      else if op == AG_OP_MUL:
+        if in0_req != 0:
+          tmp_raw:*char = malloc(out_sz * 8)
+          g0:*float = tmp_raw as *float
+          i:int = 0
+          while i < out_sz:
+            g0[i] = G[i] * in1_d[i]
+            i = i + 1
+          _accum_to_node(in0_node, g0, out_sz)
+          _accum_grad_to_target(in0_grad, in0_r, in0_c, g0, out_sz, out_r, out_c)
+          free(tmp_raw)
+        if in1_req != 0:
+          tmp_raw:*char = malloc(out_sz * 8)
+          g1:*float = tmp_raw as *float
+          i:int = 0
+          while i < out_sz:
+            g1[i] = G[i] * in0_d[i]
+            i = i + 1
+          _accum_to_node(in1_node, g1, out_sz)
+          _accum_grad_to_target(in1_grad, in1_r, in1_c, g1, out_sz, out_r, out_c)
+          free(tmp_raw)
+
+      // 4. MATMUL: C = A @ B (M, K) @ (K, N) -> (M, N)
+      // gA = G @ B^T (M, N) @ (N, K) -> (M, K)
+      // gB = A^T @ G (K, M) @ (M, N) -> (K, N)
+      else if op == AG_OP_MATMUL:
+        m:int = in0_r
+        k_dim:int = in0_c
+        n:int = in1_c
+
+        if in0_req != 0:
+          ga_raw:*char = malloc(in0_sz * 8)
+          gA:*float = ga_raw as *float
+          r:int = 0
+          while r < m:
+            c:int = 0
+            while c < k_dim:
+              sum:float = 0.0
+              j:int = 0
+              while j < n:
+                sum = sum + G[r * n + j] * in1_d[c * n + j]
+                j = j + 1
+              gA[r * k_dim + c] = sum
+              c = c + 1
+            r = r + 1
+          _accum_to_node(in0_node, gA, in0_sz)
+          _accum_grad_to_target(in0_grad, in0_r, in0_c, gA, in0_sz, in0_r, in0_c)
+          free(ga_raw)
+
+        if in1_req != 0:
+          gb_raw:*char = malloc(in1_sz * 8)
+          gB:*float = gb_raw as *float
+          r:int = 0
+          while r < k_dim:
+            c:int = 0
+            while c < n:
+              sum:float = 0.0
+              i:int = 0
+              while i < m:
+                sum = sum + in0_d[i * k_dim + r] * G[i * n + c]
+                i = i + 1
+              gB[r * n + c] = sum
+              c = c + 1
+            r = r + 1
+          _accum_to_node(in1_node, gB, in1_sz)
+          _accum_grad_to_target(in1_grad, in1_r, in1_c, gB, in1_sz, in1_r, in1_c)
+          free(gb_raw)
+
+      // 5. SCALE: C = A * s -> gA = G * s
+      else if op == AG_OP_SCALE:
+        if in0_req != 0:
+          tmp_raw:*char = malloc(out_sz * 8)
+          g0:*float = tmp_raw as *float
+          i:int = 0
+          while i < out_sz:
+            g0[i] = G[i] * aux
+            i = i + 1
+          _accum_to_node(in0_node, g0, out_sz)
+          _accum_grad_to_target(in0_grad, in0_r, in0_c, g0, out_sz, out_r, out_c)
+          free(tmp_raw)
+
+      // 6. RELU: C = relu(A) -> gA = G * (A > 0 ? 1 : 0)
+      else if op == AG_OP_RELU:
+        if in0_req != 0:
+          tmp_raw:*char = malloc(out_sz * 8)
+          g0:*float = tmp_raw as *float
+          i:int = 0
+          while i < out_sz:
+            if in0_d[i] > 0.0:
+              g0[i] = G[i]
+            else:
+              g0[i] = 0.0
+            i = i + 1
+          _accum_to_node(in0_node, g0, out_sz)
+          _accum_grad_to_target(in0_grad, in0_r, in0_c, g0, out_sz, out_r, out_c)
+          free(tmp_raw)
+
+      // 7. SIGMOID: C = sig(A) -> gA = G * C * (1 - C)
+      else if op == AG_OP_SIGMOID:
+        if in0_req != 0:
+          tmp_raw:*char = malloc(out_sz * 8)
+          g0:*float = tmp_raw as *float
+          i:int = 0
+          while i < out_sz:
+            y:float = out_d[i]
+            g0[i] = G[i] * y * (1.0 - y)
+            i = i + 1
+          _accum_to_node(in0_node, g0, out_sz)
+          _accum_grad_to_target(in0_grad, in0_r, in0_c, g0, out_sz, out_r, out_c)
+          free(tmp_raw)
+
+      // 8. SILU: C = A * sig(A) -> gA = G * (sig + A * sig * (1 - sig))
+      else if op == AG_OP_SILU:
+        if in0_req != 0:
+          tmp_raw:*char = malloc(out_sz * 8)
+          g0:*float = tmp_raw as *float
+          i:int = 0
+          while i < out_sz:
+            x:float = in0_d[i]
+            sig:float = 0.0
+            if x < 0.0 - 50.0:
+              sig = 0.0
+            else if x > 50.0:
+              sig = 1.0
+            else:
+              sig = 1.0 / (1.0 + math.exp(0.0 - x))
+            dsilu:float = sig + x * sig * (1.0 - sig)
+            g0[i] = G[i] * dsilu
+            i = i + 1
+          _accum_to_node(in0_node, g0, out_sz)
+          _accum_grad_to_target(in0_grad, in0_r, in0_c, g0, out_sz, out_r, out_c)
+          free(tmp_raw)
+
+      // 9. GELU
+      else if op == AG_OP_GELU:
+        if in0_req != 0:
+          tmp_raw:*char = malloc(out_sz * 8)
+          g0:*float = tmp_raw as *float
+          i:int = 0
+          while i < out_sz:
+            x:float = in0_d[i]
+            cube:float = x * x * x
+            u:float = 0.7978845608028654 * (x + 0.044715 * cube)
+            th:float = math.tanh(u)
+            sech2:float = 1.0 - th * th
+            du:float = 0.7978845608028654 * (1.0 + 3.0 * 0.044715 * x * x)
+            dgelu:float = 0.5 * (1.0 + th) + 0.5 * x * sech2 * du
+            g0[i] = G[i] * dgelu
+            i = i + 1
+          _accum_to_node(in0_node, g0, out_sz)
+          _accum_grad_to_target(in0_grad, in0_r, in0_c, g0, out_sz, out_r, out_c)
+          free(tmp_raw)
+
+      // 10. SUM: C = sum(A) -> gA = G[0] across all elements
+      else if op == AG_OP_SUM:
+        if in0_req != 0:
+          tmp_raw:*char = malloc(in0_sz * 8)
+          g0:*float = tmp_raw as *float
+          g_val:float = G[0]
+          i:int = 0
+          while i < in0_sz:
+            g0[i] = g_val
+            i = i + 1
+          _accum_to_node(in0_node, g0, in0_sz)
+          _accum_grad_to_target(in0_grad, in0_r, in0_c, g0, in0_sz, in0_r, in0_c)
+          free(tmp_raw)
+
+      // 11. MEAN: C = mean(A) -> gA = G[0] / in0_size across all elements
+      else if op == AG_OP_MEAN:
+        if in0_req != 0:
+          tmp_raw:*char = malloc(in0_sz * 8)
+          g0:*float = tmp_raw as *float
+          g_val:float = G[0] / (in0_sz as float)
+          i:int = 0
+          while i < in0_sz:
+            g0[i] = g_val
+            i = i + 1
+          _accum_to_node(in0_node, g0, in0_sz)
+          _accum_grad_to_target(in0_grad, in0_r, in0_c, g0, in0_sz, in0_r, in0_c)
+          free(tmp_raw)
+
+      // 12. MSE_LOSS: L = mean((pred - target)^2) -> g_pred = (pred - target) * (2 / N) * G[0]
+      else if op == AG_OP_MSE_LOSS:
+        if in0_req != 0:
+          tmp_raw:*char = malloc(in0_sz * 8)
+          g_pred:*float = tmp_raw as *float
+          factor:float = (2.0 / (in0_sz as float)) * G[0]
+          i:int = 0
+          while i < in0_sz:
+            g_pred[i] = (in0_d[i] - in1_d[i]) * factor
+            i = i + 1
+          _accum_to_node(in0_node, g_pred, in0_sz)
+          _accum_grad_to_target(in0_grad, in0_r, in0_c, g_pred, in0_sz, in0_r, in0_c)
+          free(tmp_raw)
+
+    k = k - 1
+
+  ret 0

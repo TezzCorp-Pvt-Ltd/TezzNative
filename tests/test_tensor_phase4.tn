@@ -1,0 +1,309 @@
+// Test Suite for Phase 4: Reverse-Mode Autograd Engine
+import "tensor"
+import "math"
+
+fn test_autograd_arithmetic() -> int:
+  say "=== Test Block 1: Autograd Arithmetic (Add, Sub, Mul, Div, Scale) ==="
+  tensor.tape_init()
+
+  // z = (x * y) - (x / y) + (3 * x)
+  // Let x = 6.0, y = 2.0
+  // dz/dx = y - (1/y) + 3 = 2 - 0.5 + 3 = 4.5
+  // dz/dy = x + (x / y^2) = 6 + (6 / 4) = 7.5
+
+  x:Tensor = tensor.tensor_1d(1)
+  tensor.tensor_set1(x, 0, 6.0)
+  x = tensor.tensor_require_grad(x)
+
+  y:Tensor = tensor.tensor_1d(1)
+  tensor.tensor_set1(y, 0, 2.0)
+  y = tensor.tensor_require_grad(y)
+
+  term1:Tensor = tensor.tensor_mul(x, y)
+  term2:Tensor = tensor.tensor_div(x, y)
+  sub1:Tensor = tensor.tensor_sub(term1, term2)
+  term3:Tensor = tensor.tensor_scale(x, 3.0)
+  z:Tensor = tensor.tensor_add(sub1, term3)
+
+  say "  Forward z = ", tensor.tensor_get1(z, 0), " (expected 12 - 3 + 18 = 27.0)"
+  if tensor.tensor_get1(z, 0) != 27.0: say "FAIL: Forward z calculation"
+
+  tensor.tensor_backward(z)
+
+  gx:float = tensor.tensor_grad_item(x, 0)
+  gy:float = tensor.tensor_grad_item(y, 0)
+  say "  Grad x = ", gx, " (expected 4.5)"
+  say "  Grad y = ", gy, " (expected 7.5)"
+
+  diff_x:float = gx - 4.5
+  if diff_x < 0.0: diff_x = 0.0 - diff_x
+  if diff_x > 0.0001: say "FAIL: dz/dx mismatch: ", gx
+
+  diff_y:float = gy - 7.5
+  if diff_y < 0.0: diff_y = 0.0 - diff_y
+  if diff_y > 0.0001: say "FAIL: dz/dy mismatch: ", gy
+
+  tensor.tensor_free_tensor(x)
+  tensor.tensor_free_tensor(y)
+  tensor.tensor_free_tensor(term1)
+  tensor.tensor_free_tensor(term2)
+  tensor.tensor_free_tensor(sub1)
+  tensor.tensor_free_tensor(term3)
+  tensor.tensor_free_tensor(z)
+  tensor.tape_reset()
+  say "PASS: Test Block 1 (Arithmetic Autograd)"
+  ret 0
+
+fn test_autograd_gemm_broadcast() -> int:
+  say "=== Test Block 2: GEMM & Bias Broadcast Collapse ==="
+  tensor.tape_init()
+
+  // Linear Layer: Y = X @ W + B
+  // X: [2, 2] = [[1, 2], [3, 4]]
+  // W: [2, 2] = [[1, 0], [0, 1]]
+  // B: [1, 2] = [[10, 20]]
+  x:Tensor = tensor.tensor_2d(2, 2)
+  tensor.tensor_set2(x, 0, 0, 1.0)
+  tensor.tensor_set2(x, 0, 1, 2.0)
+  tensor.tensor_set2(x, 1, 0, 3.0)
+  tensor.tensor_set2(x, 1, 1, 4.0)
+
+  w:Tensor = tensor.tensor_2d(2, 2)
+  tensor.tensor_set2(w, 0, 0, 1.0)
+  tensor.tensor_set2(w, 0, 1, 0.0)
+  tensor.tensor_set2(w, 1, 0, 0.0)
+  tensor.tensor_set2(w, 1, 1, 1.0)
+  w = tensor.tensor_require_grad(w)
+
+  b:Tensor = tensor.tensor_2d(1, 2)
+  tensor.tensor_set2(b, 0, 0, 10.0)
+  tensor.tensor_set2(b, 0, 1, 20.0)
+  b = tensor.tensor_require_grad(b)
+
+  xw:Tensor = tensor.tensor_matmul(x, w)
+  y:Tensor = tensor.tensor_add(xw, b)
+  loss:Tensor = tensor.tensor_sum_all_t(y)
+
+  tensor.tensor_backward(loss)
+
+  // Analytical expectations:
+  // dL/dB = [2.0, 2.0]
+  // dL/dW = [[4.0, 4.0], [6.0, 6.0]]
+  gb0:float = tensor.tensor_grad_item(b, 0)
+  gb1:float = tensor.tensor_grad_item(b, 1)
+  say "  Grad Bias: [", gb0, ", ", gb1, "] (expected [2.0, 2.0])"
+  if gb0 != 2.0 || gb1 != 2.0: say "FAIL: Bias broadcast collapse gradient!"
+
+  gw00:float = tensor.tensor_grad_item(w, 0)
+  gw01:float = tensor.tensor_grad_item(w, 1)
+  gw10:float = tensor.tensor_grad_item(w, 2)
+  gw11:float = tensor.tensor_grad_item(w, 3)
+  say "  Grad Weight: [", gw00, ", ", gw01, "; ", gw10, ", ", gw11, "] (expected [4, 4; 6, 6])"
+  if gw00 != 4.0 || gw01 != 4.0 || gw10 != 6.0 || gw11 != 6.0:
+    say "FAIL: GEMM weight gradient!"
+
+  tensor.tensor_free_tensor(x)
+  tensor.tensor_free_tensor(w)
+  tensor.tensor_free_tensor(b)
+  tensor.tensor_free_tensor(xw)
+  tensor.tensor_free_tensor(y)
+  tensor.tensor_free_tensor(loss)
+  tensor.tape_reset()
+  say "PASS: Test Block 2 (GEMM & Bias Broadcast)"
+  ret 0
+
+fn test_autograd_activations() -> int:
+  say "=== Test Block 3: Activation Backward (ReLU, Sigmoid, Tanh, SiLU, GELU) ==="
+  tensor.tape_init()
+
+  // 1. ReLU
+  x_relu:Tensor = tensor.tensor_1d(2)
+  tensor.tensor_set1(x_relu, 0, 0.0 - 5.0)
+  tensor.tensor_set1(x_relu, 1, 5.0)
+  x_relu = tensor.tensor_require_grad(x_relu)
+  y_relu:Tensor = tensor.tensor_relu(x_relu)
+  loss_relu:Tensor = tensor.tensor_sum_all_t(y_relu)
+  tensor.tensor_backward(loss_relu)
+  g_r0:float = tensor.tensor_grad_item(x_relu, 0)
+  g_r1:float = tensor.tensor_grad_item(x_relu, 1)
+  say "  ReLU grads [-5.0, 5.0]: [", g_r0, ", ", g_r1, "] (expected [0.0, 1.0])"
+  if g_r0 != 0.0 || g_r1 != 1.0: say "FAIL: ReLU gradient"
+
+  // 2. Sigmoid at 0.0 -> deriv = 0.25
+  tensor.tape_reset()
+  x_sig:Tensor = tensor.tensor_1d(1)
+  tensor.tensor_set1(x_sig, 0, 0.0)
+  x_sig = tensor.tensor_require_grad(x_sig)
+  y_sig:Tensor = tensor.tensor_sigmoid(x_sig)
+  loss_sig:Tensor = tensor.tensor_sum_all_t(y_sig)
+  tensor.tensor_backward(loss_sig)
+  g_sig:float = tensor.tensor_grad_item(x_sig, 0)
+  say "  Sigmoid grad at 0.0: ", g_sig, " (expected 0.25)"
+  diff_sig:float = g_sig - 0.25
+  if diff_sig < 0.0: diff_sig = 0.0 - diff_sig
+  if diff_sig > 0.0001: say "FAIL: Sigmoid gradient"
+
+  // 3. Tanh at 0.0 -> deriv = 1.0
+  tensor.tape_reset()
+  x_th:Tensor = tensor.tensor_1d(1)
+  tensor.tensor_set1(x_th, 0, 0.0)
+  x_th = tensor.tensor_require_grad(x_th)
+  y_th:Tensor = tensor.tensor_tanh(x_th)
+  loss_th:Tensor = tensor.tensor_sum_all_t(y_th)
+  tensor.tensor_backward(loss_th)
+  g_th:float = tensor.tensor_grad_item(x_th, 0)
+  say "  Tanh grad at 0.0: ", g_th, " (expected 1.0)"
+  if g_th < 0.999 || g_th > 1.001: say "FAIL: Tanh gradient"
+
+  // 4. SiLU at 0.0 -> deriv = 0.5
+  tensor.tape_reset()
+  x_si:Tensor = tensor.tensor_1d(1)
+  tensor.tensor_set1(x_si, 0, 0.0)
+  x_si = tensor.tensor_require_grad(x_si)
+  y_si:Tensor = tensor.tensor_silu(x_si)
+  loss_si:Tensor = tensor.tensor_sum_all_t(y_si)
+  tensor.tensor_backward(loss_si)
+  g_si:float = tensor.tensor_grad_item(x_si, 0)
+  say "  SiLU grad at 0.0: ", g_si, " (expected 0.5)"
+  diff_si:float = g_si - 0.5
+  if diff_si < 0.0: diff_si = 0.0 - diff_si
+  if diff_si > 0.0001: say "FAIL: SiLU gradient"
+
+  tensor.tensor_free_tensor(x_relu)
+  tensor.tensor_free_tensor(y_relu)
+  tensor.tensor_free_tensor(loss_relu)
+  tensor.tensor_free_tensor(x_sig)
+  tensor.tensor_free_tensor(y_sig)
+  tensor.tensor_free_tensor(loss_sig)
+  tensor.tensor_free_tensor(x_th)
+  tensor.tensor_free_tensor(y_th)
+  tensor.tensor_free_tensor(loss_th)
+  tensor.tensor_free_tensor(x_si)
+  tensor.tensor_free_tensor(y_si)
+  tensor.tensor_free_tensor(loss_si)
+  tensor.tape_reset()
+  say "PASS: Test Block 3 (Activation Backward)"
+  ret 0
+
+fn test_gradient_accumulation() -> int:
+  say "=== Test Block 4: Multi-Branch Gradient Accumulation & Zero Grad ==="
+  tensor.tape_init()
+
+  // Branch test: y = (2 * x) + (3 * x) = 5 * x
+  // dy/dx must be 2 + 3 = 5.0
+  x:Tensor = tensor.tensor_1d(1)
+  tensor.tensor_set1(x, 0, 10.0)
+  x = tensor.tensor_require_grad(x)
+
+  b1:Tensor = tensor.tensor_scale(x, 2.0)
+  b2:Tensor = tensor.tensor_scale(x, 3.0)
+  y:Tensor = tensor.tensor_add(b1, b2)
+
+  tensor.tensor_backward(y)
+
+  gx:float = tensor.tensor_grad_item(x, 0)
+  say "  Accumulated grad across 2 branches: ", gx, " (expected 5.0)"
+  if gx != 5.0: say "FAIL: Multi-branch gradient accumulation failed!"
+
+  // Test zero_grad
+  tensor.tensor_zero_grad(x)
+  gx_zero:float = tensor.tensor_grad_item(x, 0)
+  say "  Grad after zero_grad: ", gx_zero, " (expected 0.0)"
+  if gx_zero != 0.0: say "FAIL: tensor_zero_grad failed!"
+
+  tensor.tensor_free_tensor(x)
+  tensor.tensor_free_tensor(b1)
+  tensor.tensor_free_tensor(b2)
+  tensor.tensor_free_tensor(y)
+  tensor.tape_reset()
+  say "PASS: Test Block 4 (Gradient Accumulation & Zero Grad)"
+  ret 0
+
+fn test_mse_loss() -> int:
+  say "=== Test Block 5: MSE Loss Backward ==="
+  tensor.tape_init()
+
+  // Pred: [4.0], Target: [1.0]
+  // Loss = (4 - 1)^2 = 9.0
+  // dL/dPred = 2 * (4 - 1) / 1 = 6.0
+  pred:Tensor = tensor.tensor_1d(1)
+  tensor.tensor_set1(pred, 0, 4.0)
+  pred = tensor.tensor_require_grad(pred)
+
+  tgt:Tensor = tensor.tensor_1d(1)
+  tensor.tensor_set1(tgt, 0, 1.0)
+
+  loss:Tensor = tensor.tensor_mse_loss(pred, tgt)
+  say "  MSE Loss value: ", tensor.tensor_get1(loss, 0), " (expected 9.0)"
+  if tensor.tensor_get1(loss, 0) != 9.0: say "FAIL: MSE Loss value"
+
+  tensor.tensor_backward(loss)
+
+  g_pred:float = tensor.tensor_grad_item(pred, 0)
+  say "  dL/dPred: ", g_pred, " (expected 6.0)"
+  if g_pred != 6.0: say "FAIL: MSE Loss gradient"
+
+  tensor.tensor_free_tensor(pred)
+  tensor.tensor_free_tensor(tgt)
+  tensor.tensor_free_tensor(loss)
+  tensor.tape_reset()
+  say "PASS: Test Block 5 (MSE Loss)"
+  ret 0
+
+fn test_cross_entropy_loss() -> int:
+  say "=== Test Block 6: Softmax + Cross-Entropy Loss Backward ==="
+  tensor.tape_init()
+
+  // Logits: [2.0, 1.0]
+  // Targets: [1.0, 0.0] (one-hot for class 0)
+  // Softmax P = [exp(2)/(exp(2)+exp(1)), exp(1)/(exp(2)+exp(1))] = [0.731058, 0.268941]
+  // dL/dLogits = P - Target = [0.731058 - 1, 0.268941 - 0] = [-0.268941, 0.268941]
+  logits:Tensor = tensor.tensor_2d(1, 2)
+  tensor.tensor_set2(logits, 0, 0, 2.0)
+  tensor.tensor_set2(logits, 0, 1, 1.0)
+  logits = tensor.tensor_require_grad(logits)
+
+  targets:Tensor = tensor.tensor_2d(1, 2)
+  tensor.tensor_set2(targets, 0, 0, 1.0)
+  tensor.tensor_set2(targets, 0, 1, 0.0)
+
+  loss:Tensor = tensor.tensor_cross_entropy_loss(logits, targets)
+  say "  Cross-Entropy Loss: ", tensor.tensor_get1(loss, 0)
+
+  tensor.tensor_backward(loss)
+
+  gl0:float = tensor.tensor_grad_item(logits, 0)
+  gl1:float = tensor.tensor_grad_item(logits, 1)
+  say "  dL/dLogits: [", gl0, ", ", gl1, "] (expected [-0.268941, 0.268941])"
+
+  diff0:float = gl0 - (0.0 - 0.268941)
+  if diff0 < 0.0: diff0 = 0.0 - diff0
+  if diff0 > 0.001: say "FAIL: Cross-entropy dL/dLogit[0]"
+
+  diff1:float = gl1 - 0.268941
+  if diff1 < 0.0: diff1 = 0.0 - diff1
+  if diff1 > 0.001: say "FAIL: Cross-entropy dL/dLogit[1]"
+
+  tensor.tensor_free_tensor(logits)
+  tensor.tensor_free_tensor(targets)
+  tensor.tensor_free_tensor(loss)
+  tensor.tape_reset()
+  say "PASS: Test Block 6 (Cross-Entropy Loss)"
+  ret 0
+
+fn main() -> int:
+  say "================================================="
+  say " Running TezzNative Tensor Engine - Phase 4 Tests"
+  say "================================================="
+
+  test_autograd_arithmetic()
+  test_autograd_gemm_broadcast()
+  test_autograd_activations()
+  test_gradient_accumulation()
+  test_mse_loss()
+  test_cross_entropy_loss()
+
+  say "================================================="
+  say " ALL PHASE 4 TESTS PASSED (6/6 Test Blocks OK)  "
+  say "================================================="
+  ret 0

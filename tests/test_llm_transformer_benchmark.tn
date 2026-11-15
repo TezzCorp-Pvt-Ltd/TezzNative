@@ -1,0 +1,160 @@
+import "tensor"
+import "math"
+import "time"
+
+fn test_full_llm_transformer_benchmark() -> int:
+  say "=========================================================="
+  say " TezzNative Native Tensor Engine: LLM Transformer Benchmark"
+  say "=========================================================="
+
+  tensor.tape_init()
+
+  // Transformer hyperparameters:
+  // Batch = 1, SeqLen = 8, HiddenDim = 32, Heads = 4, HeadDim = 8, Vocab = 64
+  seq_len:int = 8
+  hidden_dim:int = 32
+  heads:int = 4
+  head_dim:int = 8
+  vocab_size:int = 64
+
+  say "Architecture: SeqLen=", seq_len, ", Dim=", hidden_dim, ", Heads=", heads, ", HeadDim=", head_dim, ", Vocab=", vocab_size
+
+  // 1. Input embeddings: [seq_len, hidden_dim]
+  x:Tensor = tensor.tensor_randn_2d(seq_len, hidden_dim, 0.0, 0.1)
+
+  // 2. Weights for Attention Block:
+  rms_w:Tensor = tensor.tensor_ones_1d(hidden_dim)
+
+  wq:Tensor = tensor.tensor_randn_2d(hidden_dim, hidden_dim, 0.0, 0.05)
+  wk:Tensor = tensor.tensor_randn_2d(hidden_dim, hidden_dim, 0.0, 0.05)
+  wv:Tensor = tensor.tensor_randn_2d(hidden_dim, hidden_dim, 0.0, 0.05)
+  wo:Tensor = tensor.tensor_randn_2d(hidden_dim, hidden_dim, 0.0, 0.05)
+
+  wq = tensor.tensor_require_grad(wq)
+  wk = tensor.tensor_require_grad(wk)
+  wv = tensor.tensor_require_grad(wv)
+  wo = tensor.tensor_require_grad(wo)
+
+  // 3. Feed-Forward Block:
+  ffn_dim:int = 4 * hidden_dim
+  w_gate:Tensor = tensor.tensor_randn_2d(hidden_dim, ffn_dim, 0.0, 0.05)
+  w_down:Tensor = tensor.tensor_randn_2d(ffn_dim, hidden_dim, 0.0, 0.05)
+  w_gate = tensor.tensor_require_grad(w_gate)
+  w_down = tensor.tensor_require_grad(w_down)
+
+  // 4. Output LM Head: [hidden_dim, vocab_size]
+  w_lm_head:Tensor = tensor.tensor_randn_2d(hidden_dim, vocab_size, 0.0, 0.05)
+  w_lm_head = tensor.tensor_require_grad(w_lm_head)
+
+  // Target token distributions (one-hot targets for cross entropy)
+  targets:Tensor = tensor.tensor_zeros_2d(seq_len, vocab_size)
+  s:int = 0
+  while s < seq_len:
+    target_token:int = (s * 7 + 3) % vocab_size
+    tensor.tensor_set2(targets, s, target_token, 1.0)
+    s = s + 1
+
+  opt:AdamW = tensor.adamw_create(0.005, 0.9, 0.999, 1.0e-08, 0.01)
+  unsafe:
+    tensor.adamw_add_param(&opt, &wq)
+    tensor.adamw_add_param(&opt, &wk)
+    tensor.adamw_add_param(&opt, &wv)
+    tensor.adamw_add_param(&opt, &wo)
+    tensor.adamw_add_param(&opt, &w_gate)
+    tensor.adamw_add_param(&opt, &w_down)
+    tensor.adamw_add_param(&opt, &w_lm_head)
+
+  say "Executing 10 End-to-End LLM Transformer Steps (Forward + Autograd + AdamW)..."
+
+  step:int = 0
+  init_loss:float = 0.0
+  final_loss:float = 0.0
+
+  t0:int = time.now_ms()
+
+  while step <= 10:
+    tensor.tape_reset()
+    unsafe:
+      tensor.adamw_zero_grad(&opt)
+
+    // --- Sub-layer 1: Multi-Head Attention ---
+    // a. Pre-norm
+    x_norm1:Tensor = tensor.tensor_rmsnorm(x, rms_w, 1.0e-05)
+
+    // b. QKV projections
+    q:Tensor = tensor.tensor_matmul(x_norm1, wq)
+    k:Tensor = tensor.tensor_matmul(x_norm1, wk)
+    v:Tensor = tensor.tensor_matmul(x_norm1, wv)
+
+    // c. RoPE
+    tensor.tensor_rope_2d(q, k, 0, 10000.0)
+
+    // d. Causal Scaled Dot-Product Attention
+    attn_out:Tensor = tensor.tensor_sdpa(q, k, v, 1)
+
+    // e. Output projection & residual connection
+    attn_proj:Tensor = tensor.tensor_matmul(attn_out, wo)
+    h1:Tensor = tensor.tensor_add(x, attn_proj)
+
+    // --- Sub-layer 2: Feed-Forward Network (FFN) ---
+    // a. Pre-norm
+    h1_norm:Tensor = tensor.tensor_rmsnorm(h1, rms_w, 1.0e-05)
+
+    // b. Gate projection with GELU activation
+    gate:Tensor = tensor.tensor_matmul(h1_norm, w_gate)
+    gate_act:Tensor = tensor.tensor_gelu(gate)
+
+    // c. Down projection & residual connection
+    ffn_out:Tensor = tensor.tensor_matmul(gate_act, w_down)
+    h2:Tensor = tensor.tensor_add(h1, ffn_out)
+
+    // --- Sub-layer 3: Output Logits & Cross-Entropy Loss ---
+    logits:Tensor = tensor.tensor_matmul(h2, w_lm_head)
+    loss:Tensor = tensor.tensor_cross_entropy_loss(logits, targets)
+    loss_val:float = tensor.tensor_get1(loss, 0)
+
+    if step == 0:
+      init_loss = loss_val
+    final_loss = loss_val
+
+    if step % 2 == 0:
+      say "  [Step ", step, "] Cross-Entropy Loss = ", loss_val
+
+    // --- Backward Pass & AdamW Optimization ---
+    tensor.tensor_backward(loss)
+    unsafe:
+      tensor.adamw_clip_grad_norm(&opt, 1.0)
+      tensor.adamw_step(&opt)
+
+    step = step + 1
+
+  t1:int = time.now_ms()
+  elapsed_ms:int = t1 - t0
+  if elapsed_ms <= 0: elapsed_ms = 1
+
+  say "----------------------------------------------------------"
+  say "Benchmark Complete:"
+  say "  Initial Loss: ", init_loss, " -> Final Loss: ", final_loss
+  say "  Loss Reduction: ", init_loss - final_loss
+  say "  Total Time for 10 Full Transformer Steps: ", elapsed_ms, " ms"
+  say "  Throughput: ", (10 * seq_len * 1000) / elapsed_ms, " tokens/sec"
+  say "=========================================================="
+
+  unsafe:
+    tensor.adamw_free(&opt)
+  tensor.tensor_free_tensor(x)
+  tensor.tensor_free_tensor(rms_w)
+  tensor.tensor_free_tensor(wq)
+  tensor.tensor_free_tensor(wk)
+  tensor.tensor_free_tensor(wv)
+  tensor.tensor_free_tensor(wo)
+  tensor.tensor_free_tensor(w_gate)
+  tensor.tensor_free_tensor(w_down)
+  tensor.tensor_free_tensor(w_lm_head)
+  tensor.tensor_free_tensor(targets)
+  tensor.tape_reset()
+  ret 0
+
+fn main() -> int:
+  test_full_llm_transformer_benchmark()
+  ret 0

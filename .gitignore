@@ -48,6 +48,7 @@ benchmarks/results/**
 !tools/tezz.tn
 !tools/tezz_lsp.tn
 !tools/resolve_hashes.py
+!tools/test_cuda_tensor_llm.py
 !tools/package_distributed_sdk.py
 !tools/tezz_lib.py
 !tools/release/

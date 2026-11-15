@@ -1,0 +1,64 @@
+import "tensor"
+import "math"
+
+fn main() -> int:
+  say "=== Testing Tensor Module Wiring ==="
+
+  // 1. Module presence & basic allocation
+  t:Tensor = tensor.tensor_2d(2, 3)
+  tensor.tensor_fill(t, 5.0)
+  say "1. Tensor Allocation: Shape=[", t.shape0, ", ", t.shape1, "], Value=[0,0]=", tensor.tensor_get2(t, 0, 0)
+  if tensor.tensor_get2(t, 0, 0) != 5.0:
+    say "FAIL: Tensor allocation failed"
+    ret 1
+
+  // 2. Zero-copy view & GEMM
+  t_t:Tensor = tensor.tensor_transpose(t, 0, 1)
+  mm:Tensor = tensor.tensor_matmul(t, t_t)
+  // [2, 3] @ [3, 2] = [2, 2] with each entry = 3 * (5 * 5) = 75.0
+  val_mm:float = tensor.tensor_get2(mm, 0, 0)
+  say "2. Transpose & GEMM: [2, 3] @ [3, 2] -> C[0, 0] = ", val_mm, " (expected 75.0)"
+  if val_mm != 75.0:
+    say "FAIL: GEMM calculation failed"
+    ret 2
+
+  // 3. Fused LLM operations
+  rms:Tensor = tensor.tensor_ones_1d(3)
+  normed:Tensor = tensor.tensor_rmsnorm(t, rms, 1.0e-05)
+  say "3. Fused RMSNorm: Normed[0, 0] = ", tensor.tensor_get2(normed, 0, 0), " (expected 1.0)"
+
+  // 4. Autograd tape & AdamW optimizer
+  tensor.tape_init()
+  param:Tensor = tensor.tensor_require_grad(tensor.tensor_1d(1))
+  tensor.tensor_set1(param, 0, 10.0)
+
+  target:Tensor = tensor.tensor_1d(1)
+  tensor.tensor_set1(target, 0, 0.0)
+
+  opt:AdamW = tensor.adamw_create(0.1, 0.9, 0.999, 1.0e-08, 0.0)
+  unsafe:
+    tensor.adamw_add_param(&opt, &param)
+
+  loss:Tensor = tensor.tensor_mse_loss(param, target)
+  tensor.tensor_backward(loss)
+
+  unsafe:
+    tensor.adamw_step(&opt)
+
+  new_val:float = tensor.tensor_get1(param, 0)
+  say "4. Autograd & AdamW: Parameter updated from 10.0 -> ", new_val, " (expected < 10.0)"
+  if new_val >= 10.0:
+    say "FAIL: Optimizer step did not update parameter"
+    ret 3
+
+  say "=== All Wiring Checks PASSED (Tensor Module is 100% Properly Connected!) ==="
+
+  unsafe:
+    tensor.adamw_free(&opt)
+  tensor.tensor_free_tensor(t)
+  tensor.tensor_free_tensor(mm)
+  tensor.tensor_free_tensor(normed)
+  tensor.tensor_free_tensor(param)
+  tensor.tensor_free_tensor(target)
+  tensor.tape_reset()
+  ret 0
