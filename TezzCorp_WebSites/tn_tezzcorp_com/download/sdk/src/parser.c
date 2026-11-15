@@ -5,6 +5,12 @@
 
 TokenKind op_tok = TK_EOF;
 
+typedef struct AttrList {
+  Attr* attrs;
+  int n;
+} AttrList;
+static FnDecl* parse_fn(Parser* P, int is_extern, int is_unsafe, int is_kernel, AttrList attrs);
+
 /* -------------------------------------------------
  * alloc helpers
  * ------------------------------------------------- */
@@ -20,6 +26,10 @@ static void eat_newlines(Parser* P){
   while(tok_is(P, TK_NEWLINE)) lex_next(&P->lex);
 }
 
+static void eat_layout(Parser* P){
+  while(tok_is(P, TK_NEWLINE) || tok_is(P, TK_INDENT) || tok_is(P, TK_DEDENT)) lex_next(&P->lex);
+}
+
 static void eat_stmt_end(Parser* P, const char* msg){
   if(tok_is(P, TK_SEMI)){ lex_next(&P->lex); eat_newlines(P); return; }
   if(tok_is(P, TK_NEWLINE)){ eat_newlines(P); return; }
@@ -33,7 +43,7 @@ static int tok_is_name(Parser* P){
   return k==TK_IDENT || k==TK_SAYSTR || k==TK_MALLOC || k==TK_FREE || k==TK_INPUT_LINE || k==TK_INPUT_I64;
 }
 
-static int tok_ident_eq(Parser* P, const char* lit){
+static inline int tok_ident_eq(Parser* P, const char* lit){
   Token* t=&P->lex.cur;
   int n=(int)strlen(lit);
   return (t->kind==TK_IDENT && t->len==n && strncmp(t->start,lit,(size_t)n)==0);
@@ -410,9 +420,11 @@ static Expr* parse_primary(Parser* P){
           st->stlit.f=NULL; st->stlit.flen=NULL; st->stlit.v=NULL; st->stlit.n=0;
 
           lex_next(&P->lex); /* consume '{' */
+          eat_layout(P);
           if(tok_is(P,TK_RBRACE)){ lex_next(&P->lex); free(e); return st; }
 
           for(;;){
+            eat_layout(P);
             if(!tok_is(P,TK_IDENT)) perr(P,"expected field name in struct literal");
             Token fn=P->lex.cur;
             lex_next(&P->lex);
@@ -428,7 +440,14 @@ static Expr* parse_primary(Parser* P){
             st->stlit.v[n]=val;
             st->stlit.n++;
 
-            if(tok_is(P,TK_COMMA)){ lex_next(&P->lex); continue; }
+            eat_layout(P);
+            if(tok_is(P,TK_COMMA)){
+              lex_next(&P->lex);
+              eat_layout(P);
+              if(tok_is(P,TK_RBRACE)){ lex_next(&P->lex); break; }
+              continue;
+            }
+            eat_layout(P);
             eat(P,TK_RBRACE,"expected '}' or ',' in struct literal");
             break;
           }
@@ -1225,11 +1244,6 @@ static void module_add_enum(Module* M, EnumDecl* ed){
   M->enums[M->enum_n++] = ed;
 }
 
-typedef struct {
-  Attr* attrs;
-  int n;
-} AttrList;
-
 static AttrList parse_attrs(Parser* P){
   AttrList L; memset(&L,0,sizeof(L));
   while(tok_is(P, TK_AT)){
@@ -1427,6 +1441,8 @@ static void parse_struct(Parser* P, Module* M, AttrList attrs){
 
   Field* fields=NULL;
   int fn=0;
+  FnDecl** methods=NULL;
+  int method_n=0;
 
   if(tok_is(P, TK_COLON)){
     eat(P, TK_COLON, "");
@@ -1436,6 +1452,45 @@ static void parse_struct(Parser* P, Module* M, AttrList attrs){
 
     while(!tok_is(P,TK_DEDENT) && !tok_is(P,TK_EOF)){
       if(tok_is(P, TK_NEWLINE)){ eat_newlines(P); continue; }
+
+      /* --- Nested method: fn declared inside struct block --- */
+      if(tok_is(P, TK_FN)){
+        AttrList no_attrs; memset(&no_attrs,0,sizeof(no_attrs));
+        FnDecl* mfn = parse_fn(P, 0, 0, 0, no_attrs);
+
+        /* Mangle name: StructName__methodname (stored as mangled in symbol table) */
+        int slen = (int)(nm.len);
+        int mlen = mfn->len;
+        int mangled_len = slen + 2 + mlen; /* "StructName__method" */
+        char* mangled = (char*)xmalloc((size_t)(mangled_len + 1));
+        memcpy(mangled, nm.start, (size_t)slen);
+        mangled[slen]   = '_';
+        mangled[slen+1] = '_';
+        memcpy(mangled + slen + 2, mfn->name, (size_t)mlen);
+        mangled[mangled_len] = '\0';
+
+        mfn->name = mangled;
+        mfn->len  = mangled_len;
+        mfn->is_method = 1;
+        mfn->recv_struct_name = nm.start;
+        mfn->recv_struct_len  = nm.len;
+        mfn->recv_module_path = P->path;
+
+        /* Register into module's global fn list (so IR emitter sees it) */
+        M->fns=(FnDecl**)xrealloc(M->fns,sizeof(FnDecl*)*(size_t)(M->fn_n+1));
+        M->fns[M->fn_n++]=mfn;
+
+        /* Also track in struct's method array */
+        methods=(FnDecl**)xrealloc(methods,sizeof(FnDecl*)*(size_t)(method_n+1));
+        methods[method_n++]=mfn;
+        continue;
+      }
+
+      /* --- Field: [pub|priv] name:Type --- */
+      int is_pub = 1; /* default public — backward compatible */
+      if(tok_is(P, TK_PUB)){ is_pub = 1; lex_next(&P->lex); }
+      else if(tok_is(P, TK_PRIV)){ is_pub = 0; lex_next(&P->lex); }
+
       if(!tok_is(P,TK_IDENT)) perr(P,"expected field name");
       Token f=P->lex.cur; lex_next(&P->lex);
       eat(P,TK_COLON,"expected ':' after field");
@@ -1443,13 +1498,17 @@ static void parse_struct(Parser* P, Module* M, AttrList attrs){
       eat_stmt_end(P,"expected end of line after field");
 
       fields=(Field*)xrealloc(fields,sizeof(Field)*(size_t)(fn+1));
-      fields[fn]=(Field){ f.start, f.len, ty, 0 };
+      fields[fn]=(Field){ f.start, f.len, ty, 0, is_pub };
       fn++;
     }
     eat(P, TK_DEDENT, "expected dedent after struct");
   } else {
     eat(P,TK_LBRACE,"expected '{' after struct name");
     while(!tok_is(P,TK_RBRACE)){
+      /* pub/priv optional in brace style too */
+      int is_pub = 1;
+      if(tok_is(P, TK_PUB)){ is_pub = 1; lex_next(&P->lex); }
+      else if(tok_is(P, TK_PRIV)){ is_pub = 0; lex_next(&P->lex); }
       if(!tok_is(P,TK_IDENT)) perr(P,"expected field name");
       Token f=P->lex.cur; lex_next(&P->lex);
       eat(P,TK_COLON,"expected ':' after field");
@@ -1457,7 +1516,7 @@ static void parse_struct(Parser* P, Module* M, AttrList attrs){
       eat(P,TK_SEMI,"expected ';' after field");
 
       fields=(Field*)xrealloc(fields,sizeof(Field)*(size_t)(fn+1));
-      fields[fn]=(Field){ f.start, f.len, ty, 0 };
+      fields[fn]=(Field){ f.start, f.len, ty, 0, is_pub };
       fn++;
     }
     eat(P,TK_RBRACE,"expected '}' after struct");
@@ -1474,6 +1533,8 @@ static void parse_struct(Parser* P, Module* M, AttrList attrs){
   sd->loc=loc;
   sd->attrs=attrs.attrs;
   sd->attr_n=attrs.n;
+  sd->methods=methods;
+  sd->method_n=method_n;
 
   M->structs=(StructDecl**)xrealloc(M->structs,sizeof(StructDecl*)*(size_t)(M->struct_n+1));
   M->structs[M->struct_n++]=sd;
@@ -1542,6 +1603,11 @@ static FnDecl* parse_fn(Parser* P, int is_extern, int is_unsafe, int is_kernel, 
   fn->fty = type_fn(P->tenv, ret, ptypes, ar);
   fn->attrs = attrs.attrs;
   fn->attr_n = attrs.n;
+  /* OOP fields — zero-initialised by memset; filled in parse_struct or top-level receiver parse */
+  fn->is_method = 0;
+  fn->recv_struct_name = NULL;
+  fn->recv_struct_len  = 0;
+  fn->recv_module_path = NULL;
   return fn;
 }
 
@@ -1589,10 +1655,121 @@ Module* parse_module(TypeEnv* tenv, const char* src, const char* path){
 
     if(tok_is(&P,TK_FN)){
       if(is_static) perr(&P, "static not supported for fn");
-      FnDecl* fn=parse_fn(&P, is_extern, is_unsafe, is_kernel, attrs);
-      M->fns=(FnDecl**)xrealloc(M->fns,sizeof(FnDecl*)*(size_t)(M->fn_n+1));
-      M->fns[M->fn_n++]=fn;
-      continue;
+
+      /* ---- Receiver method: fn TypeName.methodName(...)
+         Peek ahead: after TK_FN, if we see IDENT '.' IDENT, it is an external receiver.
+         We consume 'fn', read the struct-type name, eat '.', then read the method name,
+         mangle them into "TypeName__methodName", and proceed with normal param+body parse. */
+      SrcLoc fn_loc = tok_loc(&P.lex);
+      lex_next(&P.lex); /* consume 'fn' */
+
+      if(!tok_is_name(&P)) perr(&P,"expected function name after 'fn'");
+      Token nm1 = P.lex.cur; lex_next(&P.lex);
+
+      if(tok_is(&P, TK_DOT)){
+        /* External receiver: fn TypeName.methodName(...) */
+        lex_next(&P.lex); /* consume '.' */
+        if(!tok_is_name(&P)) perr(&P,"expected method name after '.'");
+        Token nm2 = P.lex.cur; lex_next(&P.lex);
+
+        /* Build mangled name "TypeName__methodName" */
+        int s1 = nm1.len, s2 = nm2.len;
+        int mangled_len = s1 + 2 + s2;
+        char* mangled = (char*)xmalloc((size_t)(mangled_len+1));
+        memcpy(mangled, nm1.start, (size_t)s1);
+        mangled[s1]   = '_';
+        mangled[s1+1] = '_';
+        memcpy(mangled+s1+2, nm2.start, (size_t)s2);
+        mangled[mangled_len] = '\0';
+
+        /* Now parse params, return type, body */
+        const char** pnames=NULL; int* plens=NULL; Type** ptypes=NULL; int ar=0;
+        if(tok_is(&P, TK_LPAREN)){
+          lex_next(&P.lex);
+          if(!tok_is(&P, TK_RPAREN)){
+            for(;;){
+              if(!tok_is_name(&P)) perr(&P,"expected parameter name");
+              Token pn=P.lex.cur; lex_next(&P.lex);
+              Type* pt = parse_opt_type(&P);
+              pnames=(const char**)xrealloc((void*)pnames,sizeof(char*)*(size_t)(ar+1));
+              plens =(int*)        xrealloc(plens,         sizeof(int)  *(size_t)(ar+1));
+              ptypes=(Type**)      xrealloc(ptypes,        sizeof(Type*)*(size_t)(ar+1));
+              pnames[ar]=pn.start; plens[ar]=pn.len; ptypes[ar]=pt; ar++;
+              if(tok_is(&P,TK_COMMA)){ lex_next(&P.lex); continue; }
+              break;
+            }
+          }
+          eat(&P,TK_RPAREN,"expected ')' after params");
+        }
+        Type* ret2 = P.tenv->b.ty_i64;
+        if(tok_is(&P,TK_ARROW)){ lex_next(&P.lex); ret2=parse_type(&P); }
+        Stmt* body2 = is_extern ? NULL : parse_block(&P);
+        if(is_extern) eat_stmt_end(&P,"expected end of line after extern fn declaration");
+
+        FnDecl* rfn=(FnDecl*)xmalloc(sizeof(FnDecl));
+        memset(rfn,0,sizeof(*rfn));
+        rfn->name=mangled; rfn->len=mangled_len;
+        rfn->pnames=pnames; rfn->plens=plens; rfn->ptypes=ptypes; rfn->arity=ar;
+        rfn->ret=ret2; rfn->body=body2; rfn->loc=fn_loc;
+        rfn->is_extern=is_extern; rfn->is_unsafe=is_unsafe; rfn->is_kernel=is_kernel;
+        rfn->fty=type_fn(P.tenv, ret2, ptypes, ar);
+        rfn->attrs=attrs.attrs; rfn->attr_n=attrs.n;
+        rfn->is_method=1;
+        rfn->recv_struct_name=nm1.start; rfn->recv_struct_len=nm1.len;
+        rfn->recv_module_path=path;
+
+        /* Attach to the struct's method list (find or ignore if struct not yet seen) */
+        for(int si=0; si<M->struct_n; si++){
+          StructDecl* sd=M->structs[si];
+          if(sd->len==nm1.len && strncmp(sd->name,nm1.start,(size_t)nm1.len)==0){
+            sd->methods=(FnDecl**)xrealloc(sd->methods,sizeof(FnDecl*)*(size_t)(sd->method_n+1));
+            sd->methods[sd->method_n++]=rfn;
+            break;
+          }
+        }
+        M->fns=(FnDecl**)xrealloc(M->fns,sizeof(FnDecl*)*(size_t)(M->fn_n+1));
+        M->fns[M->fn_n++]=rfn;
+        continue;
+      }
+
+      /* Normal fn (not receiver) — reconstruct a minimal FnDecl using the already-consumed name */
+      {
+        const char** pnames=NULL; int* plens=NULL; Type** ptypes=NULL; int ar=0;
+        if(tok_is(&P, TK_LPAREN)){
+          lex_next(&P.lex);
+          if(!tok_is(&P, TK_RPAREN)){
+            for(;;){
+              if(!tok_is_name(&P)) perr(&P,"expected parameter name");
+              Token pn=P.lex.cur; lex_next(&P.lex);
+              Type* pt = parse_opt_type(&P);
+              pnames=(const char**)xrealloc((void*)pnames,sizeof(char*)*(size_t)(ar+1));
+              plens =(int*)        xrealloc(plens,         sizeof(int)  *(size_t)(ar+1));
+              ptypes=(Type**)      xrealloc(ptypes,        sizeof(Type*)*(size_t)(ar+1));
+              pnames[ar]=pn.start; plens[ar]=pn.len; ptypes[ar]=pt; ar++;
+              if(tok_is(&P,TK_COMMA)){ lex_next(&P.lex); continue; }
+              break;
+            }
+          }
+          eat(&P,TK_RPAREN,"expected ')' after params");
+        }
+        Type* ret2 = P.tenv->b.ty_i64;
+        if(tok_is(&P,TK_ARROW)){ lex_next(&P.lex); ret2=parse_type(&P); }
+        Stmt* body2 = is_extern ? NULL : parse_block(&P);
+        if(is_extern) eat_stmt_end(&P,"expected end of line after extern fn declaration");
+
+        FnDecl* fn=(FnDecl*)xmalloc(sizeof(FnDecl));
+        memset(fn,0,sizeof(*fn));
+        fn->name=nm1.start; fn->len=nm1.len;
+        fn->pnames=pnames; fn->plens=plens; fn->ptypes=ptypes; fn->arity=ar;
+        fn->ret=ret2; fn->body=body2; fn->loc=fn_loc;
+        fn->is_extern=is_extern; fn->is_unsafe=is_unsafe; fn->is_kernel=is_kernel;
+        fn->fty=type_fn(P.tenv, ret2, ptypes, ar);
+        fn->attrs=attrs.attrs; fn->attr_n=attrs.n;
+        fn->is_method=0; fn->recv_struct_name=NULL; fn->recv_struct_len=0; fn->recv_module_path=NULL;
+        M->fns=(FnDecl**)xrealloc(M->fns,sizeof(FnDecl*)*(size_t)(M->fn_n+1));
+        M->fns[M->fn_n++]=fn;
+        continue;
+      }
     }
     if(tok_is(&P, TK_LET)){
       if(is_unsafe || is_kernel) perr(&P, "unsafe/kernel only valid on fn or block");

@@ -1,0 +1,76 @@
+// test_struct_methods.tn
+// Tests: pub/priv fields, inside-block methods, static assoc fns, auto-borrow
+
+struct BankAccount:
+  pub account_id:str
+  priv balance_cents:i64
+  priv is_frozen:int
+
+  // Static/associated constructor — no self param
+  fn new(id:str, cents:i64) -> BankAccount:
+    ret BankAccount{ account_id: id, balance_cents: cents, is_frozen: 0 }
+
+  // Mutable method — receiver is *BankAccount (auto-borrow applied at callsite)
+  fn deposit(self:*BankAccount, amount:i64) -> int:
+    if self.is_frozen != 0 || amount <= 0:
+      ret 0
+    self.balance_cents = self.balance_cents + amount
+    ret 1
+
+  // Read-only method
+  fn get_balance(self:*BankAccount) -> i64:
+    ret self.balance_cents
+
+  // Freeze method
+  fn freeze(self:*BankAccount) -> void:
+    self.is_frozen = 1
+
+struct Counter:
+  pub count:i64
+
+  fn new() -> Counter:
+    ret Counter{ count: 0 }
+
+  fn inc(self:*Counter) -> void:
+    self.count = self.count + 1
+
+  fn reset(self:*Counter) -> void:
+    self.count = 0
+
+// External receiver method (Option C — defined outside the struct block)
+fn Counter.add(self:*Counter, n:i64) -> void:
+  self.count = self.count + n
+
+fn main() -> int:
+  // ---- BankAccount tests ----
+  let acc:BankAccount = BankAccount.new("ACC-101", 50000)
+  say "Account: ", acc.account_id
+
+  // Auto-borrow: acc is value, deposit needs *BankAccount
+  let ok:int = acc.deposit(25000)
+  say "Deposit ok: ", ok
+
+  say "Balance: ", acc.get_balance()
+
+  acc.freeze()
+  let ok2:int = acc.deposit(100)
+  say "Deposit after freeze (expect 0): ", ok2
+
+  say "Final balance: ", acc.get_balance()
+
+  // ---- Counter tests ----
+  let c:Counter = Counter.new()
+  say "Counter start: ", c.count
+
+  c.inc()
+  c.inc()
+  say "After 2 inc: ", c.count
+
+  // External receiver method
+  c.add(10)
+  say "After add(10): ", c.count
+
+  c.reset()
+  say "After reset: ", c.count
+
+  ret 0

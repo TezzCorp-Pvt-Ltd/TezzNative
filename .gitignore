@@ -36,6 +36,8 @@ benchmarks/results/**
 !.github/workflows/release-security.yml
 !tests/
 !tests/*.tn
+!tests/rpg_game/
+!tests/rpg_game/**
 !tests/conformance/
 !tests/conformance/**
 !tests/gui/

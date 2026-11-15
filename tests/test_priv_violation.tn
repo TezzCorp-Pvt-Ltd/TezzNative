@@ -1,0 +1,12 @@
+// tests/test_priv_violation.tn
+import "./oop_bank.tn"
+
+fn main() -> int:
+  let acc:BankAccount = BankAccount.new("LEGAL-TEST", 1000)
+  // Legal public access
+  say "Account ID: ", acc.account_id
+
+  // Legal method calls
+  acc.deposit(500)
+  say "Balance via method: ", acc.get_balance()
+  ret 0

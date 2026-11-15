@@ -147,6 +147,11 @@ struct FnDecl {
   Type* fty;
   Attr* attrs;
   int attr_n;
+  /* OOP: set when this fn was declared as a method (inside struct: or via fn Type.method) */
+  int is_method;                    /* 1 if this fn is a struct method */
+  const char* recv_struct_name;     /* struct type name, e.g. "BankAccount" */
+  int recv_struct_len;
+  const char* recv_module_path;     /* path of the module that owns the struct */
 };
 
 struct StructDecl {
@@ -156,6 +161,9 @@ struct StructDecl {
   SrcLoc loc;
   Attr* attrs;
   int attr_n;
+  /* OOP: methods declared inside or externally via fn Type.method syntax */
+  struct FnDecl** methods;
+  int method_n;
 };
 
 struct Module {

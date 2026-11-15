@@ -1,0 +1,18 @@
+// tests/oop_bank.tn
+// Defines BankAccount module with pub and priv fields
+
+struct BankAccount:
+  pub account_id:str
+  priv balance_cents:i64
+
+  fn new(id:str, cents:i64) -> BankAccount:
+    ret BankAccount{ account_id: id, balance_cents: cents }
+
+  fn deposit(self:*BankAccount, amount:i64) -> int:
+    if amount <= 0:
+      ret 0
+    self.balance_cents = self.balance_cents + amount
+    ret 1
+
+  fn get_balance(self:*BankAccount) -> i64:
+    ret self.balance_cents

@@ -1,0 +1,50 @@
+// tests/rpg_game/entity.tn
+// Base class for game entities
+
+struct Entity:
+  pub name:str
+  priv hp:int
+  priv max_hp:int
+  priv is_alive:int
+
+  fn new(name:str, max_hp:int) -> Entity:
+    ret Entity{
+      name: name,
+      hp: max_hp,
+      max_hp: max_hp,
+      is_alive: 1
+    }
+
+  fn take_damage(self:*Entity, dmg:int) -> int:
+    if self.is_alive == 0:
+      ret 0
+    self.hp = self.hp - dmg
+    if self.hp <= 0:
+      self.hp = 0
+      self.is_alive = 0
+      say "  [Entity] ", self.name, " has been slain!"
+    else:
+      say "  [Entity] ", self.name, " took ", dmg, " damage! HP remaining: ", self.hp
+    ret self.hp
+
+  fn heal(self:*Entity, amount:int) -> void:
+    if self.is_alive == 0:
+      say "  [Entity] Cannot heal a dead entity!"
+      ret
+    self.hp = self.hp + amount
+    if self.hp > self.max_hp:
+      self.hp = self.max_hp
+    say "  [Entity] ", self.name, " healed by ", amount, ". Current HP: ", self.hp
+
+  fn get_hp(self:*Entity) -> int:
+    ret self.hp
+
+  fn alive(self:*Entity) -> int:
+    ret self.is_alive
+
+// External receiver method (Option C)
+fn Entity.status(self:*Entity) -> void:
+  alive_str:str = "ALIVE"
+  if self.is_alive == 0:
+    alive_str = "DEAD"
+  say "  -> Status of ", self.name, ": [", alive_str, "] HP: ", self.hp, "/", self.max_hp

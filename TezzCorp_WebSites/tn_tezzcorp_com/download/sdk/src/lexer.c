@@ -21,12 +21,14 @@ static TokenKind keyword_lookup(const char* s, int len){
       if(s[0]=='r'&&s[1]=='e'&&s[2]=='t') return TK_RET;
       if(s[0]=='f'&&s[1]=='o'&&s[2]=='r') return TK_FOR;
       if(s[0]=='s'&&s[1]=='a'&&s[2]=='y') return TK_SAY;
+      if(s[0]=='p'&&s[1]=='u'&&s[2]=='b') return TK_PUB;
       break;
     case 4:
       if(s[0]=='e'&&s[1]=='l'&&s[2]=='s'&&s[3]=='e') return TK_ELSE;
       if(s[0]=='e'&&s[1]=='n'&&s[2]=='u'&&s[3]=='m') return TK_ENUM;
       if(s[0]=='f'&&s[1]=='r'&&s[2]=='e'&&s[3]=='e') return TK_FREE;
       if(s[0]=='c'&&s[1]=='a'&&s[2]=='s'&&s[3]=='e') return TK_CASE;
+      if(s[0]=='p'&&s[1]=='r'&&s[2]=='i'&&s[3]=='v') return TK_PRIV;
       break;
     case 5:
       if(s[0]=='w'&&s[1]=='h'&&s[2]=='i'&&s[3]=='l'&&s[4]=='e') return TK_WHILE;

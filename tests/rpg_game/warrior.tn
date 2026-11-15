@@ -1,0 +1,47 @@
+// tests/rpg_game/warrior.tn
+// Subclass Warrior inheriting from Entity
+import "./entity.tn"
+
+struct Warrior:
+  pub base:Entity
+  pub shield:int
+  priv rage:int
+
+  fn new(name:str, max_hp:int, shield_points:int) -> Warrior:
+    let b:Entity = Entity.new(name, max_hp)
+    ret Warrior{
+      base: b,
+      shield: shield_points,
+      rage: 0
+    }
+
+  // Method overriding: Warrior absorbs incoming damage with shield first,
+  // then delegates the remaining damage to the parent Entity via self.base.take_damage!
+  fn take_damage(self:*Warrior, incoming_dmg:int) -> int:
+    say "  [Warrior Defense] ", self.base.name, " prepares to block with ", self.shield, " shield!"
+    actual_dmg:int = incoming_dmg
+    if self.shield > 0:
+      if self.shield >= incoming_dmg:
+        self.shield = self.shield - incoming_dmg
+        self.rage = self.rage + 10
+        say "  [Warrior Block] Shield fully absorbed ", incoming_dmg, " damage! Shield left: ", self.shield, " (Rage: ", self.rage, ")"
+        ret self.base.get_hp()
+      else:
+        actual_dmg = incoming_dmg - self.shield
+        say "  [Warrior Block] Shield broke after absorbing ", self.shield, " damage! Piercing damage: ", actual_dmg
+        self.shield = 0
+        self.rage = self.rage + 25
+
+    // Delegate remaining damage to parent Entity class
+    ret self.base.take_damage(actual_dmg)
+
+  // Subclass specialized attack
+  fn heavy_strike(self:*Warrior) -> int:
+    dmg:int = 25
+    if self.rage >= 20:
+      dmg = dmg + 20
+      self.rage = self.rage - 20
+      say "  [Warrior Rage Attack] ENRAGED STRIKE deals ", dmg, " damage! (Rage left: ", self.rage, ")"
+    else:
+      say "  [Warrior Attack] Basic strike deals ", dmg, " damage."
+    ret dmg

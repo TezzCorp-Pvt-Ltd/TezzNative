@@ -1,0 +1,41 @@
+// tests/rpg_game/mage.tn
+// Subclass Mage inheriting from Entity
+import "./entity.tn"
+
+struct Mage:
+  pub base:Entity
+  priv mana:int
+  priv spell_power:int
+
+  fn new(name:str, max_hp:int, initial_mana:int, power:int) -> Mage:
+    let b:Entity = Entity.new(name, max_hp)
+    ret Mage{
+      base: b,
+      mana: initial_mana,
+      spell_power: power
+    }
+
+  fn cast_fireball(self:*Mage) -> int:
+    cost:int = 30
+    if self.mana < cost:
+      say "  [Mage] ", self.base.name, " has insufficient mana for Fireball! (Mana: ", self.mana, ")"
+      ret 5 // Weak wand attack
+    self.mana = self.mana - cost
+    dmg:int = self.spell_power + 15
+    say "  [Mage Spell] ", self.base.name, " casts FIREBALL dealing ", dmg, " magic damage! (Mana left: ", self.mana, ")"
+    ret dmg
+
+  // Uses inherited base Entity healing method
+  fn cast_heal(self:*Mage) -> void:
+    cost:int = 25
+    if self.mana < cost:
+      say "  [Mage] Out of mana to heal!"
+      ret
+    self.mana = self.mana - cost
+    heal_amount:int = self.spell_power
+    say "  [Mage Spell] ", self.base.name, " channels restoration spell!"
+    self.base.heal(heal_amount)
+
+  fn meditate(self:*Mage) -> void:
+    self.mana = self.mana + 40
+    say "  [Mage Meditate] ", self.base.name, " restored 40 mana. Current Mana: ", self.mana

@@ -22,7 +22,7 @@ typedef enum {
 typedef struct Type Type;
 typedef struct Field Field;
 
-struct Field { const char* name; int name_len; Type* ty; int off; };
+struct Field { const char* name; int name_len; Type* ty; int off; int is_pub; /* 1=pub, 0=priv (default public for backward compat) */ };
 
 struct Type {
   TyKind k;

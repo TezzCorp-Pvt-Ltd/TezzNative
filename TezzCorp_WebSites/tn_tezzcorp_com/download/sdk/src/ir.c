@@ -709,15 +709,28 @@ static int gen_lvalue(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Expr
     }
 
     case EX_DOT: {
-      if(!e->dot.base || !e->dot.base->ty || e->dot.base->ty->k!=TY_STRUCT){
+      Type* bty = e->dot.base ? e->dot.base->ty : NULL;
+      Type* st = NULL;
+      int is_ptr_base = 0;
+      if(bty && bty->k == TY_STRUCT){
+        st = bty;
+        is_ptr_base = 0;
+      } else if(bty && bty->k == TY_PTR && bty->elem && bty->elem->k == TY_STRUCT){
+        st = bty->elem;
+        is_ptr_base = 1;
+      } else {
         err_at(e->loc, "IR: dot lvalue requires struct base");
       }
-      Type* st = e->dot.base->ty;
       Field* f = type_find_field(st, e->dot.mem, e->dot.memlen);
       if(!f) err_at(e->loc, "IR: unknown struct field");
 
-      Type* dummy=NULL;
-      int base_addr = gen_lvalue(M, tenv, F, ctx, e->dot.base, &dummy);
+      int base_addr;
+      if(is_ptr_base){
+        base_addr = gen_expr(M, tenv, F, ctx, e->dot.base, bty);
+      } else {
+        Type* dummy = NULL;
+        base_addr = gen_lvalue(M, tenv, F, ctx, e->dot.base, &dummy);
+      }
       int addr = ir_gep_imm(F, base_addr, f->off);
       if(out_ty) *out_ty = f->ty;
       return addr;
@@ -1021,7 +1034,24 @@ static int gen_expr(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Expr* 
 
         int v = gen_expr(M, tenv, F, ctx, e->stlit.v[i], f->ty);
         int p = ir_gep_imm(F, addr, f->off);
-        ir_store(F, p, v, type_size(f->ty));
+        if(f->ty && (f->ty->k==TY_STRUCT || f->ty->k==TY_ARRAY)){
+          int szr=new_reg(F);
+          IRIns ic; memset(&ic,0,sizeof(ic));
+          ic.op=I_ICONST; ic.a=szr; ic.imm=type_size(f->ty);
+          ir_emit(F,ic);
+
+          int* callargs=(int*)xmalloc(sizeof(int)*3);
+          callargs[0]=p; callargs[1]=v; callargs[2]=szr;
+
+          int dst=new_reg(F);
+          IRIns call; memset(&call,0,sizeof(call));
+          call.op=I_CALL; call.a=dst;
+          call.name="memcpy"; call.nlen=6;
+          call.args=callargs; call.argc=3;
+          ir_emit(F,call);
+        } else {
+          ir_store(F, p, v, type_size(f->ty));
+        }
       }
       return addr;
     }
@@ -1104,6 +1134,23 @@ static void gen_stmt(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Stmt*
 
       if(s->asg.op==TK_ASSIGN){
         int v = gen_expr(M, tenv, F, ctx, s->asg.rhs, lty);
+        if(lty && (lty->k==TY_STRUCT || lty->k==TY_ARRAY)){
+          int szr=new_reg(F);
+          IRIns ic; memset(&ic,0,sizeof(ic));
+          ic.op=I_ICONST; ic.a=szr; ic.imm=lsz;
+          ir_emit(F,ic);
+
+          int* callargs=(int*)xmalloc(sizeof(int)*3);
+          callargs[0]=laddr; callargs[1]=v; callargs[2]=szr;
+
+          int dst=new_reg(F);
+          IRIns call; memset(&call,0,sizeof(call));
+          call.op=I_CALL; call.a=dst;
+          call.name="memcpy"; call.nlen=6;
+          call.args=callargs; call.argc=3;
+          ir_emit(F,call);
+          return;
+        }
         ir_store(F, laddr, v, lsz);
         return;
       }
@@ -1628,7 +1675,24 @@ static void ir_add_func(IRModule* M, TypeEnv* tenv, Module* cur, Module* root, F
     int preg = new_reg(F); // incoming value reg (ABI will map these)
     if(F->param_regs) F->param_regs[F->param_regs_n++] = preg;
     int addr = ir_alloca(F, type_size(pty), type_align(pty));
-    ir_store(F, addr, preg, type_size(pty));
+    if(pty->k == TY_STRUCT || pty->k == TY_ARRAY){
+      int szr=new_reg(F);
+      IRIns ic; memset(&ic,0,sizeof(ic));
+      ic.op=I_ICONST; ic.a=szr; ic.imm=type_size(pty);
+      ir_emit(F,ic);
+
+      int* callargs=(int*)xmalloc(sizeof(int)*3);
+      callargs[0]=addr; callargs[1]=preg; callargs[2]=szr;
+
+      int dst=new_reg(F);
+      IRIns call; memset(&call,0,sizeof(call));
+      call.op=I_CALL; call.a=dst;
+      call.name="memcpy"; call.nlen=6;
+      call.args=callargs; call.argc=3;
+      ir_emit(F,call);
+    } else {
+      ir_store(F, addr, preg, type_size(pty));
+    }
     env_add(F, fn->pnames[i], fn->plens[i], addr, pty);
   }
 
@@ -2376,8 +2440,9 @@ static IRCfg* cfg_build(IRFunc* F){
     }
   }
 
-  unsigned char* leader = (unsigned char*)xmalloc((size_t)F->n);
-  memset(leader, 0, (size_t)F->n);
+  size_t n_ins = (size_t)(F->n > 0 ? F->n : 1);
+  unsigned char* leader = (unsigned char*)xmalloc(n_ins);
+  memset(leader, 0, n_ins);
   leader[0] = 1;
   for(int i=0;i<F->n;i++){
     IRIns* in = &F->ins[i];

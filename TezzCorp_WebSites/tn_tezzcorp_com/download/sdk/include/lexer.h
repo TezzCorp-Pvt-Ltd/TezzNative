@@ -81,6 +81,10 @@ typedef enum {
   TK_STATIC,
   TK_EXTERN,
 
+  // OOP / encapsulation
+  TK_PUB,   // 'pub'  — public field visibility
+  TK_PRIV,  // 'priv' — private field visibility
+
 } TokenKind;
 
 typedef struct {

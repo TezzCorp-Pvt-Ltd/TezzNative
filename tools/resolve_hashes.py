@@ -164,6 +164,8 @@ def sync_compiler_binaries():
     print("[2/6] Syncing compiler binaries...")
     # Find genuine x86_64 compiler
     x64_candidates = [
+        os.path.join(SITE_ROOT, "download", "sdk", "build", "tezzc.exe"),
+        os.path.join(SITE_BIN_DIR, "tezzc.exe"),
         os.path.join(REPO_ROOT, "tezzc.exe"),
         os.path.join(SITE_BIN_DIR, "Release", "tezzc.exe"),
         os.path.join(REPO_ROOT, "TezzNative-language", "bin", "tezzc-windows-x64.exe"),

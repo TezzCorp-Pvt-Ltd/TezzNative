@@ -2270,13 +2270,260 @@ static void sema_call(ModuleGraph* G, TypeEnv* tenv, Module* curM, FnDecl* curF,
       return;
   }
 
-  // Case 2: module.fn call
+  // Case 2: module.fn call  —OR—  struct method call: expr.method(args)
   if(cal->k==EX_DOT){
     Expr* base = cal->dot.base;
+    const char* mem  = cal->dot.mem;
+    int memlen = cal->dot.memlen;
+
+    /* ---- STATIC/ASSOCIATED CALL: StructName.fn_name(args) ----
+       If base is an EX_NAME matching a struct type, check for a static method */
+    if(base && base->k == EX_NAME){
+      Type* sty = tenv_find_struct(tenv, base->name.name, base->name.len);
+      if(sty){
+        int slen2 = base->name.len;
+        int mangled_len2 = slen2 + 2 + memlen;
+        char* mangled2 = (char*)malloc((size_t)(mangled_len2+1));
+        if(!mangled2) die("out of memory");
+        memcpy(mangled2, base->name.name, (size_t)slen2);
+        mangled2[slen2]   = '_';
+        mangled2[slen2+1] = '_';
+        memcpy(mangled2+slen2+2, mem, (size_t)memlen);
+        mangled2[mangled_len2] = '\0';
+
+        Module* target_mod = NULL;
+        FnDecl* sf = find_fn_in_module(curM, mangled2, mangled_len2);
+        if(sf){
+          target_mod = curM;
+        } else if(G){
+          for(int mi=0; mi<G->mod_n && !sf; mi++){
+            sf = find_fn_in_module(G->mods[mi], mangled2, mangled_len2);
+            if(sf) target_mod = G->mods[mi];
+          }
+        }
+        if(sf && target_mod){
+          Expr* new_callee2 = (Expr*)malloc(sizeof(Expr));
+          if(!new_callee2) die("out of memory");
+          memset(new_callee2, 0, sizeof(Expr));
+          new_callee2->loc = cal->loc;
+
+          if(target_mod != curM && target_mod->mname){
+            Expr* mod_expr = (Expr*)malloc(sizeof(Expr));
+            if(!mod_expr) die("out of memory");
+            memset(mod_expr, 0, sizeof(Expr));
+            mod_expr->k = EX_NAME;
+            mod_expr->loc = cal->loc;
+            mod_expr->name.name = target_mod->mname;
+            mod_expr->name.len = target_mod->mlen;
+            new_callee2->k = EX_DOT;
+            new_callee2->dot.base = mod_expr;
+            new_callee2->dot.mem = mangled2;
+            new_callee2->dot.memlen = mangled_len2;
+          } else {
+            new_callee2->k = EX_NAME;
+            new_callee2->name.name = mangled2;
+            new_callee2->name.len  = mangled_len2;
+          }
+          call->call.callee = new_callee2;
+
+          if(sf->is_unsafe) require_unsafe(call->loc, in_unsafe);
+          if(call->call.argc != sf->arity)
+            err_arity_at(call->loc, "wrong number of arguments in static method call",
+                         mangled2, mangled_len2, sf->arity, call->call.argc);
+          for(int i=0;i<sf->arity;i++)
+            require_assignable(tenv, call->call.args[i]->loc, sf->ptypes[i], call->call.args[i]);
+          call->ty = sf->ret;
+          return;
+        }
+        free(mangled2);
+      }
+    }
+
+    /* ---- STRUCT METHOD CALL: base has a struct/pointer-to-struct type ----
+       Desugar  expr.method(args)  into  StructName__method(self_arg, args)
+       where self_arg is auto-borrowed/auto-derefed to match the method's first param. */
+    sema_expr(G, tenv, curM, curF, venv, penv, benv, base, in_unsafe);
+    if(base->ty){
+      /* Resolve the struct type (may be T or *T) */
+      Type* base_ty = base->ty;
+      Type* struct_ty = NULL;
+      int base_is_ptr = 0;
+      if(base_ty->k == TY_STRUCT){
+        struct_ty = base_ty;
+        base_is_ptr = 0;
+      } else if(base_ty->k == TY_PTR && base_ty->elem && base_ty->elem->k == TY_STRUCT){
+        struct_ty = base_ty->elem;
+        base_is_ptr = 1;
+      }
+
+      if(struct_ty){
+        /* Build mangled name: StructName__methodName */
+        const char* sname = struct_ty->sname;
+        int slen = struct_ty->sname_len;
+        int mangled_len = slen + 2 + memlen;
+        char* mangled = (char*)malloc((size_t)(mangled_len+1));
+        if(!mangled) die("out of memory");
+        memcpy(mangled, sname, (size_t)slen);
+        mangled[slen]   = '_';
+        mangled[slen+1] = '_';
+        memcpy(mangled+slen+2, mem, (size_t)memlen);
+        mangled[mangled_len] = '\0';
+
+        /* Look up mangled fn in current module AND struct's originating module */
+        Module* target_mod = NULL;
+        FnDecl* mf = find_fn_in_module(curM, mangled, mangled_len);
+        if(mf){
+          target_mod = curM;
+        } else if(G){
+          /* Search all loaded modules for the method */
+          for(int mi=0; mi<G->mod_n && !mf; mi++){
+            mf = find_fn_in_module(G->mods[mi], mangled, mangled_len);
+            if(mf) target_mod = G->mods[mi];
+          }
+        }
+
+        /* Subclass method inheritance: if not found on child, check embedded base/parent/super */
+        if(!mf){
+          Field* base_field = type_find_field(struct_ty, "base", 4);
+          if(!base_field) base_field = type_find_field(struct_ty, "parent", 6);
+          if(!base_field) base_field = type_find_field(struct_ty, "super", 5);
+          if(base_field && base_field->ty && base_field->ty->k == TY_STRUCT){
+            Type* parent_st = base_field->ty;
+            int parent_mangled_len = parent_st->sname_len + 2 + memlen;
+            char* parent_mangled = (char*)malloc((size_t)(parent_mangled_len + 1));
+            if(parent_mangled){
+              memcpy(parent_mangled, parent_st->sname, (size_t)parent_st->sname_len);
+              parent_mangled[parent_st->sname_len] = '_';
+              parent_mangled[parent_st->sname_len + 1] = '_';
+              memcpy(parent_mangled + parent_st->sname_len + 2, mem, (size_t)memlen);
+              parent_mangled[parent_mangled_len] = '\0';
+
+              FnDecl* pmf = find_fn_in_module(curM, parent_mangled, parent_mangled_len);
+              if(pmf){
+                target_mod = curM;
+              } else if(G){
+                for(int mi=0; mi<G->mod_n && !pmf; mi++){
+                  pmf = find_fn_in_module(G->mods[mi], parent_mangled, parent_mangled_len);
+                  if(pmf) target_mod = G->mods[mi];
+                }
+              }
+              if(pmf && target_mod){
+                Expr* dot_base = (Expr*)malloc(sizeof(Expr));
+                if(!dot_base) die("out of memory");
+                memset(dot_base, 0, sizeof(Expr));
+                dot_base->k = EX_DOT;
+                dot_base->loc = base->loc;
+                dot_base->dot.base = base;
+                dot_base->dot.mem = base_field->name;
+                dot_base->dot.memlen = base_field->name_len;
+                dot_base->ty = parent_st;
+
+                base = dot_base;
+                base_ty = parent_st;
+                struct_ty = parent_st;
+                base_is_ptr = 0;
+                free(mangled);
+                mangled = parent_mangled;
+                mangled_len = parent_mangled_len;
+                mf = pmf;
+              } else {
+                free(parent_mangled);
+              }
+            }
+          }
+        }
+
+        if(mf && target_mod){
+          /* Determine what the method expects as its first param (self) */
+          Type* self_param_ty = (mf->arity >= 1 && mf->ptypes) ? mf->ptypes[0] : NULL;
+          int param_is_ptr = self_param_ty && self_param_ty->k == TY_PTR;
+
+          /* Build the self expression with auto-borrow/deref */
+          Expr* self_arg = (Expr*)malloc(sizeof(Expr));
+          if(!self_arg) die("out of memory");
+          memset(self_arg, 0, sizeof(Expr));
+
+          if(param_is_ptr && !base_is_ptr){
+            /* Method wants *T but base is T value — auto-borrow: insert &base */
+            self_arg->k = EX_ADDR;
+            self_arg->loc = base->loc;
+            self_arg->un.e = base;
+            self_arg->ty = type_ptr(tenv, base_ty);
+          } else if(!param_is_ptr && base_is_ptr){
+            /* Method wants T value but base is *T — auto-deref: insert *base */
+            self_arg->k = EX_DEREF;
+            self_arg->loc = base->loc;
+            self_arg->un.e = base;
+            self_arg->ty = struct_ty;
+          } else {
+            /* Types already match (both ptr or both value) — pass through */
+            free(self_arg);
+            self_arg = base;
+          }
+
+          /* Prepend self_arg to call args */
+          int old_argc = call->call.argc;
+          Expr** new_args = (Expr**)malloc(sizeof(Expr*)*(size_t)(old_argc+1));
+          if(!new_args) die("out of memory");
+          new_args[0] = self_arg;
+          for(int i=0;i<old_argc;i++) new_args[i+1] = call->call.args[i];
+          free(call->call.args);
+          call->call.args = new_args;
+          call->call.argc = old_argc + 1;
+
+          /* Rewrite callee to the mangled function name (module-qualified if external) */
+          Expr* new_callee = (Expr*)malloc(sizeof(Expr));
+          if(!new_callee) die("out of memory");
+          memset(new_callee, 0, sizeof(Expr));
+          new_callee->loc = cal->loc;
+
+          if(target_mod != curM && target_mod->mname){
+            Expr* mod_expr = (Expr*)malloc(sizeof(Expr));
+            if(!mod_expr) die("out of memory");
+            memset(mod_expr, 0, sizeof(Expr));
+            mod_expr->k = EX_NAME;
+            mod_expr->loc = cal->loc;
+            mod_expr->name.name = target_mod->mname;
+            mod_expr->name.len = target_mod->mlen;
+            new_callee->k = EX_DOT;
+            new_callee->dot.base = mod_expr;
+            new_callee->dot.mem = mangled;
+            new_callee->dot.memlen = mangled_len;
+          } else {
+            new_callee->k = EX_NAME;
+            new_callee->name.name = mangled;
+            new_callee->name.len  = mangled_len;
+          }
+          call->call.callee = new_callee;
+
+          /* Type-check as a normal direct-name call now */
+          if(mf->is_unsafe) require_unsafe(call->loc, in_unsafe);
+          if(call->call.argc != mf->arity)
+            err_arity_at(call->loc, "wrong number of arguments in method call",
+                         mangled, mangled_len, mf->arity, call->call.argc);
+          for(int i=0;i<mf->arity;i++){
+            require_assignable(tenv, call->call.args[i]->loc, mf->ptypes[i], call->call.args[i]);
+          }
+          call->ty = mf->ret;
+          return;
+        }
+
+        /* Struct type found but no matching method — fall through to field/module error */
+        char emsg[512];
+        snprintf(emsg, sizeof(emsg),
+          "no method '%.*s' found on struct '%.*s'",
+          memlen, mem, slen, sname);
+        free(mangled);
+        err_at(call->loc, emsg);
+        return;
+      }
+    }
+
+    /* ---- FALL-THROUGH: regular module.fn call ---- */
     char* modnm = NULL;
     int modlen = 0;
     if(!flatten_mod_name(base, &modnm, &modlen)){
-      err_at(call->loc, "call target must be name or module.name");
+      err_at(call->loc, "call target must be name, module.name, or struct.method");
     }
 
     const char* fnm = cal->dot.mem;
@@ -2511,9 +2758,57 @@ static void sema_expr(ModuleGraph* G, TypeEnv* tenv, Module* curM, FnDecl* curF,
       }
 
       Type* bt = e->dot.base->ty;
-      if(bt->k!=TY_STRUCT) err_at(e->loc, "dot access requires struct type");
-      Field* f = type_find_field(bt, e->dot.mem, e->dot.memlen);
+      Type* struct_ty = NULL;
+      if(bt->k == TY_STRUCT){
+        struct_ty = bt;
+      } else if(bt->k == TY_PTR && bt->elem && bt->elem->k == TY_STRUCT){
+        struct_ty = bt->elem;
+      } else {
+        err_at(e->loc, "dot access requires struct type");
+      }
+      Field* f = type_find_field(struct_ty, e->dot.mem, e->dot.memlen);
+      if(!f){
+        Field* bf = type_find_field(struct_ty, "base", 4);
+        if(!bf) bf = type_find_field(struct_ty, "parent", 6);
+        if(!bf) bf = type_find_field(struct_ty, "super", 5);
+        if(bf && bf->ty && bf->ty->k == TY_STRUCT){
+          Field* pf = type_find_field(bf->ty, e->dot.mem, e->dot.memlen);
+          if(pf){
+            Expr* sub_base = (Expr*)malloc(sizeof(Expr));
+            if(!sub_base) die("out of memory");
+            memset(sub_base, 0, sizeof(Expr));
+            sub_base->k = EX_DOT;
+            sub_base->loc = e->loc;
+            sub_base->dot.base = e->dot.base;
+            sub_base->dot.mem = bf->name;
+            sub_base->dot.memlen = bf->name_len;
+            sub_base->ty = bf->ty;
+
+            e->dot.base = sub_base;
+            struct_ty = bf->ty;
+            f = pf;
+          }
+        }
+      }
       if(!f) err_at(e->loc, "unknown struct field");
+
+      /* ---- Private field access guard ----
+         If the field is marked priv (is_pub==0), only code in the same module file
+         (same absolute path as the struct's decl_loc.path) may access it. */
+      if(!f->is_pub){
+        const char* field_owner_path = struct_ty->decl_loc.path;
+        const char* cur_path         = curM ? curM->path : NULL;
+        int same_module = (field_owner_path && cur_path &&
+                           strcmp(field_owner_path, cur_path)==0);
+        if(!same_module){
+          char msg[512];
+          snprintf(msg, sizeof(msg),
+            "cannot access private field '%.*s' of struct '%.*s' outside its module",
+            f->name_len, f->name, struct_ty->sname_len, struct_ty->sname);
+          err_at(e->loc, msg);
+        }
+      }
+
       e->ty = f->ty;
       return;
     }

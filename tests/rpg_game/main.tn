@@ -1,0 +1,64 @@
+// tests/rpg_game/main.tn
+// Multi-File Class & Subclass Inheritance Battle Simulation
+import "./entity.tn"
+import "./warrior.tn"
+import "./mage.tn"
+
+fn main() -> int:
+  say "========================================================"
+  say "   TezzNative Multi-File Class & Subclass Battle Sim   "
+  say "========================================================"
+
+  // 1. Instantiate Base Entity and Subclasses across multiple files
+  let boss:Entity = Entity.new("Dragon Lord", 150)
+  let warrior:Warrior = Warrior.new("Thorin the Shieldbearer", 100, 30)
+  let mage:Mage = Mage.new("Gandalf the Grey", 70, 80, 25)
+
+  say "\n--- Initial Combatant Statuses (Testing Inherited .status() & .name) ---"
+  boss.status()
+  warrior.status() // Directly calls inherited Entity.status() via base!
+  mage.status()    // Directly calls inherited Entity.status() via base!
+  say "Warrior direct inherited field access: name = ", warrior.name
+
+  // 2. Round 1: Mage casts Fireball on Boss
+  say "\n--- Round 1: Mage attacks Dragon Lord ---"
+  let f_dmg:int = mage.cast_fireball()
+  boss.take_damage(f_dmg)
+  boss.status()
+
+  // 3. Round 2: Boss attacks Warrior (Testing Overridden take_damage with Shield)
+  say "\n--- Round 2: Dragon Lord attacks Warrior with Flame Claw (20 dmg) ---"
+  warrior.take_damage(20)
+  warrior.base.status()
+
+  // 4. Round 3: Boss hits Warrior again with Heavy Tail Swipe (35 dmg)
+  say "\n--- Round 3: Dragon Lord strikes Warrior with Tail Swipe (35 dmg) ---"
+  // Shield had 10 left -> absorbs 10, breaks, remaining 25 pierces HP!
+  warrior.take_damage(35)
+  warrior.base.status()
+
+  // 5. Round 4: Warrior executes Enraged Strike on Boss
+  say "\n--- Round 4: Enraged Warrior strikes Boss ---"
+  let w_dmg:int = warrior.heavy_strike()
+  boss.take_damage(w_dmg)
+  boss.status()
+
+  // 6. Round 5: Mage heals Warrior (Delegation to Parent Entity Class)
+  say "\n--- Round 5: Mage supports wounded Warrior ---"
+  say "Warrior HP before healing (direct inherited get_hp): ", warrior.get_hp()
+  mage.cast_heal() // Heals self
+  mage.meditate()
+
+  // 7. Round 6: Finishing Blow
+  say "\n--- Round 6: Final Combined Strike ---"
+  let f2_dmg:int = mage.cast_fireball()
+  let w2_dmg:int = warrior.heavy_strike()
+  let total_blow:int = f2_dmg + w2_dmg
+  say "Combined strike deals ", total_blow, " total damage to Boss!"
+  boss.take_damage(total_blow)
+  boss.status()
+
+  say "\n========================================================"
+  say "    Multi-File Class & Subclass Test Succeeded 100%!    "
+  say "========================================================"
+  ret 0

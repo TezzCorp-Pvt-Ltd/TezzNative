@@ -1,0 +1,99 @@
+// tests/test_oop_advanced.tn
+// Comprehensive stress test for TezzNative OOP implementation:
+// 1. Value vs Pointer receivers
+// 2. Struct composition & method calling
+// 3. Multi-type argument methods (strings, floats, ints)
+// 4. Array of structs calling methods in a loop
+// 5. External receiver methods interoperating with internal methods
+
+struct Vector2D:
+  pub x:f64
+  pub y:f64
+
+  fn new(x:f64, y:f64) -> Vector2D:
+    ret Vector2D{ x: x, y: y }
+
+  fn scale(self:*Vector2D, factor:f64) -> void:
+    self.x = self.x * factor
+    self.y = self.y * factor
+
+  fn dot(self:*Vector2D, other:Vector2D) -> f64:
+    ret (self.x * other.x) + (self.y * other.y)
+
+// External receiver method on Vector2D
+fn Vector2D.length_sq(self:*Vector2D) -> f64:
+  ret (self.x * self.x) + (self.y * self.y)
+
+struct Engine:
+  pub hp:int
+  priv is_running:int
+
+  fn new(hp:int) -> Engine:
+    ret Engine{ hp: hp, is_running: 0 }
+
+  fn start(self:*Engine) -> int:
+    self.is_running = 1
+    ret 1
+
+  fn stop(self:*Engine) -> int:
+    self.is_running = 0
+    ret 0
+
+  fn running(self:*Engine) -> int:
+    ret self.is_running
+
+struct Car:
+  pub brand:str
+  pub speed:int
+  pub engine:Engine
+
+  fn new(brand:str, hp:int) -> Car:
+    let eng:Engine = Engine.new(hp)
+    ret Car{ brand: brand, speed: 0, engine: eng }
+
+  fn accelerate(self:*Car, delta:int) -> int:
+    if self.engine.running() == 0:
+      ret 0
+    self.speed = self.speed + delta
+    ret self.speed
+
+  fn brake(self:*Car) -> void:
+    self.speed = 0
+
+fn main() -> int:
+  // ---- Test 1: Vector math with auto-borrow ----
+  let v1:Vector2D = Vector2D.new(3.0, 4.0)
+  let v2:Vector2D = Vector2D.new(1.0, 2.0)
+
+  let d:f64 = v1.dot(v2)
+  say "v1 dot v2 = ", d
+
+  let lsq:f64 = v1.length_sq()
+  say "v1 length_sq = ", lsq
+
+  v1.scale(2.0)
+  say "v1 after scale(2.0): x=", v1.x, " y=", v1.y
+
+  // ---- Test 2: Composition (Car has an Engine) ----
+  let my_car:Car = Car.new("TezzGT", 450)
+  say "Car brand: ", my_car.brand
+  say "Engine HP: ", my_car.engine.hp
+
+  // Try accelerating before engine start (should fail with 0)
+  let s0:int = my_car.accelerate(50)
+  say "Speed before start (expect 0): ", s0
+
+  // Start engine via nested struct method
+  my_car.engine.start()
+  say "Engine running: ", my_car.engine.running()
+
+  // Accelerate after start
+  let s1:int = my_car.accelerate(60)
+  let s2:int = my_car.accelerate(40)
+  say "Current speed (expect 100): ", s2
+
+  my_car.brake()
+  say "Speed after brake (expect 0): ", my_car.speed
+
+  say "OOP Advanced Tests Passed Successfully!"
+  ret 0

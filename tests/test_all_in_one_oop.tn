@@ -1,0 +1,191 @@
+// tests/test_all_in_one_oop.tn
+// All-in-One Multi-Class & Encapsulation Test Suite
+// Demonstrates:
+// 1. Multiple interacting classes (Wallet, User, Order, PaymentGateway)
+// 2. Public vs Private fields
+// 3. Static constructors (Class.new(...))
+// 4. Mutable methods with auto-borrow (self:*Class)
+// 5. Read-only methods
+// 6. External receiver methods (Option C: fn Class.method)
+// 7. Multi-object transaction workflows & state invariants
+
+struct Wallet:
+  pub currency:str
+  priv balance:i64
+  priv pin_hash:i64
+
+  // Static Constructor
+  fn new(curr:str, initial_balance:i64, pin:i64) -> Wallet:
+    ret Wallet{
+      currency: curr,
+      balance: initial_balance,
+      pin_hash: pin * 7 + 101
+    }
+
+  // Mutable deposit
+  fn deposit(self:*Wallet, amount:i64) -> int:
+    if amount <= 0:
+      ret 0
+    self.balance = self.balance + amount
+    ret 1
+
+  // Mutable withdraw requiring PIN validation
+  fn withdraw(self:*Wallet, amount:i64, pin:i64) -> int:
+    expected_hash:i64 = pin * 7 + 101
+    if self.pin_hash != expected_hash:
+      ret 0 - 1 // Invalid PIN
+    if amount <= 0 || self.balance < amount:
+      ret 0 - 2 // Insufficient funds
+    self.balance = self.balance - amount
+    ret 1 // Success
+
+  // Read-only getter
+  fn get_balance(self:*Wallet) -> i64:
+    ret self.balance
+
+// External Receiver Method for Wallet
+fn Wallet.print_info(self:*Wallet) -> void:
+  say "  [Wallet] Currency: ", self.currency, " | Balance: ", self.balance
+
+struct Order:
+  pub item_name:str
+  pub price:i64
+  priv is_paid:int
+
+  fn new(name:str, price:i64) -> Order:
+    ret Order{
+      item_name: name,
+      price: price,
+      is_paid: 0
+    }
+
+  fn mark_paid(self:*Order) -> void:
+    self.is_paid = 1
+
+  fn is_completed(self:*Order) -> int:
+    ret self.is_paid
+
+// External Receiver Method for Order
+fn Order.print_receipt(self:*Order) -> void:
+  status_str:str = "PENDING"
+  if self.is_paid != 0:
+    status_str = "PAID"
+  say "  [Order Receipt] Item: ", self.item_name, " | Price: ", self.price, " | Status: ", status_str
+
+struct User:
+  pub username:str
+  pub wallet:Wallet
+  priv user_id:int
+
+  fn new(name:str, initial_balance:i64, pin:i64, uid:int) -> User:
+    let w:Wallet = Wallet.new("USD", initial_balance, pin)
+    ret User{
+      username: name,
+      wallet: w,
+      user_id: uid
+    }
+
+  fn get_id(self:*User) -> int:
+    ret self.user_id
+
+struct PaymentGateway:
+  pub name:str
+  priv fee:i64
+  priv total_volume:i64
+  priv success_count:int
+
+  fn new(gateway_name:str, fee_amount:i64) -> PaymentGateway:
+    ret PaymentGateway{
+      name: gateway_name,
+      fee: fee_amount,
+      total_volume: 0,
+      success_count: 0
+    }
+
+  // Method orchestrating multiple objects
+  fn checkout(self:*PaymentGateway, buyer:*User, order:*Order, pin:i64) -> int:
+    say "Processing checkout on ", self.name, " for order: ", order.item_name
+    total_cost:i64 = order.price + self.fee
+    res:int = buyer.wallet.withdraw(total_cost, pin)
+    if res == (0 - 1):
+      say "  -> Payment FAILED: Incorrect PIN!"
+      ret 0
+    if res == (0 - 2):
+      say "  -> Payment FAILED: Insufficient Balance!"
+      ret 0
+
+    order.mark_paid()
+    self.total_volume = self.total_volume + total_cost
+    self.success_count = self.success_count + 1
+    say "  -> Payment SUCCESS! Charged ", total_cost, " (Order: ", order.price, " + Fee: ", self.fee, ")"
+    ret 1
+
+  fn stats(self:*PaymentGateway) -> void:
+    say "=== Gateway [", self.name, "] Stats ==="
+    say "  Total Processed Volume: ", self.total_volume
+    say "  Successful Transactions: ", self.success_count
+
+fn main() -> int:
+  say "================================================"
+  say "   TezzNative Multi-Class OOP & Encapsulation   "
+  say "================================================"
+
+  // 1. Initialize Objects
+  let buyer:User = User.new("Alice", 500, 1234, 1001)
+  say "Created User: ", buyer.username, " (ID: ", buyer.get_id(), ")"
+  buyer.wallet.print_info()
+
+  let gateway:PaymentGateway = PaymentGateway.new("TezzPay", 15)
+
+  let laptop_order:Order = Order.new("Gaming Laptop", 400)
+  let phone_order:Order = Order.new("Smartphone", 200)
+
+  // 2. Transaction with Wrong PIN (Should Fail)
+  say "\n--- Transaction 1: Wrong PIN Test ---"
+  let tx1:int = 0
+  unsafe:
+    tx1 = gateway.checkout(&buyer, &laptop_order, 9999)
+  say "Transaction 1 Result: ", tx1
+  laptop_order.print_receipt()
+  buyer.wallet.print_info()
+
+  // 3. Transaction with Correct PIN (Should Succeed)
+  say "\n--- Transaction 2: Valid Checkout ---"
+  let tx2:int = 0
+  unsafe:
+    tx2 = gateway.checkout(&buyer, &laptop_order, 1234)
+  say "Transaction 2 Result: ", tx2
+  laptop_order.print_receipt()
+  buyer.wallet.print_info()
+
+  // 4. Transaction with Insufficient Funds (Should Fail)
+  say "\n--- Transaction 3: Insufficient Funds Test ---"
+  // Buyer now has 500 - (400 + 15) = 85 USD. Phone is 200 + 15 = 215 USD.
+  let tx3:int = 0
+  unsafe:
+    tx3 = gateway.checkout(&buyer, &phone_order, 1234)
+  say "Transaction 3 Result: ", tx3
+  phone_order.print_receipt()
+  buyer.wallet.print_info()
+
+  // 5. Deposit more funds and retry
+  say "\n--- Top-up Funds & Retry Phone Order ---"
+  buyer.wallet.deposit(300)
+  say "Deposited 300 USD. New Balance: ", buyer.wallet.get_balance()
+  buyer.wallet.print_info()
+
+  let tx4:int = 0
+  unsafe:
+    tx4 = gateway.checkout(&buyer, &phone_order, 1234)
+  say "Transaction 4 Result: ", tx4
+  phone_order.print_receipt()
+  buyer.wallet.print_info()
+
+  // 6. View Final Gateway Analytics
+  say ""
+  gateway.stats()
+
+  say "\n================================================"
+  say "       All OOP Multi-Class Tests PASSED!        "
+  say "================================================"
+  ret 0
