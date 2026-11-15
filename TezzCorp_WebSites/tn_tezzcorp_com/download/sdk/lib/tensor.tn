@@ -7,6 +7,7 @@
 import "simd"
 import "math"
 import "io"
+import "str"
 
 let TENSOR_DTYPE_F64:int = 1
 let TENSOR_DTYPE_F32:int = 2
@@ -987,6 +988,111 @@ fn tensor_print_t(t:Tensor) -> int:
         b1 = b1 + 1
       b0 = b0 + 1
   ret 0
+
+// Python/PyTorch-Style Tensor Console Output
+fn tensor_print_py(t:Tensor) -> int:
+  if t.ndim <= 0 || t.size <= 0:
+    say "tensor([])"
+    ret 0
+
+  if t.ndim == 1:
+    suffix_1d:str = "])"
+    if t.requires_grad != 0:
+      suffix_1d = "], requires_grad=True)"
+
+    n:int = t.shape0
+    if n == 1:
+      say "tensor([", tensor_get1(t, 0), suffix_1d
+    else if n == 2:
+      say "tensor([", tensor_get1(t, 0), ", ", tensor_get1(t, 1), suffix_1d
+    else if n == 3:
+      say "tensor([", tensor_get1(t, 0), ", ", tensor_get1(t, 1), ", ", tensor_get1(t, 2), suffix_1d
+    else if n == 4:
+      say "tensor([", tensor_get1(t, 0), ", ", tensor_get1(t, 1), ", ", tensor_get1(t, 2), ", ", tensor_get1(t, 3), suffix_1d
+    else if n == 5:
+      say "tensor([", tensor_get1(t, 0), ", ", tensor_get1(t, 1), ", ", tensor_get1(t, 2), ", ", tensor_get1(t, 3), ", ", tensor_get1(t, 4), suffix_1d
+    else:
+      say "tensor([", tensor_get1(t, 0), ", ", tensor_get1(t, 1), ", ", tensor_get1(t, 2), ", ... , ", tensor_get1(t, n - 1), suffix_1d
+    ret 0
+
+  if t.ndim == 2:
+    rows:int = t.shape0
+    cols:int = t.shape1
+    r:int = 0
+    while r < rows:
+      prefix:str = "        ["
+      if r == 0:
+        prefix = "tensor([["
+
+      suffix:str = "],"
+      if r == rows - 1:
+        if t.requires_grad != 0:
+          suffix = "]], requires_grad=True)"
+        else:
+          suffix = "]])"
+
+      if cols == 1:
+        say prefix, tensor_get2(t, r, 0), suffix
+      else if cols == 2:
+        say prefix, tensor_get2(t, r, 0), ", ", tensor_get2(t, r, 1), suffix
+      else if cols == 3:
+        say prefix, tensor_get2(t, r, 0), ", ", tensor_get2(t, r, 1), ", ", tensor_get2(t, r, 2), suffix
+      else if cols == 4:
+        say prefix, tensor_get2(t, r, 0), ", ", tensor_get2(t, r, 1), ", ", tensor_get2(t, r, 2), ", ", tensor_get2(t, r, 3), suffix
+      else if cols == 5:
+        say prefix, tensor_get2(t, r, 0), ", ", tensor_get2(t, r, 1), ", ", tensor_get2(t, r, 2), ", ", tensor_get2(t, r, 3), ", ", tensor_get2(t, r, 4), suffix
+      else if cols == 6:
+        say prefix, tensor_get2(t, r, 0), ", ", tensor_get2(t, r, 1), ", ", tensor_get2(t, r, 2), ", ", tensor_get2(t, r, 3), ", ", tensor_get2(t, r, 4), ", ", tensor_get2(t, r, 5), suffix
+      else:
+        say prefix, tensor_get2(t, r, 0), ", ", tensor_get2(t, r, 1), ", ", tensor_get2(t, r, 2), ", ... , ", tensor_get2(t, r, cols - 1), suffix
+
+      r = r + 1
+    ret 0
+
+  if t.ndim == 3:
+    batches:int = t.shape0
+    rows:int = t.shape1
+    cols:int = t.shape2
+    b:int = 0
+    while b < batches:
+      r:int = 0
+      while r < rows:
+        prefix:str = "         ["
+        if b == 0 && r == 0:
+          prefix = "tensor([[["
+        else if r == 0:
+          prefix = "        [["
+
+        suffix:str = "],"
+        if r == rows - 1:
+          if b == batches - 1:
+            if t.requires_grad != 0:
+              suffix = "]]], requires_grad=True)"
+            else:
+              suffix = "]]])"
+          else:
+            suffix = "]],\n"
+
+        if cols == 1:
+          say prefix, tensor_get3(t, b, r, 0), suffix
+        else if cols == 2:
+          say prefix, tensor_get3(t, b, r, 0), ", ", tensor_get3(t, b, r, 1), suffix
+        else if cols == 3:
+          say prefix, tensor_get3(t, b, r, 0), ", ", tensor_get3(t, b, r, 1), ", ", tensor_get3(t, b, r, 2), suffix
+        else if cols == 4:
+          say prefix, tensor_get3(t, b, r, 0), ", ", tensor_get3(t, b, r, 1), ", ", tensor_get3(t, b, r, 2), ", ", tensor_get3(t, b, r, 3), suffix
+        else:
+          say prefix, tensor_get3(t, b, r, 0), ", ", tensor_get3(t, b, r, 1), ", ... , ", tensor_get3(t, b, r, cols - 1), suffix
+
+        r = r + 1
+      b = b + 1
+    ret 0
+
+  tensor_print_t(t)
+  ret 0
+
+fn tensor_show(t:Tensor) -> int:
+  ret tensor_print_py(t)
 
 // Compatibility Bridges between legacy TensorData and modern Tensor
 fn tensor_from_data_2d(td:TensorData) -> Tensor:

@@ -1,6 +1,6 @@
 {
     "schema":  "tezznative.release-manifest.v1",
-    "generated_utc":  "2026-11-15T16:37:40Z",
+    "generated_utc":  "2026-11-15T20:50:45Z",
     "project":  "TezzNative",
     "version":  "1.0.0",
     "channel":  "release",
@@ -699,32 +699,32 @@
                       {
                           "path":  "download/tezznative-sdk.zip",
                           "url":  "https://tezznative.org/download/tezznative-sdk.zip",
-                          "bytes":  2373035,
-                          "sha256":  "48D548E10CD6D92A6EAABAEE1F2F2CA36EEEE5F44D2839AB7336361791C9ADE0"
+                          "bytes":  2375255,
+                          "sha256":  "85A75EB69AD1A8A4CB7BC0E83DA492CD210A5A5ECD09E3FD72BA333E04A29412"
                       },
                       {
                           "path":  "download/tezznative-sdk.zip.sha256",
                           "url":  "https://tezznative.org/download/tezznative-sdk.zip.sha256",
                           "bytes":  86,
-                          "sha256":  "AD55A44F0D5660A0EE81A26F56241544084267E554C252365FA89B1284D79A7B"
+                          "sha256":  "FE16CF3FFE96D3CF461597CD8C046FD2714C3636F85C66FB2706C5A923433CEE"
                       },
                       {
                           "path":  "download/tezznative-sdk-linux.tar.gz",
                           "url":  "https://tezznative.org/download/tezznative-sdk-linux.tar.gz",
-                          "bytes":  6815751,
-                          "sha256":  "50FADFF6DF872A7B203E87606B52412B23ECDE74FCB81246E50668EC5148C2D0"
+                          "bytes":  6816599,
+                          "sha256":  "649F1A9F533EE690E15A2D9C2E8221C16062AC866431B75179A41B679C86F3A2"
                       },
                       {
                           "path":  "download/tezznative-sdk-linux.tar.gz.sha256",
                           "url":  "https://tezznative.org/download/tezznative-sdk-linux.tar.gz.sha256",
                           "bytes":  95,
-                          "sha256":  "554FA7A421697FE5E49CB64EEC0B713662F7538D2824E4FC7745AA386C39E8B4"
+                          "sha256":  "1516218EE27FDF77128863E1B1130AF359C0E22730064CE0257EB3DE41D66101"
                       },
                       {
                           "path":  "registry.tnx",
                           "url":  "https://tezznative.org/registry.tnx",
                           "bytes":  4445,
-                          "sha256":  "67EAF6FF9C64123E88557C457641C6C15B52693BDCCA87117AD1301DD71584BA"
+                          "sha256":  "5A52C62635074354B010026761B2F3FB6F74BC8344954CAF9995AEC825A1D252"
                       }
                   ]
 }

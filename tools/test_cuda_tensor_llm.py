@@ -75,8 +75,131 @@ def run_cuda_test():
     print("[CUDA] CUDA Context initialized successfully on GPU.")
 
     # 3. PTX Kernels for LLM Ops
-    with open("tools/test.ptx", "rb") as f:
-        ptx_source = f.read()
+    import os
+    ptx_file = os.path.join(os.path.dirname(__file__), "test.ptx")
+    if os.path.exists(ptx_file):
+        with open(ptx_file, "rb") as f:
+            ptx_source = f.read()
+    else:
+        ptx_source = b""".version 7.0
+.target sm_75
+.address_size 64
+
+.visible .entry fused_silu(
+    .param .u64 param_x,
+    .param .u64 param_y,
+    .param .u32 param_n
+)
+{
+    .reg .pred %p;
+    .reg .b32 %r<6>;
+    .reg .b64 %rd<6>;
+    .reg .f32 %f<5>;
+
+    ld.param.u32 %r0, [param_n];
+    mov.u32 %r1, %ctaid.x;
+    mov.u32 %r2, %ntid.x;
+    mov.u32 %r3, %tid.x;
+    mad.lo.s32 %r4, %r1, %r2, %r3;
+
+    setp.ge.s32 %p, %r4, %r0;
+    @%p bra DONE;
+
+    ld.param.u64 %rd0, [param_x];
+    ld.param.u64 %rd1, [param_y];
+    cvta.to.global.u64 %rd2, %rd0;
+    cvta.to.global.u64 %rd3, %rd1;
+
+    mul.wide.s32 %rd4, %r4, 4;
+    add.s64 %rd5, %rd2, %rd4;
+    ld.global.f32 %f0, [%rd5];
+
+    neg.f32 %f1, %f0;
+    mul.f32 %f2, %f1, 1.44269504;
+    ex2.approx.f32 %f3, %f2;
+    add.f32 %f3, %f3, 1.0;
+    rcp.approx.f32 %f4, %f3;
+    mul.f32 %f0, %f0, %f4;
+
+    add.s64 %rd5, %rd3, %rd4;
+    st.global.f32 [%rd5], %f0;
+
+DONE:
+    ret;
+}
+
+.visible .entry gemm_nn(
+    .param .u64 param_A,
+    .param .u64 param_B,
+    .param .u64 param_C,
+    .param .u32 param_M,
+    .param .u32 param_N,
+    .param .u32 param_K
+)
+{
+    .reg .pred %p<3>;
+    .reg .b32 %row, %col, %M, %N, %K, %k, %ntidx, %ntidy, %tidx, %tidy, %addr_i32;
+    .reg .b64 %rdA, %rdB, %rdC, %offA, %offB, %offC;
+    .reg .f32 %sum, %a_val, %b_val;
+
+    ld.param.u32 %M, [param_M];
+    ld.param.u32 %N, [param_N];
+    ld.param.u32 %K, [param_K];
+
+    mov.u32 %row, %ctaid.y;
+    mov.u32 %ntidy, %ntid.y;
+    mov.u32 %tidy, %tid.y;
+    mad.lo.s32 %row, %row, %ntidy, %tidy;
+
+    mov.u32 %col, %ctaid.x;
+    mov.u32 %ntidx, %ntid.x;
+    mov.u32 %tidx, %tid.x;
+    mad.lo.s32 %col, %col, %ntidx, %tidx;
+
+    setp.ge.s32 %p0, %row, %M;
+    @%p0 bra GEMM_DONE;
+    setp.ge.s32 %p1, %col, %N;
+    @%p1 bra GEMM_DONE;
+
+    ld.param.u64 %rdA, [param_A];
+    ld.param.u64 %rdB, [param_B];
+    ld.param.u64 %rdC, [param_C];
+    cvta.to.global.u64 %rdA, %rdA;
+    cvta.to.global.u64 %rdB, %rdB;
+    cvta.to.global.u64 %rdC, %rdC;
+
+    mov.f32 %sum, 0.0;
+    mov.u32 %k, 0;
+
+LOOP_K:
+    setp.ge.s32 %p2, %k, %K;
+    @%p2 bra STORE_C;
+
+    mad.lo.s32 %addr_i32, %row, %K, %k;
+    mul.wide.s32 %offA, %addr_i32, 4;
+    add.s64 %offA, %rdA, %offA;
+    ld.global.f32 %a_val, [%offA];
+
+    mad.lo.s32 %addr_i32, %k, %N, %col;
+    mul.wide.s32 %offB, %addr_i32, 4;
+    add.s64 %offB, %rdB, %offB;
+    ld.global.f32 %b_val, [%offB];
+
+    fma.rn.f32 %sum, %a_val, %b_val, %sum;
+
+    add.s32 %k, %k, 1;
+    bra LOOP_K;
+
+STORE_C:
+    mad.lo.s32 %addr_i32, %row, %N, %col;
+    mul.wide.s32 %offC, %addr_i32, 4;
+    add.s64 %offC, %rdC, %offC;
+    st.global.f32 [%offC], %sum;
+
+GEMM_DONE:
+    ret;
+}
+"""
 
     mod = ctypes.c_void_p()
     res = cuda.cuModuleLoadData(ctypes.byref(mod), ptx_source)

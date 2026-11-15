@@ -1,0 +1,107 @@
+import "tensor"
+
+fn main() -> int:
+  say "=========================================================="
+  say "   TezzNative 2D Tensor Python-Style Console Print Test   "
+  say "=========================================================="
+  say ""
+
+  // 1. Basic 2D Tensor
+  say ">>> # 1. Creating a 2x3 Tensor A:"
+  a:Tensor = tensor.tensor_2d(2, 3)
+  tensor.tensor_set2(a, 0, 0, 1.0)
+  tensor.tensor_set2(a, 0, 1, 2.0)
+  tensor.tensor_set2(a, 0, 2, 3.0)
+  tensor.tensor_set2(a, 1, 0, 4.0)
+  tensor.tensor_set2(a, 1, 1, 5.0)
+  tensor.tensor_set2(a, 1, 2, 6.0)
+
+  say ">>> print(a)"
+  tensor.tensor_print_py(a)
+  say ">>> a.shape"
+  say "torch.Size([", a.shape0, ", ", a.shape1, "])"
+  say ""
+
+  // 2. Second 2D Tensor
+  say ">>> # 2. Creating a 3x2 Tensor B:"
+  b:Tensor = tensor.tensor_2d(3, 2)
+  tensor.tensor_set2(b, 0, 0, 7.0)
+  tensor.tensor_set2(b, 0, 1, 8.0)
+  tensor.tensor_set2(b, 1, 0, 9.0)
+  tensor.tensor_set2(b, 1, 1, 10.0)
+  tensor.tensor_set2(b, 2, 0, 11.0)
+  tensor.tensor_set2(b, 2, 1, 12.0)
+
+  say ">>> print(b)"
+  tensor.tensor_print_py(b)
+  say ">>> b.shape"
+  say "torch.Size([", b.shape0, ", ", b.shape1, "])"
+  say ""
+
+  // 3. Matrix Multiplication (GEMM: C = A @ B)
+  say ">>> # 3. Matrix Multiplication c = a @ b (2x3 @ 3x2 -> 2x2):"
+  c:Tensor = tensor.tensor_matmul(a, b)
+  say ">>> print(c)"
+  tensor.tensor_print_py(c)
+  say ">>> c.shape"
+  say "torch.Size([", c.shape0, ", ", c.shape1, "])"
+  say ""
+
+  // 4. Elementwise Broadcast Addition with Bias [1, 2]
+  say ">>> # 4. Adding Bias [1, 2] to C (Broadcasting):"
+  bias:Tensor = tensor.tensor_2d(1, 2)
+  tensor.tensor_set2(bias, 0, 0, 100.0)
+  tensor.tensor_set2(bias, 0, 1, 200.0)
+
+  say ">>> print(bias)"
+  tensor.tensor_print_py(bias)
+  say ">>> c_biased = c + bias"
+  c_biased:Tensor = tensor.tensor_add(c, bias)
+  say ">>> print(c_biased)"
+  tensor.tensor_print_py(c_biased)
+  say ""
+
+  // 5. Activation (GELU) & Autograd Gradient Tracking
+  say ">>> # 5. Applying GELU Activation with Autograd Gradient Tracking:"
+  tensor.tape_init()
+  w:Tensor = tensor.tensor_2d(2, 3)
+  tensor.tensor_set2(w, 0, 0, -1.5)
+  tensor.tensor_set2(w, 0, 1, 0.0)
+  tensor.tensor_set2(w, 0, 2, 1.5)
+  tensor.tensor_set2(w, 1, 0, -0.5)
+  tensor.tensor_set2(w, 1, 1, 0.5)
+  tensor.tensor_set2(w, 1, 2, 2.0)
+  w = tensor.tensor_require_grad(w)
+
+  say ">>> print(w)"
+  tensor.tensor_print_py(w)
+  say ""
+
+  act:Tensor = tensor.tensor_gelu(w)
+  say ">>> act = torch.nn.functional.gelu(w)"
+  say ">>> print(act)"
+  tensor.tensor_print_py(act)
+  say ""
+
+  // 6. Zero-Copy Transpose
+  say ">>> # 6. Zero-Copy Transpose w.T (swapping shape 2x3 -> 3x2):"
+  w_t:Tensor = tensor.tensor_t(w)
+  say ">>> print(w.T)"
+  tensor.tensor_print_py(w_t)
+  say ">>> w.T.shape"
+  say "torch.Size([", w_t.shape0, ", ", w_t.shape1, "])"
+  say ""
+
+  say "=========================================================="
+  say "               All 2D Tensor Prints Complete!             "
+  say "=========================================================="
+
+  tensor.tensor_free_tensor(a)
+  tensor.tensor_free_tensor(b)
+  tensor.tensor_free_tensor(c)
+  tensor.tensor_free_tensor(bias)
+  tensor.tensor_free_tensor(c_biased)
+  tensor.tensor_free_tensor(w)
+  tensor.tensor_free_tensor(act)
+  tensor.tape_reset()
+  ret 0

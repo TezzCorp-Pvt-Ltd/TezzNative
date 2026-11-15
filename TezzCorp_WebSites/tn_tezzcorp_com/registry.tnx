@@ -1,4 +1,4 @@
-# registry-meta v1 lines=62 payload=087ED194 key=none sig=none
+# registry-meta v1 lines=62 payload=79FD9788 key=none sig=none
 actor@0.1.0 https://tezznative.org/download/sdk/lib/actor.tn 38BA8BDB
 arena@0.1.0 https://tezznative.org/download/sdk/lib/arena.tn 7B42E28B
 color@0.1.0 https://tezznative.org/download/sdk/lib/color.tn 10472682
@@ -27,7 +27,7 @@ str@0.1.0 https://tezznative.org/download/sdk/lib/str.tn 0AC6DA99
 stt@0.1.0 https://tezznative.org/download/sdk/lib/stt.tn 787BE717
 sys@0.1.0 https://tezznative.org/download/sdk/lib/sys.tn 78E3A6B7
 task@0.1.0 https://tezznative.org/download/sdk/lib/task.tn 41478EC5
-tensor@0.1.0 https://tezznative.org/download/sdk/lib/tensor.tn 53565552
+tensor@0.1.0 https://tezznative.org/download/sdk/lib/tensor.tn 78AFA692
 tezzapi@0.1.0 https://tezznative.org/download/sdk/lib/tezzapi.tn 2ACB7B1F
 tezzdb@0.1.0 https://tezznative.org/download/sdk/lib/tezzdb.tn 07A98226
 tezzdbql@0.1.0 https://tezznative.org/download/sdk/lib/tezzdbql.tn 6A7DAA10

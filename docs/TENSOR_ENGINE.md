@@ -93,6 +93,7 @@ $$\text{Index} = \text{offset} + \sum_{i=0}^{\text{ndim}-1} c_i \cdot \text{stri
   - `tensor_squeeze(t, axis)`: Removes a dimension of size 1.
   - `tensor_unsqueeze(t, axis)`: Inserts a unit dimension (`shape = 1`, `stride = stride[axis]`).
 - **Flatten (`tensor_flatten(t)`):** Flattens any tensor to a contiguous 1D tensor.
+- **Python / PyTorch-Style Console Output (`tensor_print_py(t)` or `tensor_show(t)`):** Prints tensors using Python's standard multi-line bracketed format with aligned columns and `, requires_grad=True` annotations.
 
 ---
 
