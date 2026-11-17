@@ -1,0 +1,435 @@
+// os implementation: memory.
+import "sys"
+import "os.state"
+
+fn mem_zero(p:*char, bytes:int) -> int:
+  if p == 0 || bytes <= 0:
+    ret 0
+  i:int = 0
+  while i < bytes:
+    unsafe:
+      p[i] = 0 as char
+    i = i + 1
+  ret 0
+
+fn heap_init(base:*char, size:int) -> int:
+  if base == 0 || size <= sizeof(HeapBlock) + 8:
+    ret 0 - 1
+  (*os.state._get_g_heap_base()) = base
+  (*os.state._get_g_heap_end()) = base + size
+  (*os.state._get_g_heap_cur()) = base
+  (*os.state._get_g_heap_inited()) = 1
+  (*os.state._get_g_heap_head()) = base as *HeapBlock
+  (*(*os.state._get_g_heap_head())).size = size - sizeof(HeapBlock)
+  (*(*os.state._get_g_heap_head())).is_free = 1
+  (*(*os.state._get_g_heap_head())).next = 0 as *HeapBlock
+  ret 0
+
+fn heap_alloc(n:int) -> *char:
+  if (*os.state._get_g_heap_inited()) == 0 || n <= 0:
+    ret 0 as *char
+  // align to 8 bytes
+  n = ((n + 7) / 8) * 8
+  cur:*HeapBlock = (*os.state._get_g_heap_head())
+  while cur != 0:
+    if (*cur).is_free != 0 && (*cur).size >= n:
+      remain:int = (*cur).size - n
+      if remain > (sizeof(HeapBlock) + 8):
+        next:*HeapBlock = ((cur as *char) + sizeof(HeapBlock) + n) as *HeapBlock
+        (*next).size = remain - sizeof(HeapBlock)
+        (*next).is_free = 1
+        (*next).next = (*cur).next
+        (*cur).next = next
+        (*cur).size = n
+      (*cur).is_free = 0
+      ret (cur as *char) + sizeof(HeapBlock)
+    cur = (*cur).next
+  ret 0 as *char
+
+fn heap_free(p:*char) -> int:
+  if p == 0 || (*os.state._get_g_heap_head()) == 0:
+    ret 0
+  blk:*HeapBlock = (p - sizeof(HeapBlock)) as *HeapBlock
+  (*blk).is_free = 1
+  // coalesce forward
+  nxt:*HeapBlock = (*blk).next
+  if nxt != 0 && (*nxt).is_free != 0:
+    (*blk).size = (*blk).size + sizeof(HeapBlock) + (*nxt).size
+    (*blk).next = (*nxt).next
+  // coalesce backward
+  prev:*HeapBlock = 0 as *HeapBlock
+  cur:*HeapBlock = (*os.state._get_g_heap_head())
+  while cur != 0 && cur != blk:
+    prev = cur
+    cur = (*cur).next
+  if prev != 0 && (*prev).is_free != 0:
+    (*prev).size = (*prev).size + sizeof(HeapBlock) + (*blk).size
+    (*prev).next = (*blk).next
+  ret 0
+
+fn heap_total_bytes() -> int:
+  if (*os.state._get_g_heap_inited()) == 0:
+    ret 0
+  ret ((*os.state._get_g_heap_end()) as int) - ((*os.state._get_g_heap_base()) as int)
+
+fn heap_free_bytes() -> int:
+  if (*os.state._get_g_heap_head()) == 0:
+    ret 0
+  sum:int = 0
+  cur:*HeapBlock = (*os.state._get_g_heap_head())
+  while cur != 0:
+    if (*cur).is_free != 0:
+      sum = sum + (*cur).size
+    cur = (*cur).next
+  ret sum
+
+fn heap_block_count() -> int:
+  if (*os.state._get_g_heap_head()) == 0:
+    ret 0
+  n:int = 0
+  cur:*HeapBlock = (*os.state._get_g_heap_head())
+  while cur != 0:
+    n = n + 1
+    cur = (*cur).next
+  ret n
+
+fn heap_largest_free() -> int:
+  if (*os.state._get_g_heap_head()) == 0:
+    ret 0
+  best:int = 0
+  cur:*HeapBlock = (*os.state._get_g_heap_head())
+  while cur != 0:
+    if (*cur).is_free != 0 && (*cur).size > best:
+      best = (*cur).size
+    cur = (*cur).next
+  ret best
+
+fn heap_validate() -> int:
+  if (*os.state._get_g_heap_head()) == 0:
+    ret 0
+  cur:*HeapBlock = (*os.state._get_g_heap_head())
+  while cur != 0:
+    if (*cur).size <= 0:
+      ret 0
+    if (cur as int) < ((*os.state._get_g_heap_base()) as int):
+      ret 0
+    if (cur as int) >= ((*os.state._get_g_heap_end()) as int):
+      ret 0
+    cur = (*cur).next
+  ret 1
+
+fn page_init(base:*char, bytes:int, page_size:int) -> int:
+  if base == 0 || bytes <= 0 || page_size <= 0:
+    ret 0 - 1
+  (*os.state._get_g_page_base()) = base
+  (*os.state._get_g_page_end()) = base + bytes
+  (*os.state._get_g_page_cur()) = base
+  (*os.state._get_g_page_size()) = page_size
+  (*os.state._get_g_page_inited()) = 1
+  ret 0
+
+fn page_inited() -> int:
+  ret (*os.state._get_g_page_inited())
+
+fn page_alloc(pages:int) -> *char:
+  if (*os.state._get_g_page_inited()) == 0 || pages <= 0:
+    ret 0 as *char
+  bytes:int = pages * (*os.state._get_g_page_size())
+  next:*char = (*os.state._get_g_page_cur()) + bytes
+  if (next as int) > ((*os.state._get_g_page_end()) as int):
+    ret 0 as *char
+  out:*char = (*os.state._get_g_page_cur())
+  (*os.state._get_g_page_cur()) = next
+  ret out
+
+fn page_free(p:*char, pages:int) -> int:
+  if p == 0 || pages <= 0:
+    ret 0
+  ret 0
+
+fn paging_set_root(pml4:*char) -> int:
+  (*os.state._get_g_pml4()) = pml4
+  ret 0
+
+fn paging_root() -> *char:
+  ret (*os.state._get_g_pml4())
+
+fn pf_last_addr() -> int:
+  ret os.state.pf_last_addr_raw()
+
+fn pf_last_err() -> int:
+  ret os.state.pf_last_err_raw()
+
+fn pf_last_count() -> int:
+  ret os.state.pf_last_count_raw()
+
+fn pf_autofix(on:int) -> int:
+  ret os.state.pf_autofix_set_raw(on)
+
+fn phys_init() -> int:
+  (*os.state._get_g_phys_n()) = 0
+  n:int = os.state.memmap_count()
+  i:int = 0
+  while i < n:
+    t:int = os.state.memmap_type(i)
+    if t == 1:
+      b:int = os.state.memmap_base(i)
+      l:int = os.state.memmap_len(i)
+      // skip low memory below 1MB
+      if b < 1048576:
+        delta:int = 1048576 - b
+        if delta < l:
+          b = b + delta
+          l = l - delta
+        else:
+          l = 0
+      // align to 4K
+      if l > 0:
+        ab:int = ((b + 4095) / 4096) * 4096
+        ae:int = ((b + l) / 4096) * 4096
+        if ae > ab && (*os.state._get_g_phys_n()) < 64:
+          (*os.state._get_g_phys_regions())[(*os.state._get_g_phys_n())].base = ab
+          (*os.state._get_g_phys_regions())[(*os.state._get_g_phys_n())].len = ae - ab
+          (*os.state._get_g_phys_regions())[(*os.state._get_g_phys_n())].typ = t
+          (*os.state._get_g_phys_n()) = (*os.state._get_g_phys_n()) + 1
+    i = i + 1
+  (*os.state._get_g_phys_inited()) = 1
+  ret (*os.state._get_g_phys_n())
+
+fn phys_alloc(pages:int) -> *char:
+  if (*os.state._get_g_phys_inited()) == 0 || pages <= 0:
+    ret 0 as *char
+  bytes:int = pages * 4096
+  i:int = 0
+  while i < (*os.state._get_g_phys_n()):
+    base:int = (*os.state._get_g_phys_regions())[i].base
+    len:int = (*os.state._get_g_phys_regions())[i].len
+    if len >= bytes:
+      (*os.state._get_g_phys_regions())[i].base = base + bytes
+      (*os.state._get_g_phys_regions())[i].len = len - bytes
+      ret base as *char
+    i = i + 1
+  ret 0 as *char
+
+fn phys_free(p:*char, pages:int) -> int:
+  // no-op for now
+  if p == 0 || pages <= 0:
+    ret 0
+  ret 0
+
+fn page_init_from_phys(pages:int) -> int:
+  p:*char = phys_alloc(pages)
+  if p == 0:
+    ret 0 - 1
+  ret page_init(p, pages * 4096, 4096)
+
+fn heap_init_from_phys(pages:int) -> int:
+  p:*char = phys_alloc(pages)
+  if p == 0:
+    ret 0 - 1
+  ret heap_init(p, pages * 4096)
+
+fn paging_build_identity_2m(pages:int, flags:int) -> *char:
+  if (*os.state._get_g_page_inited()) == 0 || pages <= 0:
+    ret 0 as *char
+  pml4:*char = page_alloc(1)
+  pdpt:*char = page_alloc(1)
+  if pml4 == 0 || pdpt == 0:
+    ret 0 as *char
+  mem_zero(pml4, 4096)
+  mem_zero(pdpt, 4096)
+  flg:int = flags + os.state._get_PAGE_PRESENT() + os.state._get_PAGE_RW()
+  unsafe:
+    pml4i:*int = pml4 as *int
+    pml4a:int = (pdpt as int / 4096) * 4096
+    pml4i[0] = pml4a + flg
+  max_pdpt:int = (pages - 1) / 512
+  pdpt_i:int = 0
+  while pdpt_i <= max_pdpt:
+    pd:*char = page_alloc(1)
+    if pd == 0:
+      ret 0 as *char
+    mem_zero(pd, 4096)
+    unsafe:
+      pdpti:*int = pdpt as *int
+      pda:int = (pd as int / 4096) * 4096
+      pdpti[pdpt_i] = pda + flg
+    base:int = pdpt_i * 512
+    count:int = pages - base
+    if count > 512:
+      count = 512
+    j:int = 0
+    while j < count:
+      addr:int = (base + j) * (2 * 1024 * 1024)
+      addr2:int = (addr / 2097152) * 2097152
+      entry:int = addr2 + flg + os.state._get_PAGE_PS()
+      unsafe:
+        pdi:*int = pd as *int
+        pdi[j] = entry
+      j = j + 1
+    pdpt_i = pdpt_i + 1
+  (*os.state._get_g_pml4()) = pml4
+  ret pml4
+
+fn paging_build_identity_memmap(flags:int) -> *char:
+  // Build identity map for all usable memmap regions using 2MiB pages.
+  if (*os.state._get_g_phys_inited()) == 0:
+    if phys_init() <= 0:
+      ret 0 as *char
+  pml4:*char = phys_alloc(1)
+  pdpt:*char = phys_alloc(1)
+  if pml4 == 0 || pdpt == 0:
+    ret 0 as *char
+  mem_zero(pml4, 4096)
+  mem_zero(pdpt, 4096)
+  flg:int = flags + os.state._get_PAGE_PRESENT() + os.state._get_PAGE_RW()
+  unsafe:
+    pml4i:*int = pml4 as *int
+    pml4a:int = (pdpt as int / 4096) * 4096
+    pml4i[0] = pml4a + flg
+  i:int = 0
+  while i < (*os.state._get_g_phys_n()):
+    base:int = (*os.state._get_g_phys_regions())[i].base
+    len:int = (*os.state._get_g_phys_regions())[i].len
+    // round to 2MiB
+    start:int = (base / 2097152) * 2097152
+    end:int = ((base + len + 2097151) / 2097152) * 2097152
+    addr:int = start
+    while addr < end:
+      pdpt_i:int = addr / (512 * 2097152)
+      pd_i:int = (addr / 2097152) % 512
+      // allocate PD if missing
+      pdpti:*int = pdpt as *int
+      if pdpti[pdpt_i] == 0:
+        pd:*char = phys_alloc(1)
+        if pd == 0:
+          ret 0 as *char
+        mem_zero(pd, 4096)
+        pda:int = (pd as int / 4096) * 4096
+        pdpti[pdpt_i] = pda + flg
+      // fetch PD
+      pda2:int = pdpti[pdpt_i] - flg
+      pd2:*char = pda2 as *char
+      entry:int = addr + flg + os.state._get_PAGE_PS()
+      unsafe:
+        pdi:*int = pd2 as *int
+        pdi[pd_i] = entry
+      addr = addr + 2097152
+    i = i + 1
+  (*os.state._get_g_pml4()) = pml4
+  ret pml4
+
+fn paging_activate(pml4:*char) -> int:
+  if pml4 == 0:
+    ret 0 - 1
+  os.state.arch_load_cr3(pml4)
+  os.state.arch_enable_paging()
+  ret 0
+
+fn paging_map(virt:*char, phys:*char, flags:int) -> int:
+  // 4K page mapping (assumes identity mapping for page tables).
+  if virt == 0 || phys == 0:
+    ret 0 - 1
+  if (*os.state._get_g_pml4()) == 0:
+    ret 0 - 1
+  v:int = virt as int
+  p:int = phys as int
+  v = (v / 4096) * 4096
+  p = (p / 4096) * 4096
+  pml4:*int = (*os.state._get_g_pml4()) as *int
+  pml4i:int = (v >> 39) & 511
+  pdpti:int = (v >> 30) & 511
+  pdi:int = (v >> 21) & 511
+  pti:int = (v >> 12) & 511
+  entry:int = pml4[pml4i]
+  pdpt:*char = 0 as *char
+  if (entry & os.state._get_PAGE_PRESENT()) == 0:
+    pdpt = phys_alloc(1)
+    if pdpt == 0:
+      ret 0 - 1
+    mem_zero(pdpt, 4096)
+    pml4[pml4i] = (pdpt as int) | os.state._get_PAGE_PRESENT() | os.state._get_PAGE_RW()
+  else:
+    pdpt = (entry & os.state._get_PAGE_ADDR_MASK()) as *char
+  pdpt_i:*int = pdpt as *int
+  entry = pdpt_i[pdpti]
+  pd:*char = 0 as *char
+  if (entry & os.state._get_PAGE_PRESENT()) == 0:
+    pd = phys_alloc(1)
+    if pd == 0:
+      ret 0 - 1
+    mem_zero(pd, 4096)
+    pdpt_i[pdpti] = (pd as int) | os.state._get_PAGE_PRESENT() | os.state._get_PAGE_RW()
+  else:
+    pd = (entry & os.state._get_PAGE_ADDR_MASK()) as *char
+  pd_i:*int = pd as *int
+  entry = pd_i[pdi]
+  pt:*char = 0 as *char
+  if (entry & os.state._get_PAGE_PRESENT()) == 0:
+    pt = phys_alloc(1)
+    if pt == 0:
+      ret 0 - 1
+    mem_zero(pt, 4096)
+    pd_i[pdi] = (pt as int) | os.state._get_PAGE_PRESENT() | os.state._get_PAGE_RW()
+  else:
+    pt = (entry & os.state._get_PAGE_ADDR_MASK()) as *char
+  pt_i:*int = pt as *int
+  pt_i[pti] = (p as int) | os.state._get_PAGE_PRESENT() | flags
+  ret 0
+
+fn paging_map_region(virt:*char, phys:*char, bytes:int, flags:int) -> int:
+  if bytes <= 0:
+    ret 0
+  off:int = 0
+  while off < bytes:
+    paging_map(virt + off, phys + off, flags)
+    off = off + 4096
+  ret 0
+
+fn paging_unmap(virt:*char) -> int:
+  if virt == 0:
+    ret 0 - 1
+  if (*os.state._get_g_pml4()) == 0:
+    ret 0 - 1
+  v:int = virt as int
+  v = (v / 4096) * 4096
+  pml4:*int = (*os.state._get_g_pml4()) as *int
+  pml4i:int = (v >> 39) & 511
+  pdpti:int = (v >> 30) & 511
+  pdi:int = (v >> 21) & 511
+  pti:int = (v >> 12) & 511
+  entry:int = pml4[pml4i]
+  if (entry & os.state._get_PAGE_PRESENT()) == 0:
+    ret 0 - 1
+  pdpt:*char = (entry & os.state._get_PAGE_ADDR_MASK()) as *char
+  pdpt_i:*int = pdpt as *int
+  entry = pdpt_i[pdpti]
+  if (entry & os.state._get_PAGE_PRESENT()) == 0:
+    ret 0 - 1
+  pd:*char = (entry & os.state._get_PAGE_ADDR_MASK()) as *char
+  pd_i:*int = pd as *int
+  entry = pd_i[pdi]
+  if (entry & os.state._get_PAGE_PRESENT()) == 0:
+    ret 0 - 1
+  pt:*char = (entry & os.state._get_PAGE_ADDR_MASK()) as *char
+  pt_i:*int = pt as *int
+  pt_i[pti] = 0
+  os.state.arch_invlpg(virt)
+  ret 0
+
+fn paging_enable() -> int:
+  if (*os.state._get_g_pml4()) == 0:
+    ret 0 - 1
+  ret paging_activate((*os.state._get_g_pml4()))
+
+fn mmap_file(path:str, out_size:*int) -> *char:
+  if path == 0:
+    ret 0 as *char
+  ret os.state.tn_mmap_file(path, out_size)
+
+// Unmap a file previously opened with mmap_file.
+
+fn munmap_file(view:*char, size:int) -> int:
+  if view == 0:
+    ret 0
+  ret os.state.tn_munmap_file(view, size)

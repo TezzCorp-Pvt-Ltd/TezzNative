@@ -1,0 +1,181 @@
+// tezzapi implementation: response.
+import "net"
+import "time"
+import "tls"
+import "tezzapi.state"
+import "tezzapi.text"
+
+fn api_resp_new() -> *ApiResponse:
+  resp:*ApiResponse = (*ApiResponse)malloc(sizeof(ApiResponse))
+  if resp == 0: ret 0 as *ApiResponse
+  (*resp).status = tezzapi.state._get_HTTP_200()
+  (*resp).headers = 0 as *ApiHeader
+  (*resp).header_count = 0
+  (*resp).header_cap = 0
+  (*resp).body = 0 as str
+  (*resp).body_len = 0
+  (*resp).sent = 0
+  ret resp
+
+fn api_resp_free(resp:*ApiResponse) -> int:
+  if resp == 0: ret 0 - 1
+  if (*resp).headers != 0:
+    i:int = 0
+    while i < (*resp).header_count:
+      if (*resp).headers[i].name != 0: free((*resp).headers[i].name)
+      if (*resp).headers[i].value != 0: free((*resp).headers[i].value)
+      i = i + 1
+    free((*resp).headers as *char)
+  if (*resp).body != 0: free((*resp).body)
+  free(resp)
+  ret 0
+
+fn api_resp_header(resp:*ApiResponse, name:str, value:str) -> int:
+  if resp == 0 || name == 0 || value == 0: ret 0 - 1
+  if (*resp).header_count >= (*resp).header_cap:
+    new_cap:int = (*resp).header_cap * 2
+    if new_cap < 8: new_cap = 8
+    nh:*ApiHeader = (*ApiHeader)malloc(sizeof(ApiHeader) * new_cap)
+    if nh == 0: ret 0 - 1
+    if (*resp).headers != 0:
+      unsafe:
+        memcpy(nh as *char, (*resp).headers as *char, sizeof(ApiHeader) * (*resp).header_count)
+      free((*resp).headers as *char)
+    (*resp).headers = nh
+    (*resp).header_cap = new_cap
+  idx:int = (*resp).header_count
+  (*resp).headers[idx].name = tezzapi.text._api_strdup(name)
+  (*resp).headers[idx].value = tezzapi.text._api_strdup(value)
+  (*resp).header_count = idx + 1
+  ret 0
+
+fn api_resp_status(resp:*ApiResponse, code:int) -> int:
+  if resp == 0: ret 0 - 1
+  (*resp).status = code
+  ret 0
+
+fn api_resp_body(resp:*ApiResponse, body:str) -> int:
+  if resp == 0: ret 0 - 1
+  if (*resp).body != 0: free((*resp).body)
+  (*resp).body = tezzapi.text._api_strdup(body)
+  (*resp).body_len = len(body)
+  ret 0
+
+fn api_resp_json(resp:*ApiResponse, json:str) -> int:
+  api_resp_header(resp, "Content-Type", "application/json; charset=utf-8")
+  ret api_resp_body(resp, json)
+
+fn api_resp_text(resp:*ApiResponse, text:str) -> int:
+  api_resp_header(resp, "Content-Type", "text/plain; charset=utf-8")
+  ret api_resp_body(resp, text)
+
+fn api_resp_html(resp:*ApiResponse, html:str) -> int:
+  api_resp_header(resp, "Content-Type", "text/html; charset=utf-8")
+  ret api_resp_body(resp, html)
+
+// Common response shortcuts
+
+fn api_ok_json(resp:*ApiResponse, json:str) -> int:
+  api_resp_status(resp, tezzapi.state._get_HTTP_200())
+  ret api_resp_json(resp, json)
+
+fn api_created_json(resp:*ApiResponse, json:str) -> int:
+  api_resp_status(resp, tezzapi.state._get_HTTP_201())
+  ret api_resp_json(resp, json)
+
+fn api_no_content(resp:*ApiResponse) -> int:
+  api_resp_status(resp, tezzapi.state._get_HTTP_204())
+  (*resp).body = 0 as str
+  (*resp).body_len = 0
+  ret 0
+
+fn api_not_found(resp:*ApiResponse, msg:str) -> int:
+  api_resp_status(resp, tezzapi.state._get_HTTP_404())
+  m:str = msg
+  if m == 0: m = "Not Found"
+  api_resp_json(resp, tezzapi.text._api_join3("{\"error\":\"", m, "\"}"))
+  ret 0
+
+fn api_bad_request(resp:*ApiResponse, msg:str) -> int:
+  api_resp_status(resp, tezzapi.state._get_HTTP_400())
+  m:str = msg
+  if m == 0: m = "Bad Request"
+  api_resp_json(resp, tezzapi.text._api_join3("{\"error\":\"", m, "\"}"))
+  ret 0
+
+fn api_unauthorized(resp:*ApiResponse) -> int:
+  api_resp_status(resp, tezzapi.state._get_HTTP_401())
+  api_resp_header(resp, "WWW-Authenticate", "Bearer")
+  api_resp_json(resp, "{\"error\":\"Unauthorized\"}")
+  ret 0
+
+fn api_internal_error(resp:*ApiResponse, msg:str) -> int:
+  api_resp_status(resp, tezzapi.state._get_HTTP_500())
+  m:str = msg
+  if m == 0: m = "Internal Server Error"
+  api_resp_json(resp, tezzapi.text._api_join3("{\"error\":\"", m, "\"}"))
+  ret 0
+
+// ─────────────────────────────────────────────────────────────
+// HTTP parsing
+// ─────────────────────────────────────────────────────────────
+
+fn _status_text(code:int) -> str:
+  if code == 200: ret "OK"
+  if code == 201: ret "Created"
+  if code == 204: ret "No Content"
+  if code == 301: ret "Moved Permanently"
+  if code == 302: ret "Found"
+  if code == 400: ret "Bad Request"
+  if code == 401: ret "Unauthorized"
+  if code == 403: ret "Forbidden"
+  if code == 404: ret "Not Found"
+  if code == 405: ret "Method Not Allowed"
+  if code == 409: ret "Conflict"
+  if code == 413: ret "Payload Too Large"
+  if code == 429: ret "Too Many Requests"
+  if code == 500: ret "Internal Server Error"
+  if code == 501: ret "Not Implemented"
+  if code == 503: ret "Service Unavailable"
+  ret "Unknown"
+
+fn _send_response(sock:int, resp:*ApiResponse) -> int:
+  if resp == 0 || (*resp).sent != 0: ret 0 - 1
+  // Status line
+  code_s:str = tezzapi.text._api_itoa((*resp).status)
+  status_txt:str = _status_text((*resp).status)
+  hdr:str = tezzapi.text._api_join3("HTTP/1.1 ", code_s, " ")
+  hdr2:str = tezzapi.text._api_join2(hdr, status_txt)
+  hdr3:str = tezzapi.text._api_join2(hdr2, "\r\n")
+  free(code_s); free(hdr); free(hdr2)
+  // Content-Length
+  bl:int = 0
+  if (*resp).body != 0: bl = (*resp).body_len
+  bl_s:str = tezzapi.text._api_itoa(bl)
+  cl_hdr:str = tezzapi.text._api_join3("Content-Length: ", bl_s, "\r\n")
+  free(bl_s)
+  // Headers
+  all_hdrs:str = tezzapi.text._api_join2(hdr3, cl_hdr)
+  free(hdr3); free(cl_hdr)
+  i:int = 0
+  while i < (*resp).header_count:
+    h_line:str = tezzapi.text._api_join3((*resp).headers[i].name, ": ", (*resp).headers[i].value)
+    h_with_crlf:str = tezzapi.text._api_join2(h_line, "\r\n")
+    new_hdrs:str = tezzapi.text._api_join2(all_hdrs, h_with_crlf)
+    free(h_line); free(h_with_crlf); free(all_hdrs)
+    all_hdrs = new_hdrs
+    i = i + 1
+  conn_hdr:str = tezzapi.text._api_join2(all_hdrs, "Connection: close\r\n\r\n")
+  free(all_hdrs)
+  // Send headers
+  net.tcp_send_text(sock, conn_hdr)
+  free(conn_hdr)
+  // Send body
+  if (*resp).body != 0 && bl > 0:
+    net.tcp_send_all(sock, (*resp).body as *char, bl)
+  (*resp).sent = 1
+  ret 0
+
+// ─────────────────────────────────────────────────────────────
+// TezzApi lifecycle
+// ─────────────────────────────────────────────────────────────

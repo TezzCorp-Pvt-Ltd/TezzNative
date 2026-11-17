@@ -1,0 +1,404 @@
+// tezzdbql implementation: parser.
+import "tezzdb"
+import "tezzdb.queries"
+import "tezzdbql.state"
+
+fn _ql_strlen(s:str) -> int:
+  if s == 0: ret 0
+  n:int = 0
+  while (s as *char)[n] != 0 as char:
+    n = n + 1
+  ret n
+
+fn _ql_strdup(s:str) -> str:
+  if s == 0: ret 0 as str
+  n:int = _ql_strlen(s)
+  out:*char = malloc(n + 1)
+  if out == 0: ret 0 as str
+  i:int = 0
+  while i < n:
+    out[i] = (s as *char)[i]
+    i = i + 1
+  out[n] = 0 as char
+  ret out as str
+
+fn _ql_strcmp(a:str, b:str) -> int:
+  if a == 0 && b == 0: ret 0
+  if a == 0: ret 0 - 1
+  if b == 0: ret 1
+  i:int = 0
+  while (a as *char)[i] != 0 as char && (b as *char)[i] != 0 as char:
+    ca:int = (a as *char)[i] as int
+    cb:int = (b as *char)[i] as int
+    if ca != cb: ret ca - cb
+    i = i + 1
+  ret ((a as *char)[i] as int) - ((b as *char)[i] as int)
+
+fn _ql_strncaseeq(a:str, b:str, n:int) -> int:
+  // Case-insensitive compare of first n chars
+  i:int = 0
+  while i < n:
+    ca:int = (a as *char)[i] as int
+    cb:int = (b as *char)[i] as int
+    // toLower
+    if ca >= 65 && ca <= 90: ca = ca + 32
+    if cb >= 65 && cb <= 90: cb = cb + 32
+    if ca != cb: ret 0
+    i = i + 1
+  ret 1
+
+fn _ql_isspace(c:int) -> int:
+  ret c == 32 || c == 9 || c == 10 || c == 13
+
+fn _ql_skip_spaces(s:str, pos:int) -> int:
+  n:int = _ql_strlen(s)
+  while pos < n && _ql_isspace((s as *char)[pos] as int) != 0:
+    pos = pos + 1
+  ret pos
+
+fn _ql_isalnum(c:int) -> int:
+  ret (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95
+
+fn _ql_read_word(s:str, pos:int, out_word:*str, out_end:*int) -> int:
+  n:int = _ql_strlen(s)
+  start:int = pos
+  end:int = pos
+  while end < n && _ql_isalnum((s as *char)[end] as int) != 0:
+    end = end + 1
+  if end == start: ret 0
+  wlen:int = end - start
+  w:*char = malloc(wlen + 1)
+  if w == 0: ret 0
+  i:int = 0
+  while i < wlen:
+    c:int = (s as *char)[start + i] as int
+    if c >= 65 && c <= 90: c = c + 32
+    w[i] = c as char
+    i = i + 1
+  w[wlen] = 0 as char
+  *out_word = w as str
+  *out_end = end
+  ret 1
+
+fn _ql_read_quoted(s:str, pos:int, out_val:*str, out_end:*int) -> int:
+  n:int = _ql_strlen(s)
+  if pos < 0 || pos >= n || out_val == 0 || out_end == 0: ret 0
+  quote:int = (s as *char)[pos] as int
+  if quote != 39 && quote != 34: ret 0
+  out:*char = malloc(n - pos)
+  if out == 0: ret 0
+  pos = pos + 1
+  used:int = 0
+  while pos < n:
+    c:int = (s as *char)[pos] as int
+    if c == quote:
+      if pos + 1 < n && ((s as *char)[pos + 1] as int) == quote:
+        out[used] = quote as char
+        used = used + 1
+        pos = pos + 2
+      else:
+        out[used] = 0 as char
+        out_val[0] = out as str
+        out_end[0] = pos + 1
+        ret 1
+    else:
+      out[used] = c as char
+      used = used + 1
+      pos = pos + 1
+  free(out)
+  ret 0
+
+fn _ql_read_number(s:str, pos:int, out_val:*int, out_end:*int) -> int:
+  n:int = _ql_strlen(s)
+  if pos < 0 || pos >= n || out_val == 0 || out_end == 0: ret 0
+  negative:int = 0
+  if (s as *char)[pos] == '-' || (s as *char)[pos] == '+':
+    negative = (s as *char)[pos] == '-'
+    pos = pos + 1
+  started:int = pos
+  number:int = 0
+  last_digit:int = 7
+  if negative != 0: last_digit = 8
+  while pos < n:
+    digit:int = ((s as *char)[pos] as int) - 48
+    if digit < 0 || digit > 9: break
+    if number < -922337203685477580: ret 0
+    if number == -922337203685477580 && digit > last_digit: ret 0
+    number = number * 10 - digit
+    pos = pos + 1
+  if pos == started: ret 0
+  if negative == 0: number = 0 - number
+  out_val[0] = number
+  out_end[0] = pos
+  ret 1
+
+fn _ql_join2(a:str, b:str) -> str:
+  if a == 0 && b == 0: ret _ql_strdup("")
+  if a == 0: ret _ql_strdup(b)
+  if b == 0: ret _ql_strdup(a)
+  la:int = _ql_strlen(a)
+  lb:int = _ql_strlen(b)
+  out:*char = malloc(la + lb + 1)
+  if out == 0: ret 0 as str
+  i:int = 0
+  while i < la:
+    out[i] = (a as *char)[i]
+    i = i + 1
+  i = 0
+  while i < lb:
+    out[la + i] = (b as *char)[i]
+    i = i + 1
+  out[la + lb] = 0 as char
+  ret out as str
+
+fn _ql_itoa(n:int) -> str:
+  if n == 0 - 9223372036854775807 - 1:
+    ret _ql_strdup("-9223372036854775808")
+  buf:[char;24]
+  i:int = 22
+  buf[23] = 0 as char
+  neg:int = 0
+  if n < 0:
+    neg = 1
+    n = 0 - n
+  while n >= 10:
+    buf[i] = ((n % 10) + 48) as char
+    n = n / 10
+    i = i - 1
+  buf[i] = (n + 48) as char
+  if neg != 0:
+    i = i - 1
+    buf[i] = 45 as char  // '-'
+  ret _ql_strdup((&buf[0] + i) as str)
+
+fn _ql_count_rows(json_arr:str) -> int:
+  if json_arr == 0: ret 0
+  n:int = _ql_strlen(json_arr)
+  if n <= 2: ret 0  // "[]"
+  count:int = 0
+  depth:int = 0
+  in_str:int = 0
+  i:int = 0
+  while i < n:
+    c:int = (json_arr as *char)[i] as int
+    if in_str != 0:
+      if c == 92: i = i + 1  // skip escaped
+      else if c == 34: in_str = 0
+    else:
+      if c == 34: in_str = 1
+      else if c == 123:  // '{'
+        if depth == 0: count = count + 1
+        depth = depth + 1
+      else if c == 125:  // '}'
+        depth = depth - 1
+    i = i + 1
+  ret count
+
+// Extract the Nth JSON object from a JSON array string.
+// Returns heap-allocated copy, caller frees. Returns 0 if out of range.
+
+fn _ql_array_get_row(json_arr:str, row_idx:int) -> str:
+  if json_arr == 0: ret 0 as str
+  n:int = _ql_strlen(json_arr)
+  count:int = 0
+  depth:int = 0
+  in_str:int = 0
+  obj_start:int = 0 - 1
+  i:int = 0
+  while i < n:
+    c:int = (json_arr as *char)[i] as int
+    if in_str != 0:
+      if c == 92: i = i + 1
+      else if c == 34: in_str = 0
+    else:
+      if c == 34: in_str = 1
+      else if c == 123:
+        if depth == 0:
+          if count == row_idx:
+            obj_start = i
+          count = count + 1
+        depth = depth + 1
+      else if c == 125:
+        depth = depth - 1
+        if depth == 0 && obj_start >= 0 && count - 1 == row_idx:
+          // Found the object
+          vlen:int = i - obj_start + 1
+          out:*char = malloc(vlen + 1)
+          if out == 0: ret 0 as str
+          k:int = 0
+          while k < vlen:
+            out[k] = (json_arr as *char)[obj_start + k]
+            k = k + 1
+          out[vlen] = 0 as char
+          ret out as str
+    i = i + 1
+  ret 0 as str
+
+// ─────────────────────────────────────────────────────────────
+// QueryResult lifecycle
+// ─────────────────────────────────────────────────────────────
+
+fn _ql_result_new() -> *TzQueryResult:
+  r:*TzQueryResult = (*TzQueryResult)malloc(sizeof(TzQueryResult))
+  if r == 0: ret 0 as *TzQueryResult
+  (*r).rows = 0 as str
+  (*r).rows_len = 0
+  (*r).cur_pos = 0
+  (*r).cur_row = 0 as str
+  (*r).row_count = 0
+  (*r).rows_iterated = 0
+  (*r).affected_rows = 0
+  (*r).last_insert_id = 0
+  (*r).error = 0
+  ret r
+
+fn db_result_free(r:*TzQueryResult) -> int:
+  if r == 0: ret 0
+  if (*r).rows != 0:
+    free((*r).rows)
+    (*r).rows = 0 as str
+  if (*r).cur_row != 0:
+    free((*r).cur_row)
+    (*r).cur_row = 0 as str
+  free(r as *char)
+  ret 0
+
+// Advance to next row. Returns 1 if row available, 0 at end.
+
+fn db_result_next(r:*TzQueryResult) -> int:
+  if r == 0: ret 0
+  if (*r).cur_row != 0:
+    free((*r).cur_row)
+    (*r).cur_row = 0 as str
+  if (*r).rows_iterated >= (*r).row_count: ret 0
+  row:str = _ql_array_get_row((*r).rows, (*r).rows_iterated)
+  if row == 0: ret 0
+  (*r).cur_row = row
+  (*r).rows_iterated = (*r).rows_iterated + 1
+  ret 1
+
+// ─────────────────────────────────────────────────────────────
+// Inline JSON field extractors (row_get_str / row_get_int equivalents)
+// duplicated here to avoid cross-module symbol dependency
+// ─────────────────────────────────────────────────────────────
+
+fn _ql_json_find_key(json:str, key:str) -> int:
+  ret tezzdb._json_find_key(json, key)
+
+fn _ql_json_get_str(json:str, key:str) -> str:
+  ret tezzdb.row_get_str(json, key)
+
+fn _ql_json_get_int(json:str, key:str) -> int:
+  off:int = _ql_json_find_key(json, key)
+  if off < 0: ret 0
+  decoded:str = tezzdb.row_get_str(json, key)
+  input:str = json
+  start:int = off
+  if decoded != 0:
+    input = decoded
+    start = 0
+  number:int = 0
+  ending:int = start
+  valid:int = _ql_read_number(input, start, &number, &ending)
+  if decoded != 0:
+    if ending != len(decoded): valid = 0
+    free(decoded)
+  else if ending < len(json):
+    c:int = (json as *char)[ending] as int
+    if c != 44 && c != 125 && _ql_isspace(c) == 0: valid = 0
+  if valid == 0: ret 0
+  ret number
+
+fn cursor_field_str(r:*TzQueryResult, col:str) -> str:
+  if r == 0 || (*r).cur_row == 0: ret 0 as str
+  ret _ql_json_get_str((*r).cur_row, col)
+
+// Get integer field from current row
+
+fn cursor_field_int(r:*TzQueryResult, col:str) -> int:
+  if r == 0 || (*r).cur_row == 0: ret 0
+  ret _ql_json_get_int((*r).cur_row, col)
+
+fn db_result_row_count(r:*TzQueryResult) -> int:
+  if r == 0: ret 0
+  ret (*r).row_count
+
+fn db_result_affected(r:*TzQueryResult) -> int:
+  if r == 0: ret 0
+  ret (*r).affected_rows
+
+fn db_result_last_id(r:*TzQueryResult) -> int:
+  if r == 0: ret 0
+  ret (*r).last_insert_id
+
+fn db_result_error(r:*TzQueryResult) -> int:
+  if r == 0: ret (0 - 1)
+  ret (*r).error
+
+// ─────────────────────────────────────────────────────────────
+// Param substitution
+// Replaces ? placeholders with param values in order.
+// Returns heap-allocated substituted query string.
+// ─────────────────────────────────────────────────────────────
+
+
+
+// ─────────────────────────────────────────────────────────────
+// Parse helpers
+// ─────────────────────────────────────────────────────────────
+
+// Parses a WHERE clause value: either 'quoted' literal or integer or ?-param
+
+fn _ql_parse_where_val(q:str, pos:int, params:*str, param_count:int, pi:*int, out_val:*str, out_end:*int) -> int:
+  if q == 0 || pos < 0 || param_count < 0 || pi == 0 || out_val == 0 || out_end == 0: ret 0
+  if param_count > 0 && params == 0: ret 0
+  n:int = _ql_strlen(q)
+  pos = _ql_skip_spaces(q, pos)
+  if pos >= n: ret 0
+  c:int = (q as *char)[pos] as int
+  if c == 63:
+    if pi[0] < 0 || pi[0] >= param_count: ret 0
+    parameter:str = params[pi[0]]
+    if parameter == 0: parameter = ""
+    copied:str = _ql_strdup(parameter)
+    if copied == 0: ret 0
+    out_val[0] = copied
+    pi[0] = pi[0] + 1
+    out_end[0] = pos + 1
+    ret 1
+  if c == 39 || c == 34: ret _ql_read_quoted(q, pos, out_val, out_end)
+  started:int = pos
+  while pos < n:
+    c = (q as *char)[pos] as int
+    if _ql_isspace(c) != 0 || c == 41 || c == 44 || c == 59: break
+    if _ql_isalnum(c) == 0 && c != 45 && c != 43 && c != 46: ret 0
+    pos = pos + 1
+  if pos == started: ret 0
+  out:*char = malloc(pos - started + 1)
+  if out == 0: ret 0
+  i:int = 0
+  while i < pos - started:
+    out[i] = (q as *char)[started + i]
+    i = i + 1
+  out[i] = 0 as char
+  out_val[0] = out as str
+  out_end[0] = pos
+  ret 1
+
+fn _ql_build_json(cols:*str, vals:*str, count:int) -> str:
+  if count < 0 || count > 32: ret 0 as str
+  if count > 0 && (cols == 0 || vals == 0): ret 0 as str
+  out:str = _ql_strdup("{")
+  if out == 0: ret 0 as str
+  i:int = 0
+  while i < count:
+    if cols[i] == 0:
+      free(out)
+      ret 0 as str
+    if i > 0: out = tezzdb.queries._db_json_append_owned(out, ",")
+    pair:str = tezzdb.queries._db_json_pair(cols[i], vals[i])
+    out = tezzdb.queries._db_json_append_owned(out, pair)
+    free(pair)
+    if out == 0: ret 0 as str
+    i = i + 1
+  ret tezzdb.queries._db_json_append_owned(out, "}")

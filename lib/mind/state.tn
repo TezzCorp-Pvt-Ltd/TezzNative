@@ -1,0 +1,101 @@
+// Shared tensor/model declarations and one owner for mutable module state.
+
+let MIND_MAGIC:int = 1296385348  // TezzMind v1 checkpoint magic
+
+let MIND_LEGACY_NN_MAGIC:int = 1414676301
+
+// Header slot indices
+
+let _MH_MAGIC:int   = 0
+
+let _MH_VOCAB:int   = 1
+
+let _MH_DIM:int     = 2
+
+let _MH_QH:int      = 3
+
+let _MH_KVH:int     = 4
+
+let _MH_LAYERS:int  = 5
+
+let _MH_SEQLEN:int  = 6
+
+let _MH_FFN:int     = 7
+
+let _MH_HDIM:int    = 8
+
+let _MH_NW:int      = 9
+
+let _MH_KVOFF:int   = 10
+
+let _MH_WOFF:int    = 11
+
+let _MH_HDR:int     = 16
+
+// â”€â”€ Slab accessors â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+static let _mind_seed:int = 31337
+
+fn _state_MIND_MAGIC() -> *int:
+  unsafe:
+    ret &MIND_MAGIC
+
+fn _state_MIND_LEGACY_NN_MAGIC() -> *int:
+  unsafe:
+    ret &MIND_LEGACY_NN_MAGIC
+
+fn _state__MH_MAGIC() -> *int:
+  unsafe:
+    ret &_MH_MAGIC
+
+fn _state__MH_VOCAB() -> *int:
+  unsafe:
+    ret &_MH_VOCAB
+
+fn _state__MH_DIM() -> *int:
+  unsafe:
+    ret &_MH_DIM
+
+fn _state__MH_QH() -> *int:
+  unsafe:
+    ret &_MH_QH
+
+fn _state__MH_KVH() -> *int:
+  unsafe:
+    ret &_MH_KVH
+
+fn _state__MH_LAYERS() -> *int:
+  unsafe:
+    ret &_MH_LAYERS
+
+fn _state__MH_SEQLEN() -> *int:
+  unsafe:
+    ret &_MH_SEQLEN
+
+fn _state__MH_FFN() -> *int:
+  unsafe:
+    ret &_MH_FFN
+
+fn _state__MH_HDIM() -> *int:
+  unsafe:
+    ret &_MH_HDIM
+
+fn _state__MH_NW() -> *int:
+  unsafe:
+    ret &_MH_NW
+
+fn _state__MH_KVOFF() -> *int:
+  unsafe:
+    ret &_MH_KVOFF
+
+fn _state__MH_WOFF() -> *int:
+  unsafe:
+    ret &_MH_WOFF
+
+fn _state__MH_HDR() -> *int:
+  unsafe:
+    ret &_MH_HDR
+
+fn _state__mind_seed() -> *int:
+  unsafe:
+    ret &_mind_seed

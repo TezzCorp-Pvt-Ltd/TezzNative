@@ -1,0 +1,3 @@
+// The harness must reject this guest and retain the exact status marker.
+fn main() -> int:
+  ret 7

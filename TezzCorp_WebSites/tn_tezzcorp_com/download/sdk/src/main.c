@@ -11,6 +11,7 @@
 #include "abi.h"
 #include "util.h"
 #include "ir.h"
+#include "hardware_target.h"
 #include "sema.h"
 #include <stdio.h>
 #include <string.h>
@@ -111,7 +112,7 @@ static void usage(void){
     "tezzc usage:\n"
     "  tezzc run     <file.tn> [--debug] [--native|--fast] [--bc]\n"
     "  tezzc check   <file.tn>\n"
-    "  tezzc fmt     <file.tn>\n"
+    "  tezzc fmt     <file.tn> [--check]\n"
     "  tezzc lint    <file.tn>\n"
     "  tezzc cheader <file.tn> <out.h>\n"
     "  tezzc abidump <file.tn> <out.tnx>\n"
@@ -166,6 +167,27 @@ static int run_exe_process(const char* exe_path, int argc, char** argv){
 
 
 static int buildexe_from_path(const char* path, const char* out_path, const char* build_target, int repro, int do_verify){
+  if(strcmp(build_target, "native") == 0){
+#if defined(_WIN32)
+#if defined(_M_ARM64) || defined(__aarch64__)
+    build_target = "arm64";
+#else
+    build_target = "x86_64";
+#endif
+#elif defined(__APPLE__)
+#if defined(__aarch64__)
+    build_target = "macos-arm64";
+#else
+    build_target = "macos";
+#endif
+#else
+#if defined(__aarch64__)
+    build_target = "linux-arm64";
+#else
+    build_target = "linux";
+#endif
+#endif
+  }
   char basebuf[1024];
   const char* base = base_dir_for(path, basebuf, (int)sizeof(basebuf));
 
@@ -477,9 +499,10 @@ static int expr_prec(Expr* e){
     case EX_UN:
     case EX_ADDR:
     case EX_DEREF:
-    case EX_CAST:
     case EX_SIZEOF:
     case EX_ALIGNOF: return 11;
+    /* `as` is parsed in the postfix loop, tighter than prefix unary ops. */
+    case EX_CAST:
     case EX_CALL:
     case EX_INDEX:
     case EX_DOT: return 12;
@@ -753,7 +776,8 @@ static void fmt_stmt(FILE* out, Stmt* s, int indent){
       if(s->iff.elseb){
         fmt_indent(out, indent);
         fputs("else:\n", out);
-        fmt_block(out, s->iff.elseb, indent + 2);
+        if(s->iff.elseb->k==ST_IF) fmt_stmt(out, s->iff.elseb, indent + 2);
+        else fmt_block(out, s->iff.elseb, indent + 2);
       }
       return;
     case ST_WHILE:
@@ -818,6 +842,26 @@ static void fmt_stmt(FILE* out, Stmt* s, int indent){
       fputs("unsafe:\n", out);
       fmt_block(out, s->uns.body, indent + 2);
       return;
+  }
+}
+
+/* These comments carry package integrity and target availability contracts. */
+static void fmt_module_metadata(FILE* out, const char* source){
+  const char* prefixes[]={"// package-file ","// tezz-hardware-module: ","// tezz-unavailable-module: "};
+  for(const char* line=source; *line; ){
+    const char* end=strchr(line,'\n');
+    size_t length=end ? (size_t)(end-line) : strlen(line);
+    if(length && line[length-1]=='\r') length--;
+    for(size_t i=0;i<sizeof(prefixes)/sizeof(prefixes[0]);i++){
+      size_t prefix_length=strlen(prefixes[i]);
+      if(length>=prefix_length && !memcmp(line,prefixes[i],prefix_length)){
+        fwrite(line,1,length,out);
+        fputc('\n',out);
+        break;
+      }
+    }
+    if(!end) break;
+    line=end+1;
   }
 }
 
@@ -973,6 +1017,15 @@ int main(int argc, char** argv){
     if(strcmp(argv[i],"--target")==0 && i+1<argc){ target = argv[i+1]; i++; continue; }
     if(strncmp(argv[i],"--target=",9)==0){ target = argv[i] + 9; continue; }
   }
+  if(tn_is_hardware_target(target) && !freestanding){
+    fprintf(stderr,"hardware targets require --freestanding\n");
+    return 1;
+  }
+  if(tn_is_hardware_target(target) && strcmp(argv[1],"buildir") && strcmp(argv[1],"check") &&
+     strcmp(argv[1],"lint") && strcmp(argv[1],"fmt")){
+    fprintf(stderr,"hardware targets use buildir and tools/tezz_hw.py, not hosted execution\n");
+    return 1;
+  }
   if(vectorize < 0){
     vectorize = 0;
     if(strcmp(argv[1], "run")==0 && run_native){
@@ -1097,16 +1150,49 @@ int main(int argc, char** argv){
 
   // ---------------- fmt (AST pretty-printer) ----------------
   if(strcmp(argv[1],"fmt")==0){
+    int check_only = 0;
+    for(int i=3;i<argc;i++){
+      if(!check_only && strcmp(argv[i],"--check")==0) check_only = 1;
+      else {
+        fprintf(stderr,"fmt: unsupported argument '%s'\n",argv[i]);
+        return 1;
+      }
+    }
     const char* path = norm_input_path(argv[2]);
     char* src = read_file_cstr(path);
     TypeEnv tenv; tenv_init(&tenv);
     Module* root = parse_module(&tenv, src, path);
-    FILE* out = fopen(path, "wb");
-    if(!out) die("cannot open output file");
+    /* Render and parse before opening the original file for writing. */
+    FILE* out = tmpfile();
+    if(!out) die("cannot create formatter temporary stream");
+    fmt_module_metadata(out, src);
     fmt_module(out, root);
-    fclose(out);
+    if(fflush(out) || ferror(out)) die("cannot write formatted output");
+    long length = ftell(out);
+    if(length < 0 || fseek(out,0,SEEK_SET)) die("cannot read formatted output");
+    char* formatted = (char*)malloc((size_t)length + 1);
+    if(!formatted) die("out of memory formatting source");
+    if(fread(formatted,1,(size_t)length,out)!=(size_t)length || ferror(out)) die("cannot read formatted output");
+    formatted[length] = 0;
+    if(fclose(out)) die("cannot close formatter temporary stream");
+    TypeEnv verified; tenv_init(&verified);
+    (void)parse_module(&verified,formatted,path);
+    tenv_free(&verified);
+    int changed = strcmp(src,formatted)!=0;
+    if(!check_only && changed){
+      out = fopen(path,"wb");
+      if(!out) die("cannot open output file");
+      int failed = fwrite(formatted,1,(size_t)length,out)!=(size_t)length;
+      if(fclose(out)) failed = 1;
+      if(failed) die("cannot write formatted output");
+    }
     tenv_free(&tenv);
     free(src);
+    free(formatted);
+    if(check_only && changed){
+      printf("NEEDS_FORMATTING: %s\n",path);
+      return 1;
+    }
     printf("OK: %s\n", path);
     return 0;
   }
@@ -1495,7 +1581,7 @@ int main(int argc, char** argv){
         path);
       return 1;
     }
-    const char* build_target = "x86_64";
+    const char* build_target = "native";
     int do_verify = 0;
     for(int i=3;i<argc;i++){
       if(strcmp(argv[i],"--target")==0 && i+1<argc){

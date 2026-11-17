@@ -1,0 +1,567 @@
+// tezzapi implementation: protocol.
+import "net"
+import "time"
+import "tls"
+import "tezzapi.state"
+import "tezzapi.text"
+
+fn tnxb_op_create() -> int:
+  ret tezzapi.state._get_TNXB_OP_CREATE()
+
+fn tnxb_op_read() -> int:
+  ret tezzapi.state._get_TNXB_OP_READ()
+
+fn tnxb_op_update() -> int:
+  ret tezzapi.state._get_TNXB_OP_UPDATE()
+
+fn tnxb_op_delete() -> int:
+  ret tezzapi.state._get_TNXB_OP_DELETE()
+
+fn tnxb_valid_op(op:int) -> int:
+  if op >= tezzapi.state._get_TNXB_OP_CREATE() && op <= tezzapi.state._get_TNXB_OP_DELETE():
+    ret 1
+  ret 0
+
+fn _tnxb_u32_write_le(p:*char, off:int, v:int) -> int:
+  if p == 0 || off < 0:
+    ret 0 - 1
+  p[off] = (v & 255) as char
+  p[off + 1] = ((v >> 8) & 255) as char
+  p[off + 2] = ((v >> 16) & 255) as char
+  p[off + 3] = ((v >> 24) & 255) as char
+  ret 0
+
+fn _tnxb_u32_read_le(p:*char, off:int) -> int:
+  if p == 0 || off < 0:
+    ret 0
+  b0:int = (p[off] as int) & 255
+  b1:int = (p[off + 1] as int) & 255
+  b2:int = (p[off + 2] as int) & 255
+  b3:int = (p[off + 3] as int) & 255
+  ret b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
+
+fn _tnxb_recv_exact(sock:int, out:*char, n:int) -> int:
+  if sock < 0 || out == 0 || n < 0:
+    ret 0 - 1
+  got:int = 0
+  while got < n:
+    r:int = net.recv(sock, out + got, n - got)
+    if r <= 0:
+      ret 0 - 1
+    got = got + r
+  ret got
+
+fn tnxb_encode(op:int, route:str, body:str) -> TnxbBuffer:
+  out:TnxbBuffer
+  out.buf = 0 as *char
+  out.len = 0
+  if tnxb_valid_op(op) == 0:
+    ret out
+  rt:str = route
+  bd:str = body
+  if rt == 0:
+    rt = ""
+  if bd == 0:
+    bd = ""
+  rlen:int = len(rt)
+  blen:int = len(bd)
+  total:int = tezzapi.state._get_TNXB_HEADER_SIZE() + rlen + blen
+  if total < tezzapi.state._get_TNXB_HEADER_SIZE():
+    ret out
+  buf:*char = malloc(total + 1)
+  if buf == 0:
+    ret out
+  buf[0] = tezzapi.state._get_TNXB_MAGIC_0() as char
+  buf[1] = tezzapi.state._get_TNXB_MAGIC_1() as char
+  buf[2] = tezzapi.state._get_TNXB_MAGIC_2() as char
+  buf[3] = tezzapi.state._get_TNXB_MAGIC_3() as char
+  buf[4] = tezzapi.state._get_TNXB_VERSION() as char
+  buf[5] = (op & 255) as char
+  buf[6] = 0 as char
+  buf[7] = 0 as char
+  _tnxb_u32_write_le(buf, 8, rlen)
+  _tnxb_u32_write_le(buf, 12, blen)
+  if rlen > 0:
+    unsafe:
+      memcpy(buf + tezzapi.state._get_TNXB_HEADER_SIZE(), rt as *char, rlen)
+  if blen > 0:
+    unsafe:
+      memcpy(buf + tezzapi.state._get_TNXB_HEADER_SIZE() + rlen, bd as *char, blen)
+  buf[total] = 0 as char
+  out.buf = buf
+  out.len = total
+  ret out
+
+fn tnxb_release(payload:TnxbBuffer) -> int:
+  if payload.buf != 0:
+    free(payload.buf)
+  ret 0
+
+fn tnxb_decode(buf:*char, n:int) -> TnxbPacket:
+  out:TnxbPacket
+  out.ok = 0
+  out.op = 0
+  out.route = 0 as str
+  out.body = 0 as str
+  if buf == 0 || n < tezzapi.state._get_TNXB_HEADER_SIZE():
+    ret out
+  if (((buf[0] as int) & 255) != tezzapi.state._get_TNXB_MAGIC_0()):
+    ret out
+  if (((buf[1] as int) & 255) != tezzapi.state._get_TNXB_MAGIC_1()):
+    ret out
+  if (((buf[2] as int) & 255) != tezzapi.state._get_TNXB_MAGIC_2()):
+    ret out
+  if (((buf[3] as int) & 255) != tezzapi.state._get_TNXB_MAGIC_3()):
+    ret out
+  ver:int = (buf[4] as int) & 255
+  if ver != tezzapi.state._get_TNXB_VERSION():
+    ret out
+  op:int = (buf[5] as int) & 255
+  if tnxb_valid_op(op) == 0:
+    ret out
+  rlen:int = _tnxb_u32_read_le(buf, 8)
+  blen:int = _tnxb_u32_read_le(buf, 12)
+  if rlen < 0 || blen < 0:
+    ret out
+  need:int = tezzapi.state._get_TNXB_HEADER_SIZE() + rlen + blen
+  if need < tezzapi.state._get_TNXB_HEADER_SIZE() || need > n:
+    ret out
+
+  route_out:*char = malloc(rlen + 1)
+  body_out:*char = malloc(blen + 1)
+  if route_out == 0 || body_out == 0:
+    if route_out != 0:
+      free(route_out)
+    if body_out != 0:
+      free(body_out)
+    ret out
+  if rlen > 0:
+    unsafe:
+      memcpy(route_out, buf + tezzapi.state._get_TNXB_HEADER_SIZE(), rlen)
+  route_out[rlen] = 0 as char
+  if blen > 0:
+    unsafe:
+      memcpy(body_out, buf + tezzapi.state._get_TNXB_HEADER_SIZE() + rlen, blen)
+  body_out[blen] = 0 as char
+
+  out.ok = 1
+  out.op = op
+  out.route = route_out as str
+  out.body = body_out as str
+  ret out
+
+fn tnxb_decode_buf(payload:TnxbBuffer) -> TnxbPacket:
+  ret tnxb_decode(payload.buf, payload.len)
+
+fn tnxb_packet_release(packet:*TnxbPacket) -> int:
+  if packet == 0:
+    ret 0 - 1
+  if (*packet).route != 0:
+    free((*packet).route)
+    (*packet).route = 0 as str
+  if (*packet).body != 0:
+    free((*packet).body)
+    (*packet).body = 0 as str
+  (*packet).ok = 0
+  (*packet).op = 0
+  ret 0
+
+fn tnxb_send(sock:int, payload:TnxbBuffer) -> int:
+  if sock < 0 || payload.buf == 0 || payload.len <= 0:
+    ret 0 - 1
+  if payload.len > tezzapi.state._get_TNXB_MAX_PAYLOAD():
+    ret 0 - 1
+  hdr:[char;8]
+  hdr[0] = tezzapi.state._get_TNXB_MAGIC_0() as char
+  hdr[1] = tezzapi.state._get_TNXB_MAGIC_1() as char
+  hdr[2] = tezzapi.state._get_TNXB_MAGIC_2() as char
+  hdr[3] = tezzapi.state._get_TNXB_MAGIC_3() as char
+  _tnxb_u32_write_le(&hdr[0], 4, payload.len)
+  if net.tcp_send_all(sock, &hdr[0], tezzapi.state._get_TNXB_WIRE_HEADER_SIZE()) < 0:
+    ret 0 - 1
+  if net.tcp_send_all(sock, payload.buf, payload.len) < 0:
+    ret 0 - 1
+  ret payload.len
+
+fn tnxb_recv(sock:int, max_payload:int) -> TnxbBuffer:
+  out:TnxbBuffer
+  out.buf = 0 as *char
+  out.len = 0
+  if sock < 0:
+    ret out
+  lim:int = max_payload
+  if lim <= 0:
+    lim = tezzapi.state._get_TNXB_MAX_PAYLOAD()
+  hdr:[char;8]
+  if _tnxb_recv_exact(sock, &hdr[0], tezzapi.state._get_TNXB_WIRE_HEADER_SIZE()) < 0:
+    ret out
+  if (((hdr[0] as int) & 255) != tezzapi.state._get_TNXB_MAGIC_0()):
+    ret out
+  if (((hdr[1] as int) & 255) != tezzapi.state._get_TNXB_MAGIC_1()):
+    ret out
+  if (((hdr[2] as int) & 255) != tezzapi.state._get_TNXB_MAGIC_2()):
+    ret out
+  if (((hdr[3] as int) & 255) != tezzapi.state._get_TNXB_MAGIC_3()):
+    ret out
+  size:int = _tnxb_u32_read_le(&hdr[0], 4)
+  if size <= 0 || size > lim:
+    ret out
+  payload:*char = malloc(size + 1)
+  if payload == 0:
+    ret out
+  if _tnxb_recv_exact(sock, payload, size) < 0:
+    free(payload)
+    ret out
+  payload[size] = 0 as char
+  out.buf = payload
+  out.len = size
+  ret out
+
+fn tnxb_write_file(path:str, payload:TnxbBuffer) -> int:
+  if path == 0 || payload.buf == 0 || payload.len <= 0:
+    ret 0 - 1
+  h:*char = fopen(path, "wb")
+  if h == 0:
+    ret 0 - 1
+  w:int = fwrite(payload.buf, 1, payload.len, h)
+  fclose(h)
+  if w != payload.len:
+    ret 0 - 1
+  ret 0
+
+fn tnxb_read_file(path:str) -> TnxbBuffer:
+  out:TnxbBuffer
+  out.buf = 0 as *char
+  out.len = 0
+  if path == 0:
+    ret out
+  h:*char = fopen(path, "rb")
+  if h == 0:
+    ret out
+  if fseek(h, 0, 2) != 0:
+    fclose(h)
+    ret out
+  size:int = ftell(h)
+  if size <= 0:
+    fclose(h)
+    ret out
+  if fseek(h, 0, 0) != 0:
+    fclose(h)
+    ret out
+  buf:*char = malloc(size + 1)
+  if buf == 0:
+    fclose(h)
+    ret out
+  r:int = read_bytes(h, buf, size)
+  fclose(h)
+  if r <= 0:
+    free(buf)
+    ret out
+  buf[r] = 0 as char
+  out.buf = buf
+  out.len = r
+  ret out
+
+fn crud_method_to_op(method:str) -> int:
+  if method == 0:
+    ret tezzapi.state._get_TNXB_OP_NONE()
+  if strcmp(method, "POST") == 0:
+    ret tezzapi.state._get_TNXB_OP_CREATE()
+  if strcmp(method, "GET") == 0:
+    ret tezzapi.state._get_TNXB_OP_READ()
+  if strcmp(method, "PUT") == 0 || strcmp(method, "PATCH") == 0:
+    ret tezzapi.state._get_TNXB_OP_UPDATE()
+  if strcmp(method, "DELETE") == 0:
+    ret tezzapi.state._get_TNXB_OP_DELETE()
+  ret tezzapi.state._get_TNXB_OP_NONE()
+
+fn _tnxb_op_name(op:int) -> str:
+  if op == tezzapi.state._get_TNXB_OP_CREATE():
+    ret "create"
+  if op == tezzapi.state._get_TNXB_OP_READ():
+    ret "read"
+  if op == tezzapi.state._get_TNXB_OP_UPDATE():
+    ret "update"
+  if op == tezzapi.state._get_TNXB_OP_DELETE():
+    ret "delete"
+  ret "none"
+
+fn tnxb_package_name(resource:str, op:int) -> str:
+  name:str = resource
+  if name == 0 || name[0] == 0 as char:
+    name = "resource"
+  op_name:str = _tnxb_op_name(op)
+  p1:str = tezzapi.text._api_join2(name, ".")
+  p2:str = tezzapi.text._api_join2(p1, op_name)
+  p3:str = tezzapi.text._api_join2(p2, ".tnxb")
+  free(p1)
+  free(p2)
+  ret p3
+
+fn _tezzapi_parse_int_dec(s:str) -> int:
+  if s == 0:
+    ret 0
+  i:int = 0
+  while s[i] == 32 as char || s[i] == 9 as char || s[i] == 13 as char || s[i] == 10 as char:
+    i = i + 1
+  sign:int = 1
+  if s[i] == 45 as char:
+    sign = 0 - 1
+    i = i + 1
+  else if s[i] == 43 as char:
+    i = i + 1
+  v:int = 0
+  seen:int = 0
+  while 1:
+    c:int = (s[i] as int) & 255
+    if c < 48 || c > 57:
+      break
+    v = (v * 10) + (c - 48)
+    seen = 1
+    i = i + 1
+  if seen == 0:
+    ret 0
+  ret v * sign
+
+fn tnxb_payload_from_command(cmd:str) -> TnxbBuffer:
+  out:TnxbBuffer
+  out.buf = 0 as *char
+  out.len = 0
+  if cmd == 0:
+    ret out
+  sep:int = 0
+  while cmd[sep] != 0 as char && cmd[sep] != 32 as char:
+    sep = sep + 1
+  resource:str = 0 as str
+  body:str = 0 as str
+  if cmd[sep] == 0 as char:
+    resource = cmd
+    body = ""
+  else:
+    resource = (cmd as *char) as str
+    body = (cmd + sep + 1) as str
+  op:int = tezzapi.state._get_TNXB_OP_READ()
+  if _tezzapi_parse_int_dec(cmd) > 0:
+    op = _tezzapi_parse_int_dec(cmd)
+  out = tnxb_encode(op, resource, body)
+  ret out
+
+fn _tezzapi_http_scheme_ok(url:str) -> int:
+  if url == 0:
+    ret 0
+  sch:str = net.url_scheme(url)
+  if sch == 0:
+    ret 0
+  ok:int = 0
+  if strcmp(sch, "http") == 0 || strcmp(sch, "HTTP") == 0 || strcmp(sch, "https") == 0 || strcmp(sch, "HTTPS") == 0:
+    ok = 1
+  free(sch)
+  ret ok
+
+fn tnxb_http_url_supported(url:str) -> int:
+  ret _tezzapi_http_scheme_ok(url)
+
+fn tnxb_tls_policy_reset() -> int:
+  ret tls.policy_reset()
+
+fn tnxb_tls_policy_set_min_version(min_version:int) -> int:
+  ret tls.policy_set_min(min_version)
+
+fn tnxb_tls_policy_set_pin_sha256(pin_hex:str) -> int:
+  ret tls.policy_set_pin_sha256(pin_hex)
+
+fn tnxb_tls_policy_set_handshake_timeout(timeout_ms:int) -> int:
+  ret tls.policy_set_handshake_timeout(timeout_ms)
+
+fn tnxb_tls_policy_get_min_version() -> int:
+  ret tls.policy_get_min()
+
+fn tnxb_tls_policy_get_handshake_timeout() -> int:
+  ret tls.policy_get_handshake_timeout()
+
+fn tnxb_tls_policy_pin_enabled() -> int:
+  ret tls.policy_pin_enabled()
+
+fn tnxb_tls_policy_obj_new() -> *TnxbTlsPolicy:
+  p:*TnxbTlsPolicy = (*TnxbTlsPolicy)malloc(sizeof(TnxbTlsPolicy))
+  if p == 0:
+    ret 0 as *TnxbTlsPolicy
+  (*p).min_version = tezzapi.state._get_TNXB_TLS_MIN_DEFAULT()
+  (*p).handshake_timeout_ms = 0
+  (*p).pin_sha256 = 0 as str
+  ret p
+
+fn tnxb_tls_policy_obj_free(policy:*TnxbTlsPolicy) -> int:
+  if policy == 0:
+    ret 0 - 1
+  if (*policy).pin_sha256 != 0:
+    free((*policy).pin_sha256)
+    (*policy).pin_sha256 = 0 as str
+  free(policy as *char)
+  ret 0
+
+fn tnxb_tls_policy_obj_set_min(policy:*TnxbTlsPolicy, min_version:int) -> int:
+  if policy == 0:
+    ret 0 - 1
+  if min_version != tezzapi.state._get_TNXB_TLS_MIN_DEFAULT() && min_version != tezzapi.state._get_TNXB_TLS_MIN_12() && min_version != tezzapi.state._get_TNXB_TLS_MIN_13():
+    ret 0 - 1
+  (*policy).min_version = min_version
+  ret 0
+
+fn tnxb_tls_policy_obj_set_handshake_timeout(policy:*TnxbTlsPolicy, timeout_ms:int) -> int:
+  if policy == 0 || timeout_ms < 0:
+    ret 0 - 1
+  (*policy).handshake_timeout_ms = timeout_ms
+  ret 0
+
+fn tnxb_tls_policy_obj_set_pin_sha256(policy:*TnxbTlsPolicy, pin_hex:str) -> int:
+  if policy == 0:
+    ret 0 - 1
+  if (*policy).pin_sha256 != 0:
+    free((*policy).pin_sha256)
+    (*policy).pin_sha256 = 0 as str
+  if pin_hex == 0 || pin_hex[0] == 0 as char:
+    ret 0
+  dup:str = tezzapi.text._api_strdup(pin_hex)
+  if dup == 0:
+    ret 0 - 1
+  (*policy).pin_sha256 = dup
+  ret 0
+
+fn tnxb_tls_policy_obj_get_min(policy:*TnxbTlsPolicy) -> int:
+  if policy == 0:
+    ret tezzapi.state._get_TNXB_TLS_MIN_DEFAULT()
+  ret (*policy).min_version
+
+fn tnxb_tls_policy_obj_get_handshake_timeout(policy:*TnxbTlsPolicy) -> int:
+  if policy == 0:
+    ret 0
+  ret (*policy).handshake_timeout_ms
+
+fn tnxb_tls_policy_obj_pin_enabled(policy:*TnxbTlsPolicy) -> int:
+  if policy == 0 || (*policy).pin_sha256 == 0:
+    ret 0
+  if (*policy).pin_sha256[0] == 0 as char:
+    ret 0
+  ret 1
+
+fn tnxb_http_post_with_policy(url:str, payload:TnxbBuffer, timeout_ms:int, max_bytes:int, policy:*TnxbTlsPolicy) -> str:
+  if url == 0 || payload.buf == 0 || payload.len <= 0:
+    ret 0 as str
+  if _tezzapi_http_scheme_ok(url) == 0:
+    ret 0 as str
+  host:str = net.url_host(url)
+  pathq:str = net.url_path_query(url)
+  own_pathq:int = 1
+  port:int = net.url_port(url)
+  if host == 0:
+    if pathq != 0:
+      free(pathq)
+    ret 0 as str
+  if pathq == 0:
+    pathq = "/"
+    own_pathq = 0
+  secure:int = net.url_is_secure(url)
+  if port <= 0:
+    if secure != 0:
+      port = 443
+    else:
+      port = 80
+  clen_s:str = tezzapi.text._api_itoa(payload.len)
+  if clen_s == 0:
+    free(host)
+    if own_pathq != 0:
+      free(pathq)
+    ret 0 as str
+  l1:str = tezzapi.text._api_join2("POST ", pathq)
+  l2:str = tezzapi.text._api_join2(l1, " HTTP/1.1\r\nHost: ")
+  l3:str = tezzapi.text._api_join2(l2, host)
+  l4:str = tezzapi.text._api_join2(l3, "\r\nConnection: close\r\nContent-Type: application/x-tnxb\r\nContent-Length: ")
+  l5:str = tezzapi.text._api_join2(l4, clen_s)
+  head:str = tezzapi.text._api_join2(l5, "\r\nX-Tezz-TNXB: 1\r\n\r\n")
+  resp:str = 0 as str
+  if secure != 0:
+    minv:int = tezzapi.state._get_TNXB_TLS_MIN_DEFAULT()
+    hs_ms:int = 0
+    pin:str = 0 as str
+    if policy != 0:
+      minv = (*policy).min_version
+      hs_ms = (*policy).handshake_timeout_ms
+      pin = (*policy).pin_sha256
+    h:int = net.tls_open_with_policy(host, port, minv, hs_ms, pin)
+    if h >= 0:
+      w0:int = net.tls_send_text(h, head)
+      w1:int = 0
+      if w0 >= 0:
+        w1 = net.tls_send_all(h, payload.buf, payload.len)
+      if w0 >= 0 && w1 >= 0:
+        resp = net.tls_recv_all(h, max_bytes)
+      net.tls_close_h(h)
+  else:
+    sock:int = net.tcp_socket()
+    if sock >= 0:
+      if timeout_ms > 0:
+        net.set_timeout(sock, timeout_ms)
+      if net.connect(sock, host, port) == 0:
+        w0:int = net.tcp_send_text(sock, head)
+        w1:int = 0
+        if w0 >= 0:
+          w1 = net.tcp_send_all(sock, payload.buf, payload.len)
+        if w0 >= 0 && w1 >= 0:
+          resp = net.tcp_recv_all(sock, max_bytes)
+      net.close(sock)
+  free(host)
+  if own_pathq != 0:
+    free(pathq)
+  free(clen_s)
+  free(l1)
+  free(l2)
+  free(l3)
+  free(l4)
+  free(l5)
+  free(head)
+  ret resp
+
+fn tnxb_http_post(url:str, payload:TnxbBuffer, timeout_ms:int, max_bytes:int) -> str:
+  ret tnxb_http_post_with_policy(url, payload, timeout_ms, max_bytes, 0 as *TnxbTlsPolicy)
+
+fn tnxb_http_reply_release(reply:*TnxbHttpReply) -> int:
+  if reply == 0:
+    ret 0 - 1
+  if (*reply).body != 0:
+    free((*reply).body)
+    (*reply).body = 0 as str
+  (*reply).ok = 0
+  (*reply).status = 0
+  ret 0
+
+fn tnxb_http_call_with_policy(url:str, op:int, route:str, body:str, timeout_ms:int, max_bytes:int, policy:*TnxbTlsPolicy) -> TnxbHttpReply:
+  out:TnxbHttpReply
+  out.ok = 0
+  out.status = 0
+  out.body = 0 as str
+
+  payload:TnxbBuffer = tnxb_encode(op, route, body)
+  if payload.buf == 0:
+    ret out
+
+  resp:str = tnxb_http_post_with_policy(url, payload, timeout_ms, max_bytes, policy)
+  tnxb_release(payload)
+  if resp == 0:
+    ret out
+
+  out.status = net.http_status_code(resp)
+  out.body = net.http_response_body_decoded(resp)
+  if out.body == 0:
+    out.body = net.http_response_body(resp)
+  if out.status >= 200 && out.status < 300 && out.body != 0:
+    out.ok = 1
+  free(resp)
+  ret out
+
+fn tnxb_http_call(url:str, op:int, route:str, body:str, timeout_ms:int, max_bytes:int) -> TnxbHttpReply:
+  ret tnxb_http_call_with_policy(url, op, route, body, timeout_ms, max_bytes, 0 as *TnxbTlsPolicy)
+
+// ─────────────────────────────────────────────────────────────
+// Legacy tezzserve.tn Compatibility Layer
+// ─────────────────────────────────────────────────────────────

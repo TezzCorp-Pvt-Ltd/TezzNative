@@ -48,7 +48,7 @@ struct Expr {
     struct { const char* name; int len; } name;
     struct { BinOp op; Expr* a; Expr* b; } bin;
     struct { UnOp op; Expr* e; } un;
-    struct { Expr* callee; Expr** args; int argc; } call;
+    struct { Expr* callee; Expr** args; int argc; Type* fn_ty; int is_extern; } call;
     struct { Expr* base; Expr* idx; } index;
     struct { Expr* base; const char* mem; int memlen; } dot;
     struct { Expr** items; int n; } arr;
@@ -176,6 +176,7 @@ struct Module {
   // imports are strings (paths)
   const char** imports;
   int import_n;
+  Module** import_modules; // resolved dependencies, in source import order
 
   StructDecl** structs;
   int struct_n;

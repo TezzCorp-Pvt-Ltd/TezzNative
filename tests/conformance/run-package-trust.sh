@@ -44,12 +44,12 @@ def required(rel):
     return path
 
 def read_text(rel):
-    with open(os.path.join(repo, rel), "r", encoding="ascii") as f:
+    with open(os.path.join(repo, rel), "r", encoding="utf-8") as f:
         return f.read()
 
 def read_kv(rel):
     out = {}
-    with open(os.path.join(repo, rel), "r", encoding="ascii") as f:
+    with open(os.path.join(repo, rel), "r", encoding="utf-8") as f:
         for raw in f:
             line = raw.strip()
             if not line or line.startswith("#"):
@@ -86,7 +86,7 @@ def hash8_source_file(path):
 
 def meta_line(rel, kind):
     path = os.path.join(repo, rel)
-    with open(path, "r", encoding="ascii") as f:
+    with open(path, "r", encoding="utf-8") as f:
         lines = [line.rstrip("\n").rstrip("\r") for line in f]
     if len(lines) < 2:
         raise AssertionError(f"{kind} file is empty")
@@ -103,7 +103,7 @@ def meta_line(rel, kind):
 
 def lock_entries(rel):
     rows = []
-    with open(os.path.join(repo, rel), "r", encoding="ascii") as f:
+    with open(os.path.join(repo, rel), "r", encoding="utf-8") as f:
         for raw in f:
             line = raw.strip()
             if not line or line.startswith("#"):
@@ -119,7 +119,7 @@ def lock_entries(rel):
 
 def registry_entries(rel):
     rows = []
-    with open(os.path.join(repo, rel), "r", encoding="ascii") as f:
+    with open(os.path.join(repo, rel), "r", encoding="utf-8") as f:
         for raw in f:
             line = raw.strip()
             if not line or line.startswith("#"):

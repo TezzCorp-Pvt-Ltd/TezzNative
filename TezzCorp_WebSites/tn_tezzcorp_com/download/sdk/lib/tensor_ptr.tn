@@ -1,0 +1,141 @@
+// Pointer compatibility for legacy ML APIs. Headers own their Tensor value.
+// Tensor storage is f64; unsupported typed storage returns null.
+// A view borrows its base storage, so the base must outlive the view.
+import "tensor"
+
+fn wrap(value:Tensor) -> *Tensor:
+  if value.data == 0 as *float || value.size <= 0:
+    tensor.tensor_free_tensor(value)
+    ret 0 as *Tensor
+  out:*Tensor = (*Tensor)malloc(sizeof(Tensor))
+  if out == 0 as *Tensor:
+    tensor.tensor_free_tensor(value)
+    ret out
+  tensor.tensor_store_p(out, value)
+  ret out
+
+fn create(shape:*int, rank:int, requires_grad:int) -> *Tensor:
+  if rank < 0 || rank > 8 || (rank > 0 && shape == 0 as *int):
+    ret 0 as *Tensor
+  layout:Tensor = tensor.tensor_empty_raw(0, 0, 0, 0, 0)
+  layout.ndim = rank
+  layout.size = 1
+  i:int = 0
+  while i < rank:
+    unsafe:
+      if shape[i] <= 0: ret 0 as *Tensor
+      layout = tensor.tensor_set_shape(layout, i, shape[i])
+    i = i + 1
+  value:Tensor = tensor._tensor_alloc_shape(layout)
+  if value.data == 0 as *float: ret 0 as *Tensor
+  tensor.tensor_fill(value, 0.0)
+  if requires_grad != 0:
+    value = tensor.tensor_require_grad(value)
+    if value.grad == 0 as *Tensor:
+      tensor.tensor_free_tensor(value)
+      ret 0 as *Tensor
+  ret wrap(value)
+
+fn create_dtype(shape:*int, rank:int, dtype:int, requires_grad:int) -> *Tensor:
+  if dtype != tensor.tensor_dtype_f64(): ret 0 as *Tensor
+  ret create(shape, rank, requires_grad)
+
+fn release(value:*Tensor) -> int:
+  if value == 0 as *Tensor: ret 0
+  tensor.tensor_free_tensor(*value)
+  free(value as *char)
+  ret 0
+
+fn get_f(value:*Tensor, index:int) -> float:
+  if value == 0 as *Tensor || index < 0 || index >= value.size: ret 0.0
+  unsafe:
+    ret value.data[tensor._tensor_unravel_offset(*value, index)]
+
+fn set_f(value:*Tensor, index:int, v:float) -> int:
+  if value == 0 as *Tensor || value.data == 0 as *float || index < 0 || index >= value.size: ret 0 - 1
+  unsafe:
+    value.data[tensor._tensor_unravel_offset(*value, index)] = v
+  ret 0
+
+fn from_slice(values:*float, shape:*int, rank:int, requires_grad:int) -> *Tensor:
+  if values == 0 as *float: ret 0 as *Tensor
+  out:*Tensor = create(shape, rank, requires_grad)
+  if out == 0 as *Tensor: ret out
+  memcpy(out.data as *char, values as *char, out.size * 8)
+  ret out
+
+fn view(base:*Tensor, shape:*int, strides:*int, rank:int, offset:int) -> *Tensor:
+  if base == 0 as *Tensor || base.data == 0 as *float || rank < 0 || rank > 8 || offset < 0:
+    ret 0 as *Tensor
+  if rank > 0 && (shape == 0 as *int || strides == 0 as *int): ret 0 as *Tensor
+  if tensor.tensor_is_contiguous(*base) == 0: ret 0 as *Tensor
+  out:Tensor = *base
+  out.ndim = rank
+  out.size = 1
+  out.offset = base.offset + offset
+  out.is_view = 1
+  span:int = offset
+  i:int = 0
+  while i < rank:
+    unsafe:
+      d:int = shape[i]
+      step:int = strides[i]
+      if d <= 0 || step < 0 || out.size > 1152921504606846975 / d: ret 0 as *Tensor
+      if d > 1 && step > (base.size - 1 - span) / (d - 1): ret 0 as *Tensor
+      span = span + (d - 1) * step
+      out.size = out.size * d
+      out = tensor.tensor_set_shape(out, i, d)
+      out = tensor.tensor_set_stride(out, i, step)
+    i = i + 1
+  if span >= base.size: ret 0 as *Tensor
+  out = tensor._tensor_track_view(out, *base)
+  ret wrap(out)
+
+fn matmul_ex(a:*Tensor, b:*Tensor, trans_a:int, trans_b:int) -> *Tensor:
+  if a == 0 as *Tensor || b == 0 as *Tensor: ret 0 as *Tensor
+  av:Tensor = *a
+  bv:Tensor = *b
+  if trans_a != 0: av = tensor.tensor_transpose(*a, 0, 1)
+  if trans_b != 0: bv = tensor.tensor_transpose(*b, 0, 1)
+  out:Tensor = tensor.tensor_matmul(av, bv)
+  if trans_a != 0: tensor.tensor_free_tensor(av)
+  if trans_b != 0: tensor.tensor_free_tensor(bv)
+  ret wrap(out)
+
+fn add(a:*Tensor, b:*Tensor) -> *Tensor:
+  if a == 0 as *Tensor || b == 0 as *Tensor: ret 0 as *Tensor
+  ret wrap(tensor.tensor_add(*a, *b))
+
+fn sub(a:*Tensor, b:*Tensor) -> *Tensor:
+  if a == 0 as *Tensor || b == 0 as *Tensor: ret 0 as *Tensor
+  ret wrap(tensor.tensor_sub(*a, *b))
+
+fn mul(a:*Tensor, b:*Tensor) -> *Tensor:
+  if a == 0 as *Tensor || b == 0 as *Tensor: ret 0 as *Tensor
+  ret wrap(tensor.tensor_mul(*a, *b))
+
+fn div(a:*Tensor, b:*Tensor) -> *Tensor:
+  if a == 0 as *Tensor || b == 0 as *Tensor: ret 0 as *Tensor
+  ret wrap(tensor.tensor_div(*a, *b))
+
+fn matmul(a:*Tensor, b:*Tensor) -> *Tensor:
+  if a == 0 as *Tensor || b == 0 as *Tensor: ret 0 as *Tensor
+  ret wrap(tensor.tensor_matmul(*a, *b))
+
+fn relu(a:*Tensor) -> *Tensor:
+  if a == 0 as *Tensor: ret 0 as *Tensor
+  ret wrap(tensor.tensor_relu(*a))
+
+fn sigmoid(a:*Tensor) -> *Tensor:
+  if a == 0 as *Tensor: ret 0 as *Tensor
+  ret wrap(tensor.tensor_sigmoid(*a))
+
+fn sum(a:*Tensor) -> *Tensor:
+  if a == 0 as *Tensor: ret 0 as *Tensor
+  ret wrap(tensor.tensor_sum_all_t(*a))
+
+fn mean(a:*Tensor) -> *Tensor:
+  if a == 0 as *Tensor: ret 0 as *Tensor
+  ret wrap(tensor.tensor_mean_all_t(*a))
+
+

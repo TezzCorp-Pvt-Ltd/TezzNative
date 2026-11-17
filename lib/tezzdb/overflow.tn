@@ -1,0 +1,68 @@
+// Overflow values use chained pages; freed rows leave pages reusable only by a
+// future compactor. Each page stores its byte count at offset 12.
+import "tezzdb.state"
+import "tezzdb.storage"
+
+fn _overflow_store(db:*TezzDb, value:*char, length:int) -> int:
+  if db == 0 || value == 0 || length <= 0 || length > 2147483647: ret 0
+  first:int = 0
+  previous:int = 0
+  written:int = 0
+  while written < length:
+    page:*DbPage = tezzdb.storage._page_new(db, tezzdb.state._get_DB_PAGE_OVERFLOW())
+    if page == 0: ret 0
+    pid:int = (*page).page_id
+    chunk:int = length - written
+    if chunk > 8176: chunk = 8176
+    memcpy((*page).data + 16, value + written, chunk)
+    tezzdb.storage._db_w32_le((*page).data, 12, chunk)
+    if first == 0: first = pid
+    if previous != 0:
+      prior:*DbPage = tezzdb.storage._page_load(db, previous)
+      if prior == 0: ret 0
+      tezzdb.storage._db_w32_le((*prior).data, 8, pid)
+      (*prior).dirty = 1
+    previous = pid
+    written = written + chunk
+  ret first
+
+fn _overflow_read(db:*TezzDb, first:int, length:int) -> str:
+  if db == 0 || first < 2 || length <= 0 || length > 2147483647 || length > (*db).page_count * 8176: ret 0 as str
+  output:*char = malloc(length + 1)
+  if output == 0: ret 0 as str
+  pid:int = first
+  written:int = 0
+  visited:int = 0
+  while written < length:
+    if visited >= (*db).page_count: break
+    page:*DbPage = tezzdb.storage._page_load(db, pid)
+    if page == 0: break
+    if tezzdb.storage._db_r32_le((*page).data, 0) != tezzdb.state._get_DB_PAGE_OVERFLOW(): break
+    chunk:int = tezzdb.storage._db_r32_le((*page).data, 12)
+    if chunk <= 0 || chunk > 8176 || chunk > length - written: break
+    next_page:int = tezzdb.storage._db_r32_le((*page).data, 8)
+    memcpy(output + written, (*page).data + 16, chunk)
+    written = written + chunk
+    visited = visited + 1
+    pid = next_page
+    if written == length && pid == 0:
+      output[length] = 0 as char
+      ret output as str
+    if pid < 2 || pid >= (*db).page_count: break
+  free(output)
+  ret 0 as str
+
+fn _leaf_value(db:*TezzDb, page:*DbPage, index:int) -> str:
+  if db == 0 || page == 0 || index < 0 || index >= tezzdb.storage._leaf_count(page): ret 0 as str
+  offset:int = tezzdb.storage._leaf_entry_offset(page, index)
+  if offset < 16 || offset > 8192 - 12: ret 0 as str
+  length:int = tezzdb.storage._db_r32_le((*page).data, offset + 8)
+  if length > tezzdb.state._get_DB_MAX_INLINE_VAL():
+    first:int = tezzdb.storage._db_r32_le((*page).data, offset + 12)
+    ret _overflow_read(db, first, length)
+  if length < 0 || length > 8192 - offset - 12: ret 0 as str
+  output:*char = malloc(length + 1)
+  if output == 0: ret 0 as str
+  memcpy(output, (*page).data + offset + 12, length)
+  output[length] = 0 as char
+  ret output as str

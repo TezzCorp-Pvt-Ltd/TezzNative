@@ -537,7 +537,7 @@ static void normalize_path_inplace(char* p){
 
     if(out!=p && out[-1]!='/') *out++ = '/';
     char* seg_start = out;
-    memcpy(out, seg, (size_t)len);
+    memmove(out, seg, (size_t)len);
     out += len;
     if(sp<256) segs[sp++] = seg_start;
   }
@@ -722,8 +722,10 @@ Module* mg_load(ModuleGraph* G, TypeEnv* tenv, const char* base_dir, const char*
 
   // recursively load imports
   char* mod_base = dirname_of(path);
+  if(M->import_n) M->import_modules = (Module**)calloc((size_t)M->import_n, sizeof(Module*));
+  if(M->import_n && !M->import_modules) die("out of memory");
   for(int i=0;i<M->import_n;i++){
-    (void)mg_load(G, tenv, mod_base, M->imports[i]);
+    M->import_modules[i] = mg_load(G, tenv, mod_base, M->imports[i]);
   }
   free(mod_base);
 

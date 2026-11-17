@@ -1,0 +1,23 @@
+import "tezzdb"
+
+fn main() -> int:
+  unsafe:
+    remove("truncated_file.tdb")
+    remove("truncated_file.tdb.wal")
+    db:*TezzDb = tezzdb.open("truncated_file.tdb")
+    if db == 0: ret 1
+    tezzdb.table_create(db, "items")
+    tezzdb.close(db)
+    data:*char = malloc(8192)
+    h:*char = fopen("truncated_file.tdb", "rb")
+    fread(data, 1, 8192, h)
+    fclose(h)
+    h = fopen("truncated_file.tdb", "wb")
+    fwrite(data, 1, 8192, h)
+    fclose(h)
+    free(data)
+    db = tezzdb.open("truncated_file.tdb")
+    if db != 0:
+      say "FAIL: missing database pages must not be silently zero-filled"
+      ret 1
+    ret 0

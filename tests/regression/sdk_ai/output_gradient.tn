@@ -1,0 +1,16 @@
+import "tztensor"
+import "./support/lib/values.tn"
+
+fn main() -> int:
+  x:int = tztensor.tensor_new_1d(1, 1)
+  values.write(x, 0, 2.0)
+  y:int = tztensor.tensor_new_1d(1, 0)
+  status:int = tztensor.tensor_relu(x, y)
+  status = status + tztensor.tensor_backward(y)
+  failed:int = 0
+  if status != 0 || tztensor.tensor_requires_grad(y) != 1 || values.gradient(x, 0) != 1.0:
+    failed = 1
+  tztensor.tensor_free(y)
+  tztensor.tensor_free(x)
+  if failed != 0: say "FAIL: SDK explicit output must acquire a gradient when an input is tracked"
+  ret failed

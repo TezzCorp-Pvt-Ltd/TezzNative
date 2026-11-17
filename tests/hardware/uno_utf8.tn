@@ -1,0 +1,10 @@
+import "arduino.uno"
+
+fn main() -> int:
+  text:str = "éA"
+  unsafe:
+    bytes:*char = text as *char
+    if bytes[0] != 195 as char: ret 1
+    if bytes[1] != 169 as char: ret 2
+    if bytes[2] != 65 as char || bytes[3] != 0 as char: ret 3
+  ret 0

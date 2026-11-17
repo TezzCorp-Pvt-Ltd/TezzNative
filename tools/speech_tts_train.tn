@@ -1,0 +1,119 @@
+// Own native aligned text-to-mel prototype. No external speech model.
+// train/resume/validate manifest.tsv stt.tns tts.tns epochs limit
+// synthesize tts.tns text output.wav
+import "../lib/stt.tn"
+import "../lib/tts.tn"
+import "./speech_train.tn"
+
+extern fn speech_tts_loss(handle:int, mel:*float, frames:int, labels:*int, count:int, alignment:*int, loss:*float) -> int
+
+fn epoch(engine:*TtsEngine, recognizer:*SttEngine, manifest:str, limit:int, training:int) -> int:
+  unsafe:
+    file:*char = fopen(manifest, "rb")
+    if file == 0: ret -1
+    labels:[int;448]
+    alignment:[int;3000]
+    count:int = 0
+    total:float = 0.0
+    duration_error:float = 0.0
+    reference_seconds:float = 0.0
+    generated_seconds:float = 0.0
+    while count < limit:
+      line:str = tools.speech_train.manifest_line(file)
+      if line == 0: break
+      n:int = len(line)
+      separator:int = 0
+      while separator < n && line[separator] != 9 as char:
+        separator = separator + 1
+      if separator == 0 || separator == n:
+        free(line)
+        fclose(file)
+        ret -1
+      line[separator] = 0 as char
+      text:str = ((line as *char) + separator + 1) as str
+      length:int = len(text)
+      while length > 0 && text[length - 1] == 13 as char:
+        length = length - 1
+        text[length] = 0 as char
+      label_count:int = tts.tts_encode_text(text, &labels[0], 448)
+      alignment_loss:float = 0.0
+      if label_count < 1 || stt.stt_align_file(recognizer, line, &labels[0], label_count, &alignment[0], 3000, &alignment_loss) != 0:
+        say "ALIGN_ERROR", line
+        free(line)
+        fclose(file)
+        ret -1
+      loss:float = 0.0
+      result:int = -1
+      if training != 0:
+        result = tts.tts_train_mel(engine, (*recognizer).mel_buf, (*recognizer).mel_frames, &labels[0], label_count, &alignment[0], 1000, &loss)
+      else:
+        result = speech_tts_loss((*engine).model_handle, (*recognizer).mel_buf, (*recognizer).mel_frames, &labels[0], label_count, &alignment[0], &loss)
+      if result != 0:
+        say "MODEL_ERROR", line
+        free(line)
+        fclose(file)
+        ret -1
+      if training == 0:
+        predicted:*float = (*float)malloc(sizeof(float) * 3000 * 80)
+        if predicted == 0:
+          free(line)
+          fclose(file)
+          ret -1
+        predicted_frames:int = tts.speech_tts_mel((*engine).model_handle, &labels[0], label_count, predicted, 3000, 1000000)
+        free(predicted as *char)
+        if predicted_frames < 1:
+          free(line)
+          fclose(file)
+          ret -1
+        difference:int = predicted_frames - (*recognizer).mel_frames
+        if difference < 0: difference = 0 - difference
+        duration_error = duration_error + (difference as float) * 0.01
+        reference_seconds = reference_seconds + ((*recognizer).mel_frames as float) * 0.01 + 0.015
+        generated_seconds = generated_seconds + (predicted_frames as float) * 0.01 + 0.015
+      total = total + loss
+      count = count + 1
+      free(line)
+    fclose(file)
+    if count == 0: ret -1
+    say "TTS_ITEMS", count, "NORMALIZED_MEL_MSE", total / (count as float), "STEPS", tts.tts_training_steps(engine)
+    if training == 0:
+      say "DURATION_REFERENCE_MEAN_SECONDS", reference_seconds / (count as float), "GENERATED_MEAN_SECONDS", generated_seconds / (count as float), "MAE_SECONDS", duration_error / (count as float)
+    ret 0
+
+fn main() -> int:
+  unsafe:
+    if args_count() < 4: ret 2
+    command:str = arg(0)
+    engine:*TtsEngine = tts.tts_new()
+    if engine == 0: ret 3
+    say "SPEECH_DEVICE cpu; own native text-to-mel, duration, NNLS and Griffin-Lim"
+    result:int = -1
+    if strcmp(command, "synthesize") == 0:
+      if tts.tts_load_model(engine, arg(1)) == 0:
+        result = tts.tts_speak_to_file(engine, arg(3), arg(2))
+    else if args_count() >= 6:
+      recognizer:*SttEngine = stt.stt_new()
+      epochs:int = tools.speech_train.positive(arg(4), 10000)
+      limit:int = tools.speech_train.positive(arg(5), 20000)
+      if recognizer != 0 && epochs > 0 && limit > 0 && stt.stt_load_model(recognizer, arg(2)) == 0:
+        training:int = 1
+        ready:int = -1
+        if strcmp(command, "train") == 0:
+          ready = tts.tts_create_trainable(engine, 64, 42)
+        else if strcmp(command, "resume") == 0 || strcmp(command, "validate") == 0:
+          ready = tts.tts_load_model(engine, arg(3))
+          if strcmp(command, "validate") == 0: training = 0
+        if ready == 0:
+          i:int = 0
+          while i < epochs:
+            say "EPOCH", i + 1
+            result = epoch(engine, recognizer, arg(1), limit, training)
+            if result != 0: break
+            if training != 0:
+              result = tts.tts_save_model(engine, arg(3))
+              if result != 0: break
+            i = i + 1
+      if recognizer != 0: stt.stt_free(recognizer)
+    tts.tts_free(engine)
+    if result != 0: ret 1
+    ret 0

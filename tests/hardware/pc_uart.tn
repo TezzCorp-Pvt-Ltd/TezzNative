@@ -1,0 +1,22 @@
+extern fn tn_hw_uart_write(pointer:int, length:int) -> int
+extern fn tn_hw_uart_read(pointer:int, capacity:int) -> int
+extern fn tn_hw_micros() -> int
+
+fn main() -> int:
+  unsafe:
+    ready:str = "TEZZ_HW_READY\n"
+    if tn_hw_uart_write(ready as int, 14) != 14: ret 1
+    buffer:[char;4] = [0 as char, 0 as char, 0 as char, 90 as char]
+    count:int = 0
+    start:int = tn_hw_micros()
+    while count < 3:
+      n:int = tn_hw_uart_read((&buffer[count]) as int, 3 - count)
+      if n < 0: ret 2
+      count = count + n
+      if tn_hw_micros() - start > 2000000: ret 3
+    if buffer[0] != 65 as char || buffer[1] != 0 as char || buffer[2] != 122 as char: ret 4
+    if buffer[3] != 90 as char: ret 5
+    if tn_hw_uart_write((&buffer[0]) as int, 3) != 3: ret 6
+    ok:str = "\nTEZZ_HW_UART_OK\n"
+    if tn_hw_uart_write(ok as int, 17) != 17: ret 7
+  ret 0

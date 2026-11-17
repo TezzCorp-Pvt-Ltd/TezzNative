@@ -1,31 +1,26 @@
-// tts module — TezzNative 2.0 Native Text-to-Speech Engine
-//
-// Bundled neural TTS inference — no OS API dependencies.
-// Also provides lightweight rule-based fallback for fast speech.
-//
-// Architecture:
-//   1. Text normalization (numbers, abbreviations, punctuation)
-//   2. Phoneme conversion (letter-to-sound rules + exception dict)
-//   3. Prosody: stress, intonation, duration models
-//   4. Neural vocoder (Griffin-Lim or WORLD-style spectral synthesis)
-//   5. WAV/PCM output to file or speaker via OS audio API
-//
-// Usage:
-//   tts:*TtsEngine = tts_new()
-//   tts_speak(tts, "Hello, world!")           // play via speaker
-//   tts_speak_to_file(tts, "hi.wav", "Hello") // save WAV
-//   tts_set_voice(tts, "en-US-female")
-//   tts_set_rate(tts, 1.2)
-//   tts_set_pitch(tts, 0.9)
-//   tts_free(tts)
+// package-file tts/text.tn 5913CC39
+// Native speech text and PCM frontend.
+// Native trainable text-to-mel/duration baseline with own phase reconstruction.
+// Untrained states cannot synthesize. Intelligibility requires measured training;
+// OS speech services and letter oscillators never substitute for model inference.
+// Internal phoneme/acoustic helpers are preprocessing primitives only.
+// PCM playback uses the host audio device, independently of speech inference.
 
 import "io"
 import "math"
-import "nn"
+import "tts.text"
 
-extern fn system(cmd:str) -> int
-extern fn tts_speak_text(text:str) -> int
+
+
 extern fn tts_play_pcm(pcm:*int, len:int, rate:int) -> int
+extern fn speech_tts_create(hidden:int, seed:int) -> int
+extern fn speech_tts_free(handle:int) -> int
+extern fn speech_tts_load(path:str) -> int
+extern fn speech_tts_save(handle:int, path:str) -> int
+extern fn speech_tts_steps(handle:int) -> int
+extern fn speech_tts_train(handle:int, mel:*float, frames:int, labels:*int, count:int, alignment:*int, rate_ppm:int, loss:*float) -> int
+extern fn speech_tts_mel(handle:int, labels:*int, count:int, mel:*float, capacity:int, speed_ppm:int) -> int
+extern fn speech_tts_pcm(handle:int, labels:*int, count:int, pcm:*int, capacity:int, speed_ppm:int, pitch_ppm:int, energy_ppm:int) -> int
 
 // ─────────────────────────────────────────────────────────────
 // Constants
@@ -67,6 +62,7 @@ struct TtsEngine:
   model_loaded:int   // 1 if neural model weights are loaded
   model_weights:*char // raw weight data (mmap or loaded)
   model_size:int
+  model_handle:int   // native validated checkpoint or initialized training state
   use_neural:int     // 1 to use neural vocoder, 0 for rule-based
   out_path:str       // if set, write to this file instead of speaker
 
@@ -75,136 +71,24 @@ struct TtsEngine:
 // ─────────────────────────────────────────────────────────────
 
 fn _tts_strdup(s:str) -> str:
-  if s == 0: ret 0 as str
-  n:int = len(s)
-  p:*char = malloc(n + 1)
-  if p == 0: ret 0 as str
-  unsafe:
-    memcpy(p, s as *char, n)
-  p[n] = 0 as char
-  ret p as str
+  ret tts.text._tts_strdup(s)
 
 fn _tts_join2(a:str, b:str) -> str:
-  if a == 0: ret _tts_strdup(b)
-  if b == 0: ret _tts_strdup(a)
-  na:int = len(a)
-  nb:int = len(b)
-  p:*char = malloc(na + nb + 1)
-  if p == 0: ret 0 as str
-  unsafe:
-    memcpy(p, a as *char, na)
-    memcpy(p + na, b as *char, nb)
-  p[na+nb] = 0 as char
-  ret p as str
+  ret tts.text._tts_join2(a, b)
 
 fn _tts_itoa_words(n:int) -> str:
-  // Convert integer to English words for TTS normalization
-  if n < 0:
-    pos:str = _tts_itoa_words(0 - n)
-    out:str = _tts_join2("negative ", pos)
-    free(pos)
-    ret out
-  if n == 0: ret _tts_strdup("zero")
-  ones:[str;20]
-  ones[0] = ""; ones[1] = "one"; ones[2] = "two"; ones[3] = "three"
-  ones[4] = "four"; ones[5] = "five"; ones[6] = "six"; ones[7] = "seven"
-  ones[8] = "eight"; ones[9] = "nine"; ones[10] = "ten"; ones[11] = "eleven"
-  ones[12] = "twelve"; ones[13] = "thirteen"; ones[14] = "fourteen"
-  ones[15] = "fifteen"; ones[16] = "sixteen"; ones[17] = "seventeen"
-  ones[18] = "eighteen"; ones[19] = "nineteen"
-  tens:[str;10]
-  tens[0] = ""; tens[1] = ""; tens[2] = "twenty"; tens[3] = "thirty"
-  tens[4] = "forty"; tens[5] = "fifty"; tens[6] = "sixty"
-  tens[7] = "seventy"; tens[8] = "eighty"; tens[9] = "ninety"
-  if n < 20: ret _tts_strdup(ones[n])
-  if n < 100:
-    t:str = tens[n / 10]
-    r:int = n % 10
-    if r == 0: ret _tts_strdup(t)
-    out:str = _tts_join2(t, " ")
-    out2:str = _tts_join2(out, ones[r])
-    free(out)
-    ret out2
-  if n < 1000:
-    h:str = ones[n / 100]
-    hstr:str = _tts_join2(h, " hundred")
-    rem:int = n % 100
-    if rem == 0: ret hstr
-    rstr:str = _tts_itoa_words(rem)
-    out:str = _tts_join2(hstr, " ")
-    out2:str = _tts_join2(out, rstr)
-    free(hstr); free(rstr); free(out)
-    ret out2
-  if n < 1000000:
-    t:str = _tts_itoa_words(n / 1000)
-    ts:str = _tts_join2(t, " thousand")
-    free(t)
-    rem:int = n % 1000
-    if rem == 0: ret ts
-    rstr:str = _tts_itoa_words(rem)
-    out:str = _tts_join2(ts, " ")
-    out2:str = _tts_join2(out, rstr)
-    free(ts); free(rstr); free(out)
-    ret out2
-  ret _tts_strdup("many")
+  ret tts.text._tts_itoa_words(n)
 
 fn _tts_normalize(text:str) -> str:
-  if text == 0: ret 0 as str
-  n:int = len(text)
-  out:*char = malloc(n * 4 + 16)  // expansion room for number words
-  if out == 0: ret 0 as str
-  oi:int = 0
-  i:int = 0
-  while i < n:
-    c:int = (text as *char)[i] as int
-    // Convert digits to words
-    if c >= 48 && c <= 57:
-      num:int = 0
-      while i < n:
-        d:int = (text as *char)[i] as int
-        if d < 48 || d > 57: break
-        num = num * 10 + (d - 48)
-        i = i + 1
-      words:str = _tts_itoa_words(num)
-      wlen:int = len(words)
-      if oi + wlen + 2 < n * 4 + 16:
-        unsafe:
-          if oi > 0 && out[oi - 1] != 32 as char:
-            out[oi] = 32 as char
-            oi = oi + 1
-          memcpy(out + oi, words as *char, wlen)
-        oi = oi + wlen
-      free(words)
-      continue
-    // Common abbreviations
-    if c == 77 && i + 2 < n:  // 'M'
-      if (text as *char)[i+1] == 114 as char && (text as *char)[i+2] == 46 as char:  // 'r.'
-        unsafe:
-          out[oi] = 77 as char; out[oi+1] = 105 as char; out[oi+2] = 115 as char
-          out[oi+3] = 116 as char; out[oi+4] = 101 as char; out[oi+5] = 114 as char
-        oi = oi + 6
-        i = i + 3
-        continue
-    // Convert punctuation to pauses
-    if c == 46 || c == 33 || c == 63:  // '. ! ?'
-      out[oi] = 46 as char  // period for pause
-      oi = oi + 1
-      out[oi] = 32 as char  // space
-      oi = oi + 1
-      i = i + 1
-      continue
-    if c == 44:  // ','
-      out[oi] = 44 as char
-      oi = oi + 1
-      out[oi] = 32 as char
-      oi = oi + 1
-      i = i + 1
-      continue
-    out[oi] = c as char
-    oi = oi + 1
-    i = i + 1
-  out[oi] = 0 as char
-  ret out as str
+  ret tts.text._tts_normalize(text)
+
+// Caller owns the returned canonical text; null means unsupported input.
+fn tts_normalize_text(text:str) -> str:
+  ret tts.text.normalize(text)
+
+// Checkpoint alphabet: space=1, apostrophe=2, a..z=3..28. No partial writes.
+fn tts_encode_text(text:str, labels:*int, capacity:int) -> int:
+  ret tts.text.encode(text, labels, capacity)
 
 // ─────────────────────────────────────────────────────────────
 // Letter-to-sound rules (simplified English phoneme mapping)
@@ -245,7 +129,7 @@ fn _tts_letter_to_phoneme(c:int) -> str:
   ret " "
 
 // ─────────────────────────────────────────────────────────────
-// Spectral synthesis (rule-based Griffin-Lim vocoder)
+// Internal oscillator primitive, not a trained speech decoder or fallback.
 //
 // For each phoneme, generates sinusoidal PCM samples.
 // Formant frequencies approximate human speech vowels/consonants.
@@ -263,9 +147,15 @@ fn _tts_phoneme_formants(ph:str) -> Formants:
   out.f2 = 1200
   out.f3 = 2400
   out.duration_ms = 80
-  if ph == 0: ret out
+  if ph == 0:
+    out.f1 = 0; out.f2 = 0; out.f3 = 0
+    ret out
   p0:int = (ph as *char)[0] as int
-  p1:int = (ph as *char)[1] as int
+  p1:int = 0
+  if p0 != 0: p1 = (ph as *char)[1] as int
+  if p0 <= 32:
+    out.f1 = 0; out.f2 = 0; out.f3 = 0
+    ret out
   // Vowels
   if p0 == 97 && p1 == 101:  // "ae" (a)
     out.f1 = 800; out.f2 = 1770; out.f3 = 2580; out.duration_ms = 120
@@ -298,12 +188,21 @@ fn _tts_phoneme_formants(ph:str) -> Formants:
 
 fn _tts_gen_samples(eng:*TtsEngine, f1:int, f2:int, f3:int, dur_ms:int, pitch:float) -> int:
   // Generate PCM samples for one phoneme
-  n_samples:int = (TTS_SAMPLE_RATE * dur_ms) / 1000
+  if eng == 0 || dur_ms <= 0 || dur_ms > 1000: ret TTS_ERR
+  if (*eng).voices == 0 || (*eng).current_voice < 0 || (*eng).current_voice >= (*eng).voice_count: ret TTS_ERR
+  if (*eng).sample_rate < 8000 || (*eng).sample_rate > 192000: ret TTS_ERR
+  if pitch != pitch || pitch < 0.1 || pitch > 4.0: ret TTS_ERR
+  n_samples:int = ((*eng).sample_rate * dur_ms) / 1000
   rate:float = (*eng).voices[(*eng).current_voice].rate
-  if rate > 0.1:
-    n_samples = (n_samples as float / rate) as int
+  if rate != rate || rate < 0.1 || rate > 10.0: ret TTS_ERR
+  energy:float = (*eng).voices[(*eng).current_voice].energy
+  if energy != energy || energy < 0.0 || energy > 4.0: ret TTS_ERR
+  if f1 < 0 || f2 < 0 || f3 < 0 || f1 > (*eng).sample_rate / 2 || f2 > (*eng).sample_rate / 2 || f3 > (*eng).sample_rate / 2: ret TTS_ERR
+  if (*eng).pcm_len < 0 || (*eng).pcm_len > (*eng).sample_rate * 300: ret TTS_ERR
+  n_samples = (n_samples as float / rate) as int
   // Ensure buffer
   needed:int = (*eng).pcm_len + n_samples + 4
+  if needed > (*eng).sample_rate * 300: ret TTS_ERR
   if needed > (*eng).pcm_cap:
     nc:int = needed * 2
     nb:*int = (*int)malloc(sizeof(int) * nc)
@@ -318,7 +217,7 @@ fn _tts_gen_samples(eng:*TtsEngine, f1:int, f2:int, f3:int, dur_ms:int, pitch:fl
   pi2:float = 6.283185307
   i:int = 0
   while i < n_samples:
-    t:float = (i as float) / TTS_SAMPLE_RATE as float
+    t:float = (i as float) / ((*eng).sample_rate as float)
     sample:float = 0.0
     if f1 > 0:
       freq1:float = (f1 as float) * pitch
@@ -349,20 +248,66 @@ fn _tts_gen_samples(eng:*TtsEngine, f1:int, f2:int, f3:int, dur_ms:int, pitch:fl
 fn _tts_synthesize(eng:*TtsEngine, text:str) -> int:
   if eng == 0 || text == 0: ret TTS_ERR
   (*eng).pcm_len = 0
-  // Normalize text
-  norm:str = _tts_normalize(text)
-  if norm == 0: ret TTS_ERR
-  n:int = len(norm)
-  pitch:float = (*eng).voices[(*eng).current_voice].pitch
-  i:int = 0
-  while i < n:
-    c:int = (norm as *char)[i] as int
-    ph:str = _tts_letter_to_phoneme(c)
-    fmts:Formants = _tts_phoneme_formants(ph)
-    _tts_gen_samples(eng, fmts.f1, fmts.f2, fmts.f3, fmts.duration_ms, pitch)
-    i = i + 1
-  free(norm)
+  if (*eng).model_loaded == 0 || (*eng).model_handle <= 0: ret TTS_ERR
+  labels:[int;448]
+  count:int = tts_encode_text(text, &labels[0], 448)
+  if count < 1: ret TTS_ERR
+  if (*eng).pcm_cap < 480000:
+    buffer:*int = (*int)malloc(sizeof(int) * 480000)
+    if buffer == 0: ret TTS_ERR
+    if (*eng).pcm_buf != 0: free((*eng).pcm_buf as *char)
+    (*eng).pcm_buf = buffer
+    (*eng).pcm_cap = 480000
+  voice:*TtsVoice = &(*eng).voices[(*eng).current_voice]
+  samples:int = speech_tts_pcm((*eng).model_handle, &labels[0], count, (*eng).pcm_buf, (*eng).pcm_cap, ((*voice).rate * 1000000.0) as int, ((*voice).pitch * 1000000.0) as int, ((*voice).energy * 1000000.0) as int)
+  if samples <= 0: ret TTS_ERR
+  (*eng).pcm_len = samples
+  (*eng).sample_rate = 16000
   ret TTS_OK
+
+fn tts_load_model(eng:*TtsEngine, model_path:str) -> int:
+  if eng == 0: ret TTS_ERR
+  (*eng).model_loaded = 0
+  (*eng).use_neural = 0
+  if (*eng).model_handle > 0: speech_tts_free((*eng).model_handle)
+  (*eng).model_handle = 0
+  if (*eng).model_weights != 0: free((*eng).model_weights)
+  (*eng).model_weights = 0 as *char
+  (*eng).model_size = 0
+  (*eng).pcm_len = 0
+  if model_path == 0: ret TTS_ERR
+  handle:int = speech_tts_load(model_path)
+  if handle <= 0: ret TTS_ERR
+  (*eng).model_handle = handle
+  (*eng).model_loaded = 1
+  (*eng).use_neural = 1
+  (*eng).sample_rate = 16000
+  ret TTS_OK
+
+fn tts_create_trainable(eng:*TtsEngine, hidden:int, seed:int) -> int:
+  if eng == 0: ret TTS_ERR
+  if (*eng).model_handle > 0: speech_tts_free((*eng).model_handle)
+  (*eng).model_loaded = 0
+  (*eng).use_neural = 0
+  (*eng).pcm_len = 0
+  (*eng).model_handle = speech_tts_create(hidden, seed)
+  if (*eng).model_handle <= 0: ret TTS_ERR
+  ret TTS_OK
+
+fn tts_train_mel(eng:*TtsEngine, mel:*float, frames:int, labels:*int, count:int, alignment:*int, rate_ppm:int, loss:*float) -> int:
+  if eng == 0 || (*eng).model_handle <= 0: ret TTS_ERR
+  if speech_tts_train((*eng).model_handle, mel, frames, labels, count, alignment, rate_ppm, loss) != 0: ret TTS_ERR
+  (*eng).model_loaded = 1
+  (*eng).use_neural = 1
+  ret TTS_OK
+
+fn tts_save_model(eng:*TtsEngine, path:str) -> int:
+  if eng == 0 || (*eng).model_handle <= 0 || path == 0: ret TTS_ERR
+  ret speech_tts_save((*eng).model_handle, path)
+
+fn tts_training_steps(eng:*TtsEngine) -> int:
+  if eng == 0 || (*eng).model_handle <= 0: ret 0
+  ret speech_tts_steps((*eng).model_handle)
 
 // ─────────────────────────────────────────────────────────────
 // WAV file writer
@@ -370,6 +315,7 @@ fn _tts_synthesize(eng:*TtsEngine, text:str) -> int:
 
 fn _tts_write_wav(path:str, pcm:*int, n_samples:int, sample_rate:int) -> int:
   if path == 0 || pcm == 0 || n_samples <= 0: ret TTS_ERR
+  if sample_rate < 8000 || sample_rate > 192000 || n_samples > sample_rate * 300: ret TTS_ERR
   h:*char = fopen(path, "wb")
   if h == 0 as *char: ret TTS_ERR
   // WAV header (44 bytes)
@@ -397,17 +343,20 @@ fn _tts_write_wav(path:str, pcm:*int, n_samples:int, sample_rate:int) -> int:
   hdr[36] = 100 as char; hdr[37] = 97 as char; hdr[38] = 116 as char; hdr[39] = 97 as char  // "data"
   hdr[40] = (data_bytes & 255) as char; hdr[41] = ((data_bytes >> 8) & 255) as char
   hdr[42] = ((data_bytes >> 16) & 255) as char; hdr[43] = ((data_bytes >> 24) & 255) as char
-  fwrite(&hdr[0], 1, 44, h)
+  if fwrite(&hdr[0], 1, 44, h) != 44:
+    if fclose(h) != 0: ret TTS_ERR
+    ret TTS_ERR
   // Write PCM samples (convert i32 → i16 LE)
   i:int = 0
   while i < n_samples:
     v:int = pcm[i]
     if v > 32767: v = 32767
-    if v < 0 - 32767: v = 0 - 32767
+    if v < -32768: v = -32768
     b0:char = (v & 255) as char
     b1:char = ((v >> 8) & 255) as char
-    fwrite(&b0, 1, 1, h)
-    fwrite(&b1, 1, 1, h)
+    if fwrite(&b0, 1, 1, h) != 1 || fwrite(&b1, 1, 1, h) != 1:
+      fclose(h)
+      ret TTS_ERR
     i = i + 1
   fclose(h)
   ret TTS_OK
@@ -456,12 +405,14 @@ fn tts_new() -> *TtsEngine:
   (*eng).model_loaded = 0
   (*eng).model_weights = 0 as *char
   (*eng).model_size = 0
+  (*eng).model_handle = 0
   (*eng).use_neural = 0
   (*eng).out_path = 0 as str
   ret eng
 
 fn tts_free(eng:*TtsEngine) -> int:
   if eng == 0: ret TTS_ERR
+  if (*eng).model_handle > 0: speech_tts_free((*eng).model_handle)
   if (*eng).voices != 0: free((*eng).voices as *char)
   if (*eng).pcm_buf != 0: free((*eng).pcm_buf as *char)
   if (*eng).model_weights != 0: free((*eng).model_weights)
@@ -480,17 +431,17 @@ fn tts_set_voice(eng:*TtsEngine, name:str) -> int:
   ret TTS_ERR
 
 fn tts_set_rate(eng:*TtsEngine, rate:float) -> int:
-  if eng == 0 || rate <= 0.0: ret TTS_ERR
+  if eng == 0 || rate != rate || rate < 0.1 || rate > 10.0: ret TTS_ERR
   (*eng).voices[(*eng).current_voice].rate = rate
   ret TTS_OK
 
 fn tts_set_pitch(eng:*TtsEngine, pitch:float) -> int:
-  if eng == 0 || pitch <= 0.0: ret TTS_ERR
+  if eng == 0 || pitch != pitch || pitch < 0.1 || pitch > 4.0: ret TTS_ERR
   (*eng).voices[(*eng).current_voice].pitch = pitch
   ret TTS_OK
 
 fn tts_set_energy(eng:*TtsEngine, energy:float) -> int:
-  if eng == 0: ret TTS_ERR
+  if eng == 0 || energy != energy || energy < 0.0 || energy > 4.0: ret TTS_ERR
   (*eng).voices[(*eng).current_voice].energy = energy
   ret TTS_OK
 
@@ -507,47 +458,18 @@ fn tts_speak_to_file(eng:*TtsEngine, path:str, text:str) -> int:
   ret _tts_write_wav(path, (*eng).pcm_buf, (*eng).pcm_len, (*eng).sample_rate)
 
 fn tts_speak(eng:*TtsEngine, text:str) -> int:
-  if text == 0: ret TTS_ERR
+  if eng == 0 || text == 0: ret TTS_ERR
   if eng != 0 && (*eng).out_path != 0:
     ret tts_speak_to_file(eng, (*eng).out_path, text)
-  // First try direct high-quality OS native voice synthesis (SAPI / WinMM)
-  res:int = tts_speak_text(text)
-  if res == 0: ret TTS_OK
-  if eng == 0: ret TTS_ERR
+
   r:int = _tts_synthesize(eng, text)
   if r != TTS_OK: ret r
   // Play via OS audio API
   ret tts_play_pcm((*eng).pcm_buf, (*eng).pcm_len, (*eng).sample_rate)
 
-fn _tts_strlen(s:str) -> int:
-  if s == 0: ret 0
-  p:*char = s as *char
-  len:int = 0
-  while p[len] != 0 as char:
-    len = len + 1
-  ret len
-
-fn _tts_concat3(a:str, b:str, c:str) -> str:
-  la:int = _tts_strlen(a)
-  lb:int = _tts_strlen(b)
-  lc:int = _tts_strlen(c)
-  buf:*char = malloc(la + lb + lc + 1)
-  if buf == 0: ret 0 as str
-  memcpy(buf, a, la)
-  memcpy(buf + la, b, lb)
-  memcpy(buf + la + lb, c, lc)
-  buf[la + lb + lc] = 0 as char
-  ret buf as str
-
 fn tts_say(text:str) -> int:
-  if text == 0: ret TTS_ERR
-  pre:str = "powershell.exe -NoProfile -NonInteractive -Command \"Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('"
-  post:str = "')\""
-  cmd:str = _tts_concat3(pre, text, post)
-  if cmd == 0: ret TTS_ERR
-  r:int = system(cmd)
-  free(cmd as *char)
-  ret r
+  // Convenience entry point is unavailable without a trained native model.
+  ret TTS_ERR
 
 fn tts_speak_wait(eng:*TtsEngine, text:str) -> int:
   // Synchronous speak — synthesize then play and wait

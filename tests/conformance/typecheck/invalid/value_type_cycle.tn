@@ -1,0 +1,8 @@
+struct ValueCycleLeft:
+  right:[ValueCycleRight;2]
+
+struct ValueCycleRight:
+  left:ValueCycleLeft
+
+fn main() -> int:
+  ret 0

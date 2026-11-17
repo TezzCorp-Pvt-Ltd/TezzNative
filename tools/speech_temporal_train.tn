@@ -1,0 +1,185 @@
+import "stt_temporal"
+import "stt"
+import "stt_temporal.manifest"
+import "stt_temporal.checkpoint"
+
+fn number(value:*u8, minimum:i64, maximum:i64):
+  if value == 0 || len(value) < 1 || len(value) > 10:
+    ret -1
+  unsafe:
+    let result = 0
+    let i = 0
+    while i < len(value):
+      let digit = value[i] as i64 - 48
+      if digit < 0 || digit > 9:
+        ret -1
+      result = result * 10 + digit
+      if result > maximum:
+        ret -1
+      i = i + 1
+    if result < minimum:
+      ret -1
+    ret result
+
+fn epoch(model:*TemporalStt, frontend:*SttEngine, manifest:*u8, limit:i64, rate_ppm:i64, output:*u8, beam:i64):
+  unsafe:
+    let file:*u8 = fopen(manifest, "rb")
+    if file == 0:
+      ret -1
+    let labels:[i64;448]
+    let prediction:[u8;3001]
+    let total:f64 = 0
+    let count = 0
+    let status = 0
+    while count < limit:
+      let line:*u8 = stt_temporal.manifest.read_line(file)
+      if line == 0:
+        break
+      let n = len(line)
+      let separator = 0
+      while separator < n && line[separator] != 9 as u8:
+        separator = separator + 1
+      if separator == 0 || separator == n || n >= 8192:
+        free(line)
+        status = -1
+        break
+      line[separator] = 0 as u8
+      let text:*u8 = (line as *u8 + separator + 1) as *u8
+      let size = len(text)
+      while size > 0 && (text[size - 1] == 10 as u8 || text[size - 1] == 13 as u8):
+        size = size - 1
+        text[size] = 0 as u8
+      if stt._stt_read_wav(frontend, line) != 0 || stt._stt_compute_mel(frontend) != 0:
+        say("AUDIO_ERROR", line)
+        free(line)
+        status = -1
+        break
+      if output == 0:
+        let label_count = stt_temporal.manifest.encode(text, &labels[0])
+        let value:f64 = 0
+        if label_count == 0 || stt_temporal.train(model, (*frontend).mel_buf, (*frontend).mel_frames, &labels[0], label_count, rate_ppm, &value) != 0:
+          say("TRAIN_ERROR", line)
+          status = -1
+        else:
+          total = total + value
+      else:
+        let length = stt_temporal.predict(model, (*frontend).mel_buf, (*frontend).mel_frames, &prediction[0], 3001, beam)
+        let tab:u8 = 9 as u8
+        let newline:u8 = 10 as u8
+        if length < 0:
+          say("PREDICT_ERROR", line)
+          status = -1
+        else:
+          if fwrite(line, 1, len(line), output) != len(line) || fwrite(&tab, 1, 1, output) != 1 || fwrite(&prediction[0], 1, length, output) != length || fwrite(&newline, 1, 1, output) != 1:
+            status = -1
+      free(line)
+      if status != 0:
+        break
+      count = count + 1
+    if fclose(file) != 0:
+      status = -1
+    if count != limit:
+      status = -1
+    if status != 0:
+      ret -1
+    if output == 0:
+      say("TRAIN_ITEMS", count, "CTC_MEAN", total / count as f64, "STEPS", stt_temporal.steps(model))
+    else:
+      say("EVALUATED_ITEMS", count)
+    ret 0
+
+fn main():
+  unsafe:
+    if args_count() < 5:
+      say("usage: train/resume manifest checkpoint epochs limit [rate_ppm hidden device seed]; evaluate manifest checkpoint predictions limit [device beam]")
+      ret 2
+    let command:*u8 = arg(0)
+    let manifest:*u8 = arg(1)
+    let checkpoint:*u8 = arg(2)
+    let limit = number(arg(4), 1, 20000)
+    if limit < 0:
+      ret 2
+    let model:*TemporalStt = 0 as *TemporalStt
+    let device = 0
+    let hidden = 64
+    let seed = 42
+    let rate = 1000
+    let epochs = 1
+    let beam = 16
+    let training = 0
+    if strcmp(command, "train") == 0 || strcmp(command, "resume") == 0:
+      training = 1
+      if args_count() > 9:
+        ret 2
+      epochs = number(arg(3), 1, 10000)
+      if args_count() >= 6:
+        rate = number(arg(5), 1, 100000)
+      if args_count() >= 7:
+        hidden = number(arg(6), 8, 256)
+      if args_count() >= 8:
+        device = number(arg(7), 0, 1)
+      if args_count() >= 9:
+        seed = number(arg(8), 0, 4294967295)
+      if epochs < 0 || rate < 0 || hidden < 0 || device < 0 || seed < 0:
+        ret 2
+      if strcmp(command, "train") == 0:
+        model = stt_temporal.create(hidden, device, seed)
+      else:
+        model = stt_temporal.load(checkpoint, device)
+        if model != 0 && args_count() >= 7 && (*model).hidden != hidden:
+          stt_temporal.free_model(model)
+          ret 2
+        if model != 0 && args_count() >= 9 && (*model).seed != seed:
+          stt_temporal.free_model(model)
+          ret 2
+    else:
+      if strcmp(command, "evaluate") == 0:
+        if args_count() > 7:
+          ret 2
+        if args_count() >= 6:
+          device = number(arg(5), 0, 1)
+        if args_count() >= 7:
+          beam = number(arg(6), 1, 128)
+        if device < 0 || beam < 0 || strcmp(checkpoint, arg(3)) == 0:
+          ret 2
+        model = stt_temporal.load(checkpoint, device)
+      else:
+        ret 2
+    if model == 0:
+      say("MODEL_OR_DEVICE_ERROR", device)
+      ret 4
+    if device == 0:
+      say("SPEECH_DEVICE cpu; TezzNative temporal encoder/Adam/checkpoint; native CTC")
+    else:
+      say("SPEECH_DEVICE cuda-encoder/cpu-ctc; explicit host logits/gradient transfers; no fallback")
+    let frontend:*SttEngine = stt.stt_new()
+    if frontend == 0:
+      stt_temporal.free_model(model)
+      ret 3
+    let result = 0
+    if training != 0:
+      let i = 0
+      while i < epochs:
+        say("EPOCH", i + 1)
+        result = epoch(model, frontend, manifest, limit, rate, 0 as *u8, beam)
+        if result == 0:
+          result = stt_temporal.save(model, checkpoint)
+        if result != 0:
+          break
+        i = i + 1
+    else:
+      let output:*u8 = stt_temporal.checkpoint.speech_file_open(arg(3), 1)
+      if output == 0:
+        result = -1
+      else:
+        result = epoch(model, frontend, manifest, limit, 0, output, beam)
+        if fclose(output) != 0:
+          result = -1
+        if result != 0:
+          stt_temporal.checkpoint.speech_file_remove(arg(3))
+    stt.stt_free(frontend)
+    stt_temporal.free_model(model)
+    if result != 0:
+      ret 1
+    ret 0
+

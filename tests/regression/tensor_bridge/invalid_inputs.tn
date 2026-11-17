@@ -1,0 +1,72 @@
+import "tensor_bridge"
+import "tensor"
+import "tztensor"
+
+fn main() -> int:
+  empty:Tensor = tensor.tensor_empty_raw(0, 0, 0, 0, 0)
+  if tensor_bridge.to_tztensor(empty) != 0: ret 1
+  result:Tensor = tensor_bridge.to_tensor(0)
+  if result.size != 0: ret 2
+  original:Tensor = tensor.tensor_ones_2d(2, 3)
+  candidate:Tensor = original
+  candidate.dtype = tensor.tensor_dtype_f32()
+  if tensor_bridge.to_tztensor(candidate) != 0: ret 3
+  candidate = original
+  candidate.ndim = 5
+  if tensor_bridge.to_tztensor(candidate) != 0: ret 4
+  candidate = original
+  candidate.shape0 = 0
+  if tensor_bridge.to_tztensor(candidate) != 0: ret 5
+  candidate = original
+  candidate.size = 7
+  if tensor_bridge.to_tztensor(candidate) != 0: ret 6
+  candidate = original
+  candidate.offset = 0 - 1
+  if tensor_bridge.to_tztensor(candidate) != 0: ret 7
+  candidate = original
+  candidate.stride0 = 0 - 1
+  if tensor_bridge.to_tztensor(candidate) != 0: ret 8
+  candidate = original
+  candidate.stride0 = 9223372036854775807
+  if tensor_bridge.to_tztensor(candidate) != 0: ret 9
+  candidate = original
+  candidate.shape0 = 9223372036854775807
+  if tensor_bridge.to_tztensor(candidate) != 0: ret 10
+  unsafe:
+    candidate = original
+    candidate.data = 0 as *float
+    if tensor_bridge.to_tztensor(candidate) != 0: ret 11
+    original.data[1] = 1.0e300
+  if tensor_bridge.to_tztensor(original) != 0: ret 12
+  unsafe:
+    if original.data[1] != 1.0e300: ret 13
+    original.data[1] = -1.0e300
+  if tensor_bridge.to_tztensor(original) != 0: ret 14
+  handle:int = tztensor.tensor_new_2d(2, 3, 0)
+  if handle == 0: ret 15
+  unsafe:
+    fields:*int = handle as *int
+    fields[8] = 1
+    result = tensor_bridge.to_tensor(handle)
+    if result.size != 0: ret 16
+    fields[8] = 0
+    fields[2] = 0
+    result = tensor_bridge.to_tensor(handle)
+    if result.size != 0: ret 17
+    fields[2] = 2
+    fields[5] = 2
+    result = tensor_bridge.to_tensor(handle)
+    if result.size != 0: ret 18
+    fields[5] = 1
+    fields[7] = 7
+    result = tensor_bridge.to_tensor(handle)
+    if result.size != 0: ret 19
+    fields[7] = 6
+    data:int = fields[0]
+    fields[0] = 0
+    result = tensor_bridge.to_tensor(handle)
+    if result.size != 0: ret 20
+    fields[0] = data
+  tztensor.tensor_free(handle)
+  tensor.tensor_free_tensor(original)
+  ret 0

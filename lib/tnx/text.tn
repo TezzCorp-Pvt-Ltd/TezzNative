@@ -1,0 +1,592 @@
+// tnx implementation: text.
+import "io"
+
+extern fn tn_decimal_f64(text:str, length:int, output:*float) -> int
+import "tnx.state"
+import "tnx.buffers"
+import "tnx.core"
+
+fn tnx_escape_str(sb:*TnxSb, s:str) -> int:
+  if sb == 0 || s == 0:
+    ret 0 - 1
+  i:int = 0
+  while s[i] != 0:
+    c:int = s[i] as int
+    if c == 34:
+      tnx.buffers.sb_puts(sb, "\\\"")
+    else if c == 92:
+      tnx.buffers.sb_puts(sb, "\\\\")
+    else if c == 10:
+      tnx.buffers.sb_puts(sb, "\\n")
+    else if c == 13:
+      tnx.buffers.sb_puts(sb, "\\r")
+    else if c == 9:
+      tnx.buffers.sb_puts(sb, "\\t")
+    else if c < 32 || c > 126:
+      u:int = c
+      if u < 0:
+        u = u + 256
+      tnx.buffers.sb_puts(sb, "\\u")
+      tnx.buffers.tnx_hex4(sb, u & 255)
+    else:
+      tnx.buffers.sb_putc(sb, c)
+    i = i + 1
+  ret 0
+
+fn tnx_pow10_i(exp:int) -> int:
+  p:int = 1
+  i:int = 0
+  while i < exp:
+    p = p * 10
+    i = i + 1
+  ret p
+
+fn tnx_float_to_g_str(x:float) -> str:
+  if x == 0.0:
+    ret tnx.core.tnx_strdup("0")
+  sign:int = 0
+  v:float = x
+  if v < 0.0:
+    sign = 1
+    v = 0.0 - v
+  // normalize to [1,10)
+  exp10:int = 0
+  if v >= 10.0:
+    while v >= 10.0:
+      v = v / 10.0
+      exp10 = exp10 + 1
+  else if v < 1.0:
+    while v < 1.0:
+      v = v * 10.0
+      exp10 = exp10 - 1
+  // 6 significant digits
+  scaled:float = v * 100000.0 + 0.5
+  sig:int = scaled as int
+  if sig >= 1000000:
+    sig = sig / 10
+    exp10 = exp10 + 1
+  digits:str = tnx.core.tnx_int_to_str(sig)
+  // pad to 6 digits
+  if len(digits) < 6:
+    pad:int = 6 - len(digits)
+    sbp:TnxSb
+    tnx.buffers.sb_init(&sbp)
+    while pad > 0:
+      tnx.buffers.sb_putc(&sbp, 48)
+      pad = pad - 1
+    tnx.buffers.sb_puts(&sbp, digits)
+    free(digits)
+    digits = tnx.buffers.sb_take(&sbp)
+
+  use_exp:int = 0
+  if exp10 >= 6 || exp10 <= 0 - 5:
+    use_exp = 1
+
+  sb:TnxSb
+  tnx.buffers.sb_init(&sb)
+  if sign != 0:
+    tnx.buffers.sb_putc(&sb, 45)
+
+  if use_exp != 0:
+    tnx.buffers.sb_putc(&sb, digits[0] as int)
+    // fractional part
+    i:int = 1
+    last:int = 5
+    while last >= 1 && digits[last] == 48 as char:
+      last = last - 1
+    if last >= 1:
+      tnx.buffers.sb_putc(&sb, 46)
+      while i <= last:
+        tnx.buffers.sb_putc(&sb, digits[i] as int)
+        i = i + 1
+    tnx.buffers.sb_putc(&sb, 101) // 'e'
+    if exp10 >= 0:
+      tnx.buffers.sb_putc(&sb, 43)
+    else:
+      tnx.buffers.sb_putc(&sb, 45)
+      exp10 = 0 - exp10
+    expstr:str = tnx.core.tnx_int_to_str(exp10)
+    tnx.buffers.sb_puts(&sb, expstr)
+    free(expstr)
+  else:
+    pos:int = exp10 + 1
+    if pos >= 6:
+      // integer with trailing zeros
+      i2:int = 0
+      while i2 < 6:
+        tnx.buffers.sb_putc(&sb, digits[i2] as int)
+        i2 = i2 + 1
+      z:int = pos - 6
+      while z > 0:
+        tnx.buffers.sb_putc(&sb, 48)
+        z = z - 1
+    else if pos > 0:
+      i3:int = 0
+      while i3 < pos:
+        tnx.buffers.sb_putc(&sb, digits[i3] as int)
+        i3 = i3 + 1
+      // fractional
+      last2:int = 5
+      while last2 >= pos && digits[last2] == 48 as char:
+        last2 = last2 - 1
+      if last2 >= pos:
+        tnx.buffers.sb_putc(&sb, 46)
+        i4:int = pos
+        while i4 <= last2:
+          tnx.buffers.sb_putc(&sb, digits[i4] as int)
+          i4 = i4 + 1
+    else:
+      // 0.xxx
+      tnx.buffers.sb_putc(&sb, 48)
+      tnx.buffers.sb_putc(&sb, 46)
+      z2:int = (0 - pos)
+      while z2 > 0:
+        tnx.buffers.sb_putc(&sb, 48)
+        z2 = z2 - 1
+      last3:int = 5
+      while last3 >= 0 && digits[last3] == 48 as char:
+        last3 = last3 - 1
+      i5:int = 0
+      while i5 <= last3:
+        tnx.buffers.sb_putc(&sb, digits[i5] as int)
+        i5 = i5 + 1
+
+  free(digits)
+  ret tnx.buffers.sb_take(&sb)
+
+fn tnx_write_value(sb:*TnxSb, v:*TnxValue) -> int:
+  if v == 0:
+    tnx.buffers.sb_puts(sb, "null")
+    ret 0
+  if (*v).kind == tnx.state._get_TNX_NULL():
+    tnx.buffers.sb_puts(sb, "null")
+    ret 0
+  if (*v).kind == tnx.state._get_TNX_BOOL():
+    if (*v).i != 0:
+      tnx.buffers.sb_puts(sb, "true")
+    else:
+      tnx.buffers.sb_puts(sb, "false")
+    ret 0
+  if (*v).kind == tnx.state._get_TNX_INT():
+    s:str = tnx.core.tnx_int_to_str((*v).i)
+    tnx.buffers.sb_puts(sb, s)
+    free(s)
+    ret 0
+  if (*v).kind == tnx.state._get_TNX_FLOAT():
+    s:str = tnx_float_to_g_str((*v).f)
+    if s != 0:
+      tnx.buffers.sb_puts(sb, s)
+      free(s)
+    ret 0
+  if (*v).kind == tnx.state._get_TNX_STR():
+    tnx.buffers.sb_putc(sb, 34)
+    if (*v).s != 0:
+      tnx_escape_str(sb, (*v).s)
+    tnx.buffers.sb_putc(sb, 34)
+    ret 0
+  if (*v).kind == 5:
+    tnx.buffers.sb_putc(sb, 91)
+    cur:*TnxNode = (*v).head
+    first:int = 1
+    while cur != 0:
+      if first == 0:
+        tnx.buffers.sb_putc(sb, 44)
+      first = 0
+      tnx_write_value(sb, (*cur).val)
+      cur = (*cur).next
+    tnx.buffers.sb_putc(sb, 93)
+    ret 0
+  if (*v).kind == 6:
+    tnx.buffers.sb_putc(sb, 123)
+    cur2:*TnxNode = (*v).head
+    first2:int = 1
+    while cur2 != 0:
+      if first2 == 0:
+        tnx.buffers.sb_putc(sb, 44)
+      first2 = 0
+      tnx.buffers.sb_putc(sb, 34)
+      if (*cur2).key != 0:
+        tnx_escape_str(sb, (*cur2).key)
+      tnx.buffers.sb_putc(sb, 34)
+      tnx.buffers.sb_putc(sb, 58)
+      tnx_write_value(sb, (*cur2).val)
+      cur2 = (*cur2).next
+    tnx.buffers.sb_putc(sb, 125)
+    ret 0
+  tnx.buffers.sb_puts(sb, "null")
+  ret 0
+
+fn tnx_stringify(v:*TnxValue) -> str:
+  sb:TnxSb
+  tnx.buffers.sb_init(&sb)
+  tnx_write_value(&sb, v)
+  ret tnx.buffers.sb_take(&sb)
+
+fn tnx_write_file(path:str, v:*TnxValue) -> int:
+  if path == 0:
+    ret 0 - 1
+  s:str = tnx_stringify(v)
+  if s == 0:
+    ret 0 - 1
+  wrote:int = io.write_all(path, s)
+  free(s)
+  if wrote < 0:
+    ret 0 - 1
+  ret 0
+
+// --- Parsing ---
+
+fn tnx_skip_ws(s:str, idx:*int) -> int:
+  if s == 0 || idx == 0:
+    ret 0
+  i:int = 0
+  unsafe:
+    i = *idx
+  while s[i] != 0 && tnx.core.tnx_is_space(s[i] as int) != 0:
+    i = i + 1
+  unsafe:
+    *idx = i
+  ret 0
+
+fn tnx_parse_string(s:str, idx:*int) -> str:
+  if s == 0 || idx == 0:
+    ret 0 as str
+  i:int = 0
+  unsafe:
+    i = *idx
+  if s[i] != 34 as char:
+    ret 0 as str
+  i = i + 1
+  // first pass: compute length
+  j:int = i
+  out_len:int = 0
+  while s[j] != 0:
+    c:int = s[j] as int
+    if c == 34:
+      break
+    if c == 92:
+      j = j + 1
+      if s[j] == 0:
+        ret 0 as str
+    out_len = out_len + 1
+    j = j + 1
+  if s[j] != 34 as char:
+    ret 0 as str
+  out:*char = (*char)malloc(out_len + 1)
+  if out == 0:
+    ret 0 as str
+  k:int = 0
+  while i < j:
+    c2:int = s[i] as int
+    if c2 == 92:
+      i = i + 1
+      esc:int = s[i] as int
+      if esc == 34:
+        out[k] = 34 as char
+        k = k + 1
+        i = i + 1
+        continue
+      if esc == 92:
+        out[k] = 92 as char
+        k = k + 1
+        i = i + 1
+        continue
+      if esc == 110:
+        out[k] = 10 as char
+        k = k + 1
+        i = i + 1
+        continue
+      if esc == 114:
+        out[k] = 13 as char
+        k = k + 1
+        i = i + 1
+        continue
+      if esc == 116:
+        out[k] = 9 as char
+        k = k + 1
+        i = i + 1
+        continue
+      if esc == 117:
+        // \uXXXX
+        if (i + 4) > j:
+          free(out)
+          ret 0 as str
+        d1:int = tnx.core.tnx_hex_val(s[i + 1] as int)
+        d2:int = tnx.core.tnx_hex_val(s[i + 2] as int)
+        d3:int = tnx.core.tnx_hex_val(s[i + 3] as int)
+        d4:int = tnx.core.tnx_hex_val(s[i + 4] as int)
+        if d1 < 0 || d2 < 0 || d3 < 0 || d4 < 0:
+          free(out)
+          ret 0 as str
+        code:int = (d1 << 12) | (d2 << 8) | (d3 << 4) | d4
+        if code <= 255:
+          out[k] = code as char
+        else:
+          out[k] = 63 as char
+        k = k + 1
+        i = i + 5
+        continue
+      // unsupported escape -> invalid
+      free(out)
+      ret 0 as str
+    out[k] = s[i]
+    k = k + 1
+    i = i + 1
+  out[k] = 0 as char
+  j = j + 1
+  unsafe:
+    *idx = j
+  ret out
+
+fn tnx_parse_int(s:str) -> int:
+  if s == 0:
+    ret 0
+  i:int = 0
+  sign:int = 1
+  if s[0] == 45 as char:
+    sign = 0 - 1
+    i = 1
+  n:int = 0
+  while s[i] != 0 as char:
+    c:int = s[i] as int
+    if c < 48 || c > 57:
+      break
+    n = n * 10 + (c - 48)
+    i = i + 1
+  ret n * sign
+
+// Returns NaN for an invalid/nonfinite decimal; token parsing rejects it.
+fn tnx_parse_float(s:str) -> float:
+  value:float = 0.0
+  if s == 0 as str || tn_decimal_f64(s, len(s), &value) != 0:
+    ret 0.0 / 0.0
+  ret value
+
+fn tnx_parse_number(s:str, idx:*int) -> *TnxValue:
+  if s == 0 || idx == 0:
+    ret 0 as *TnxValue
+  i:int = 0
+  unsafe:
+    i = *idx
+  start:int = i
+  if s[i] == 45 as char:
+    i = i + 1
+
+  // integer part
+  digit_count:int = 0
+  if s[i] == 48 as char:
+    digit_count = 1
+    i = i + 1
+    if s[i] >= 48 as char && s[i] <= 57 as char:
+      ret 0 as *TnxValue
+  else:
+    while s[i] != 0:
+      c0:int = s[i] as int
+      if c0 < 48 || c0 > 57:
+        break
+      digit_count = digit_count + 1
+      i = i + 1
+    if digit_count == 0:
+      ret 0 as *TnxValue
+
+  has_dot:int = 0
+  has_exp:int = 0
+
+  // fractional
+  if s[i] == 46 as char:
+    has_dot = 1
+    i = i + 1
+    frac_digits:int = 0
+    while s[i] != 0:
+      c1:int = s[i] as int
+      if c1 < 48 || c1 > 57:
+        break
+      frac_digits = frac_digits + 1
+      i = i + 1
+    if frac_digits == 0:
+      ret 0 as *TnxValue
+
+  // exponent
+  if s[i] == 101 as char || s[i] == 69 as char:
+    has_exp = 1
+    i = i + 1
+    if s[i] == 45 as char || s[i] == 43 as char:
+      i = i + 1
+    exp_digits:int = 0
+    while s[i] != 0:
+      c2:int = s[i] as int
+      if c2 < 48 || c2 > 57:
+        break
+      exp_digits = exp_digits + 1
+      i = i + 1
+    if exp_digits == 0:
+      ret 0 as *TnxValue
+
+  end:int = i
+  unsafe:
+    *idx = i
+  num:str = tnx.core.tnx_substr(s, start, end)
+  if num == 0:
+    ret 0 as *TnxValue
+  if has_dot != 0 || has_exp != 0:
+    f:float = tnx_parse_float(num)
+    free(num)
+    if f != f: ret 0 as *TnxValue
+    ret tnx.core.tnx_float(f)
+  iv:int = tnx_parse_int(num)
+  free(num)
+  ret tnx.core.tnx_int(iv)
+
+fn tnx_parse_value(s:str, idx:*int) -> *TnxValue:
+  tnx_skip_ws(s, idx)
+  i:int = 0
+  unsafe:
+    i = *idx
+  c:int = s[i] as int
+  if c == 34:
+    strv:str = tnx_parse_string(s, idx)
+    if strv == 0:
+      ret 0 as *TnxValue
+    v:*TnxValue = tnx.core.tnx_new(tnx.state._get_TNX_STR())
+    (*v).s = strv
+    ret v
+  if c == 123:
+    // object
+    i = i + 1
+    unsafe:
+      *idx = i
+    obj:*TnxValue = tnx.core.tnx_obj()
+    tnx_skip_ws(s, idx)
+    unsafe:
+      i = *idx
+    if s[i] == 125 as char:
+      unsafe:
+        *idx = i + 1
+      ret obj
+    while 1:
+      tnx_skip_ws(s, idx)
+      key:str = tnx_parse_string(s, idx)
+      if key == 0:
+        tnx.core.tnx_free(obj)
+        ret 0 as *TnxValue
+      tnx_skip_ws(s, idx)
+      unsafe:
+        i = *idx
+      if s[i] != 58 as char:
+        tnx.core.tnx_free(obj)
+        ret 0 as *TnxValue
+      i = i + 1
+      unsafe:
+        *idx = i
+      val:*TnxValue = tnx_parse_value(s, idx)
+      if val == 0:
+        tnx.core.tnx_free(obj)
+        ret 0 as *TnxValue
+      if tnx.core.tnx_obj_set_take(obj, key, val) != 0:
+        free(key)
+        tnx.core.tnx_free(val)
+        tnx.core.tnx_free(obj)
+        ret 0 as *TnxValue
+      free(key)
+      tnx_skip_ws(s, idx)
+      unsafe:
+        i = *idx
+      if s[i] == 44 as char:
+        i = i + 1
+        unsafe:
+          *idx = i
+        continue
+      if s[i] == 125 as char:
+        unsafe:
+          *idx = i + 1
+        break
+      tnx.core.tnx_free(obj)
+      ret 0 as *TnxValue
+    ret obj
+  if c == 91:
+    // array
+    i = i + 1
+    unsafe:
+      *idx = i
+    arr:*TnxValue = tnx.core.tnx_arr()
+    tnx_skip_ws(s, idx)
+    unsafe:
+      i = *idx
+    if s[i] == 93 as char:
+      unsafe:
+        *idx = i + 1
+      ret arr
+    while 1:
+      val2:*TnxValue = tnx_parse_value(s, idx)
+      if val2 == 0:
+        tnx.core.tnx_free(arr)
+        ret 0 as *TnxValue
+      if tnx.core.tnx_arr_push_take(arr, val2) != 0:
+        tnx.core.tnx_free(val2)
+        tnx.core.tnx_free(arr)
+        ret 0 as *TnxValue
+      tnx_skip_ws(s, idx)
+      unsafe:
+        i = *idx
+      if s[i] == 44 as char:
+        i = i + 1
+        unsafe:
+          *idx = i
+        continue
+      if s[i] == 93 as char:
+        unsafe:
+          *idx = i + 1
+        break
+      tnx.core.tnx_free(arr)
+      ret 0 as *TnxValue
+    ret arr
+  if c == 110: // null
+    if s[i+1] == 117 as char && s[i+2] == 108 as char && s[i+3] == 108 as char:
+      unsafe:
+        *idx = i + 4
+      ret tnx.core.tnx_null()
+  if c == 116: // true
+    if s[i+1] == 114 as char && s[i+2] == 117 as char && s[i+3] == 101 as char:
+      unsafe:
+        *idx = i + 4
+      ret tnx.core.tnx_bool(1)
+  if c == 102: // false
+    if s[i+1] == 97 as char && s[i+2] == 108 as char && s[i+3] == 115 as char && s[i+4] == 101 as char:
+      unsafe:
+        *idx = i + 5
+      ret tnx.core.tnx_bool(0)
+  if c == 45 || (c >= 48 && c <= 57):
+    ret tnx_parse_number(s, idx)
+  ret 0 as *TnxValue
+
+fn tnx_parse(s:str) -> *TnxValue:
+  if s == 0:
+    ret 0 as *TnxValue
+  idx:int = 0
+  v:*TnxValue = tnx_parse_value(s, &idx)
+  if v == 0:
+    ret 0 as *TnxValue
+  tnx_skip_ws(s, &idx)
+  if s[idx] != 0:
+    tnx.core.tnx_free(v)
+    ret 0 as *TnxValue
+  ret v
+
+fn tnx_validate(s:str) -> int:
+  v:*TnxValue = tnx_parse(s)
+  if v == 0:
+    ret 0
+  tnx.core.tnx_free(v)
+  ret 1
+
+fn tnx_read_file(path:str) -> *TnxValue:
+  if path == 0:
+    ret 0 as *TnxValue
+  s:str = io.read_all(path)
+  if s == 0:
+    ret 0 as *TnxValue
+  v:*TnxValue = tnx_parse(s)
+  free(s)
+  ret v
+
+// --- Binary (TNX-B) ---

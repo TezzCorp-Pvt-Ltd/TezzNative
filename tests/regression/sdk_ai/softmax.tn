@@ -1,0 +1,28 @@
+import "tztensor"
+import "math"
+import "./support/lib/values.tn"
+
+fn main() -> int:
+  x:int = tztensor.tensor_new_2d(2, 2, 1)
+  values.write(x, 2, 1.0)
+  values.write(x, 3, 1.0)
+  out:int = tztensor.tensor_new_2d(2, 2, 0)
+  tztensor.tensor_softmax(x, out)
+  failed:int = 0
+  i:int = 0
+  while i < 4:
+    if math.absf(values.read(out, i) - 0.5) > 0.00001:
+      failed = 1
+    i = i + 1
+  if values.read(x, 0) != 0.0 || values.read(x, 2) != 1.0:
+    failed = 1
+  tztensor.tensor_backward(out)
+  i = 0
+  while i < 4:
+    if math.absf(values.gradient(x, i)) > 0.00001:
+      failed = 1
+    i = i + 1
+  tztensor.tensor_free(out)
+  tztensor.tensor_free(x)
+  if failed != 0: say "FAIL: SDK softmax must normalize rows in its output and preserve input"
+  ret failed

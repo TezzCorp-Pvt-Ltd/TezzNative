@@ -222,8 +222,8 @@ static uint32_t arm64_fadd_dd(int rd, int rn, int rm){
 static uint32_t arm64_fdiv_dd(int rd, int rn, int rm){
   return 0x1E601800u | ((uint32_t)rm << 16) | ((uint32_t)rn << 5) | (uint32_t)rd;
 }
-static uint32_t arm64_fcmp_dd(int rn, int rm){
-  return 0x1E602000u | ((uint32_t)rm << 16) | ((uint32_t)rn << 5);
+static uint32_t arm64_fcmp(int rn, int rm, int size){
+  return (size==4 ? 0x1E202000u : 0x1E602000u) | ((uint32_t)rm << 16) | ((uint32_t)rn << 5);
 }
 
 static void emit_call_iat(CodeBuf* cb, uint64_t iat_addr){
@@ -2673,23 +2673,26 @@ static int lower_func_arm64(IRFunc* f, CodeBuf* cb, FuncInfo* finfo, int fcount,
   cb_emit4(cb, 0xA9BF7BF0u); // stp x16,x17,[sp,#-16]! (scratch save)
   cb_emit4(cb, 0xA9BF7BFDu); // stp x29,x30,[sp,#-16]!
   cb_emit4(cb, 0x910003FDu); // mov x29, sp
-  if(frame > 0){
-    if(frame <= 0xFFFu){
-      cb_emit4(cb, arm64_sub_imm(31, 31, frame));
-    } else {
-      emit_mov_imm64(cb, 16, frame);
-      cb_emit4(cb, arm64_sub_reg(31, 31, 16));
-    }
+  for(uint32_t remaining=frame; remaining>0;){
+    uint32_t step = remaining > 4080u ? 4080u : remaining;
+    cb_emit4(cb, arm64_sub_imm(31, 31, step));
+    cb_emit4(cb, arm64_ldr_imm(31, 31, 0)); // ldr xzr,[sp]: probe guard page
+    remaining -= step;
   }
 
   // store incoming args (x0..x7) into reg slots
   int preg[32];
   int pn = 0;
-  for(int i=0;i<f->n && pn < f->param_count;i++){
-    IRIns* pi = &f->ins[i];
-    if(pi->op == I_LABEL) break;
-    if(pi->op == I_STORE){
-      preg[pn++] = pi->b;
+  if(f->param_regs && f->param_regs_n > 0){
+    for(int i=0;i<f->param_regs_n && i<32;i++) preg[pn++] = f->param_regs[i];
+  }
+  if(pn == 0){
+    for(int i=0;i<f->n && pn < f->param_count && pn<32;i++){
+      IRIns* pi = &f->ins[i];
+      if(pi->op == I_LABEL) break;
+      if(pi->op == I_STORE){
+        preg[pn++] = pi->b;
+      }
     }
   }
   if(pn == 0){
@@ -2861,8 +2864,9 @@ static int lower_func_arm64(IRFunc* f, CodeBuf* cb, FuncInfo* finfo, int fcount,
       case I_FCMP:
         emit_ld_slot_fp(cb, 0, in->b);
         emit_ld_slot_fp(cb, 1, in->c);
-        cb_emit4(cb, arm64_fcmp_dd(0, 1));
-        cb_emit4(cb, arm64_cset(0, cond_code(in->cmpop)));
+        cb_emit4(cb, arm64_fcmp(0, 1, in->size));
+        // FCMP unordered: N=0,Z=0,C=1,V=1; signed LT/LE include NaN.
+        cb_emit4(cb, arm64_cset(0, in->cmpop==C_LT ? 4 : in->cmpop==C_LTE ? 9 : cond_code(in->cmpop)));
         emit_st_slot(cb, 0, in->a);
         break;
       case I_I2F:
@@ -2951,14 +2955,7 @@ static int lower_func_arm64(IRFunc* f, CodeBuf* cb, FuncInfo* finfo, int fcount,
           emit_mov_imm64(cb, 0, 0);
         }
         // epilogue
-        if(frame > 0){
-          if(frame <= 0xFFFu){
-            cb_emit4(cb, arm64_add_imm(31, 31, frame));
-          } else {
-            emit_mov_imm64(cb, 16, frame);
-            cb_emit4(cb, arm64_add_reg(31, 31, 16));
-          }
-        }
+        cb_emit4(cb, arm64_add_imm(31, 29, 0)); // mov sp,x29
         cb_emit4(cb, 0xA8C17BFDu); // ldp x29,x30,[sp],#16
         cb_emit4(cb, 0xA8C17BF0u); // ldp x16,x17,[sp],#16
         cb_emit4(cb, arm64_ret());
@@ -3086,7 +3083,7 @@ int ir_compile_to_elf_arm64_exe(IRModule* m, const char* out_exe){
         }
         ginfo[i].rva = data_rva + doff;
         if(g->has_init){
-          if(g->ty && g->ty->k == TY_F64){
+          if(type_is_float(g->ty)){
             uint64_t bits = (uint64_t)g->init_fbits;
             for(int b=0;b<g->size && b<8;b++){
               data[doff + (uint32_t)b] = (unsigned char)((bits >> (8*b)) & 0xFF);

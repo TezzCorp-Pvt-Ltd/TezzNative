@@ -176,8 +176,8 @@ fn color_indigo() -> int:  ret rgb(75,0,130)
 // ─────────────────────────────────────────────────────────────
 
 fn _ci_join2(a:str, b:str) -> str:
-  if a == 0: ret b
-  if b == 0: ret a
+  if a == 0: a = ""
+  if b == 0: b = ""
   na:int = len(a)
   nb:int = len(b)
   p:*char = malloc(na + nb + 1)
@@ -279,12 +279,12 @@ fn ansi_bg_256(idx:int) -> str:
 // Flags: bold=1, italic=2, underline=4, dim=8, strikethrough=16, blink=32
 fn styled(text:str, fg:int, bg:int, flags:int) -> str:
   if color_cap() == COLOR_NONE:
-    ret text
-  out:str = ""
+    ret _ci_join2("", text)
+  out:str = _ci_join2("", "")
   // Apply attributes
   if flags & 1 != 0:
     t0:str = _ci_join2(out, _BOLD)
-    if out != 0 as str && len(out) > 0: free(out)
+    if out != 0 as str: free(out)
     out = t0
   if flags & 2 != 0:
     t1:str = _ci_join2(out, _ITALIC)
@@ -352,8 +352,8 @@ fn gradient_text(text:str, c0:int, c1:int) -> str:
     ret 0 as str
   n:int = len(text)
   if n <= 0:
-    ret text
-  out:str = ""
+    ret _ci_join2("", text)
+  out:str = _ci_join2("", "")
   i:int = 0
   while i < n:
     t256:int = 0
@@ -370,7 +370,7 @@ fn gradient_text(text:str, c0:int, c1:int) -> str:
     t0:str = _ci_join2(out, fg_seq)
     t1:str = _ci_join2(t0, ch_p as str)
     free(fg_seq)
-    if len(out) > 0: free(out)
+    if out != 0: free(out)
     free(t0)
     out = t1
     i = i + 1
@@ -394,12 +394,12 @@ fn progress_bar(label:str, pct:int, width:int, bar_color:int, empty_color:int) -
     pct = 100
   filled:int = (w * pct) / 100
   empty:int = w - filled
-  out:str = "["
+  out:str = _ci_join2("", "[")
   // Filled portion
   fill_seq:str = ansi_fg(bar_color)
   t0:str = _ci_join2(out, fill_seq)
   free(fill_seq)
-  if len(out) > 0: free(out)
+  if out != 0: free(out)
   out = t0
   i:int = 0
   while i < filled:
@@ -529,9 +529,9 @@ fn color_table_add_row(t:*ColorTable, cells:*str) -> int:
   ret 0
 
 fn _ct_repeat(ch:str, n:int) -> str:
-  if n <= 0: ret ""
+  if n <= 0: ret _ci_join2("", "")
   p:*char = malloc(n + 1)
-  if p == 0: ret ""
+  if p == 0: ret 0 as str
   i:int = 0
   while i < n:
     p[i] = (ch as *char)[0]
@@ -543,7 +543,7 @@ fn _ct_pad(s:str, width:int) -> str:
   n:int = 0
   if s != 0: n = len(s)
   pad:int = width - n
-  if pad <= 0: ret s
+  if pad <= 0: ret _ci_join2("", s)
   ps:str = _ct_repeat(" ", pad)
   out:str = _ci_join2(s, ps)
   free(ps)
@@ -553,11 +553,12 @@ fn color_table_print(t:*ColorTable) -> int:
   if t == 0: ret 0 - 1
   nc:int = (*t).ncols
   // Separator line
-  sep:str = "+"
+  sep:str = _ci_join2("", "+")
   i:int = 0
   while i < nc:
     dashes:str = _ct_repeat("-", (*t).col_widths[i] + 2)
     t0:str = _ci_join2(sep, dashes)
+    free(dashes)
     free(sep); sep = t0
     t1:str = _ci_join2(sep, "+")
     free(sep); sep = t1
@@ -569,7 +570,7 @@ fn color_table_print(t:*ColorTable) -> int:
   say t2
   free(t2)
   // Print header
-  hdr_line:str = "|"
+  hdr_line:str = _ci_join2("", "|")
   i = 0
   while i < nc:
     h:str = (*t).headers[i]
@@ -581,7 +582,7 @@ fn color_table_print(t:*ColorTable) -> int:
     t3:str = _ci_join3(hdr_line, bold_cell, "|")
     free(hdr_line)
     free(hdr_fg); free(cell); free(bold_cell)
-    if len(padded) > 0: free(padded)
+    if padded != 0: free(padded)
     hdr_line = t3
     i = i + 1
   say hdr_line
@@ -596,7 +597,7 @@ fn color_table_print(t:*ColorTable) -> int:
   r:int = 0
   while r < (*t).nrows:
     row_off:int = r * nc
-    row_line:str = "|"
+    row_line:str = _ci_join2("", "|")
     i = 0
     while i < nc:
       cell_s:str = (*t).rows[row_off + i]
@@ -606,7 +607,7 @@ fn color_table_print(t:*ColorTable) -> int:
       t5:str = _ci_join3(row_line, cell2, "|")
       free(row_line)
       free(cell2)
-      if len(padded2) > 0: free(padded2)
+      if padded2 != 0: free(padded2)
       row_line = t5
       i = i + 1
     say row_line

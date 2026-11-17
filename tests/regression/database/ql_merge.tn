@@ -1,0 +1,29 @@
+import "tezzdb"
+import "tezzdbql.statements"
+import "tezzdbql.mutations"
+
+fn main() -> int:
+  unsafe:
+    parsed:*TzQlStatement = tezzdbql.statements.statement_new()
+    values:[str;1]
+    values[0] = "renamed"
+    if tezzdbql.statements.parse(parsed, "UPDATE users SET name = ? WHERE id = 1", &values[0], 1) == 0: ret 1
+    if parsed[0].count != 1: ret 2
+    if strcmp(parsed[0].columns[0], "name") != 0: ret 3
+    if strcmp(parsed[0].values[0], "renamed") != 0: ret 4
+    changed:str = tezzdbql.mutations.merge("{\"name\":\"alice\",\"role\":\"admin\"}", parsed)
+    if changed == 0: ret 5
+    value:str = tezzdb.row_get_str(changed, "name")
+    if value == 0 || strcmp(value, "renamed") != 0:
+      say "FAIL: merged row", changed
+      ret 6
+    free(value)
+    value = tezzdb.row_get_str(changed, "role")
+    if value == 0 || strcmp(value, "admin") != 0: ret 7
+    free(value)
+    free(changed)
+    changed = tezzdbql.mutations.merge("{\"name\":\"alice\",\"nested\":{\"x\":[1,true,null]},\"count\":7}", parsed)
+    if changed == 0 || strcmp(changed, "{\"name\":\"renamed\",\"nested\":{\"x\":[1,true,null]},\"count\":7}") != 0: ret 8
+    free(changed)
+    tezzdbql.statements.statement_free(parsed)
+  ret 0

@@ -1,0 +1,53 @@
+extern fn float_oracle_emit(operation:int, input:int, result:int) -> int
+extern fn float_oracle_count() -> int
+extern fn float_oracle_input(index:int) -> int
+
+fn decode(mode:int, raw:int) -> int:
+  unsafe:
+    wide:u16 = raw as u16
+    small:u8 = raw as u8
+    value:f32 = 0.0 as f32
+    if mode == 0: value = (*((&wide) as *f16)) as f32
+    if mode == 1: value = (*((&wide) as *bf16)) as f32
+    if mode == 2: value = (*((&small) as *f8)) as f32
+    if mode == 3: value = (*((&small) as *f8_e5m2)) as f32
+    ret (*((&value) as *u32)) as int
+
+fn encode(mode:int, raw:int) -> int:
+  unsafe:
+    bits:u32 = raw as u32
+    value:f32 = *((&bits) as *f32)
+    if mode == 0:
+      half:f16 = value as f16
+      ret (*((&half) as *u16)) as int
+    if mode == 1:
+      brain:bf16 = value as bf16
+      ret (*((&brain) as *u16)) as int
+    if mode == 2:
+      e4:f8 = value as f8
+      ret (*((&e4) as *u8)) as int
+    e5:f8_e5m2 = value as f8_e5m2
+    ret (*((&e5) as *u8)) as int
+
+fn main() -> int:
+  mode:int = 0
+  while mode < 4:
+    limit:int = 256
+    if mode < 2: limit = 65536
+    i:int = 0
+    while i < limit:
+      if float_oracle_emit(mode, i, decode(mode, i)) != 0: ret 1
+      i += 1
+    i = 0
+    while i < 65536:
+      raw:int = i * 65537
+      if float_oracle_emit(mode + 4, raw, encode(mode, raw)) != 0: ret 2
+      i += 1
+    i = 0
+    count:int = float_oracle_count()
+    while i < count:
+      raw:int = float_oracle_input(i)
+      if float_oracle_emit(mode + 4, raw, encode(mode, raw)) != 0: ret 3
+      i += 1
+    mode += 1
+  ret 0

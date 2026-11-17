@@ -1,0 +1,27 @@
+kernel fn reduced_kernel(data:*char) -> int:
+  unsafe:
+    input:*u32 = data as *u32
+    bits:u32 = input[0]
+    value:f32 = *((&bits) as *f32)
+    half:f16 = value as f16
+    brain:bf16 = value as bf16
+    e4:f8 = value as f8
+    e5:f8_e5m2 = value as f8_e5m2
+    input[1] = (*((&half) as *u16)) as u32
+    input[2] = (*((&brain) as *u16)) as u32
+    input[3] = (*((&e4) as *u8)) as u32
+    input[4] = (*((&e5) as *u8)) as u32
+    wide:u16 = bits as u16
+    small:u8 = bits as u8
+    dh:f32 = (*((&wide) as *f16)) as f32
+    db:f32 = (*((&wide) as *bf16)) as f32
+    d4:f32 = (*((&small) as *f8)) as f32
+    d5:f32 = (*((&small) as *f8_e5m2)) as f32
+    input[5] = *((&dh) as *u32)
+    input[6] = *((&db) as *u32)
+    input[7] = *((&d4) as *u32)
+    input[8] = *((&d5) as *u32)
+    ret 0
+
+fn main() -> int:
+  ret 0

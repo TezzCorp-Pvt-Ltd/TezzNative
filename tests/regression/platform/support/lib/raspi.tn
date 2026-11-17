@@ -1,0 +1,2 @@
+fn value() -> int:
+  ret 33

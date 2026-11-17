@@ -1,0 +1,24 @@
+import "tezzdb"
+import "tezzdbql"
+
+fn main() -> int:
+  unsafe:
+    remove("ql_values.tdb")
+    remove("ql_values.tdb.wal")
+    db:*TezzDb = tezzdb.open("ql_values.tdb")
+    if db == 0: ret 1
+    tezzdb.table_create(db, "items")
+    text:str = "a\"b\\c\nline"
+    if tezzdbql.db_exec1(db as *char, "INSERT INTO items (value) VALUES (?)", text) != 1: ret 2
+    result:*TzQueryResult = tezzdbql.db_query0(db as *char, "SELECT * FROM items")
+    if tezzdbql.db_result_next(result) != 1: ret 3
+    actual:str = tezzdbql.cursor_field_str(result, "value")
+    if actual == 0 || strcmp(actual, text) != 0: ret 4
+    free(actual)
+    tezzdbql.db_result_free(result)
+    if tezzdbql.db_exec0(db as *char, "INSERT INTO items (a,b) VALUES (1,2)") != 1: ret 5
+    actual = tezzdbql.db_scalar0(db as *char, "SELECT * FROM items WHERE id = 2", "b")
+    if actual == 0 || strcmp(actual, "2") != 0: ret 6
+    free(actual)
+    tezzdb.close(db)
+  ret 0

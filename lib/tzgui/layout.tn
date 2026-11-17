@@ -1,0 +1,457 @@
+// tzgui implementation: layout.
+import "gui"
+import "frame"
+import "io"
+import "os"
+import "tzgui.state"
+import "tzgui.geometry"
+
+fn widget_set_icon(tree:*TzWidgetTree, widget_id:int, icon_id:int, size:int, color:int) -> int:
+  if tree == 0 || icon_id < 0 || icon_id > tzgui.state._get_TZ_UI_ICON_SETTINGS():
+    ret 0 - 1
+  slot:int = tzgui.geometry._tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  if size < 0:
+    ret 0 - 2
+  if size > 128:
+    size = 128
+  if tree[0].widgets[slot].visible != 0:
+    tzgui.geometry._tree_widget_mark_rect(tree, slot)
+  tree[0].widgets[slot].icon_id = icon_id
+  tree[0].widgets[slot].icon_size = size
+  scale_num:int = tree[0].design_width
+  scale_den:int = tree[0].width
+  if tree[0].design_height * scale_den < scale_num * tree[0].height:
+    scale_num = tree[0].design_height
+    scale_den = tree[0].height
+  if scale_num > 0:
+    tree[0].widgets[slot].design_icon_size = size * scale_den / scale_num
+  tree[0].widgets[slot].icon_color = color
+  tree[0].widgets[slot].dirty = 1
+  if tree[0].widgets[slot].visible != 0:
+    tzgui.geometry._tree_widget_mark_rect(tree, slot)
+  ret 0
+
+fn widget_set_style(tree:*TzWidgetTree, widget_id:int, style:*TzWidgetStyle) -> int:
+  if tree == 0 || style == 0:
+    ret 0 - 1
+  slot:int = tzgui.geometry._tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  if tree[0].widgets[slot].visible != 0:
+    tzgui.geometry._tree_widget_mark_rect(tree, slot)
+  tree[0].widgets[slot].bg = style[0].bg
+  tree[0].widgets[slot].fg = style[0].fg
+  tree[0].widgets[slot].border_color = style[0].border_color
+  tree[0].widgets[slot].border_width = style[0].border_width
+  tree[0].widgets[slot].radius = style[0].radius
+  tree[0].widgets[slot].gradient_color = style[0].gradient_color
+  tree[0].widgets[slot].gradient_axis = style[0].gradient_axis
+  tree[0].widgets[slot].shadow_color = style[0].shadow_color
+  tree[0].widgets[slot].shadow_size = style[0].shadow_size
+  tree[0].widgets[slot].text_align = style[0].text_align
+  tree[0].widgets[slot].hover_bg = style[0].hover_bg
+  tree[0].widgets[slot].pressed_bg = style[0].pressed_bg
+  tree[0].widgets[slot].disabled_bg = style[0].disabled_bg
+  tree[0].widgets[slot].focus_color = style[0].focus_color
+  tree[0].widgets[slot].hover_border = style[0].hover_border
+  tree[0].widgets[slot].text_scale = style[0].text_scale
+  if tree[0].widgets[slot].text_scale < 1:
+    tree[0].widgets[slot].text_scale = 1
+  if tree[0].widgets[slot].text_scale > 6:
+    tree[0].widgets[slot].text_scale = 6
+  tree[0].widgets[slot].text_bold = style[0].text_bold
+  tree[0].widgets[slot].font_size = style[0].font_size
+  if tree[0].widgets[slot].font_size < 0:
+    tree[0].widgets[slot].font_size = 0
+  if tree[0].widgets[slot].font_size > 192:
+    tree[0].widgets[slot].font_size = 192
+  tree[0].widgets[slot].font_weight = style[0].font_weight
+  if tree[0].widgets[slot].font_weight < 0:
+    tree[0].widgets[slot].font_weight = 100
+  if tree[0].widgets[slot].font_weight > 900:
+    tree[0].widgets[slot].font_weight = 900
+  tree[0].widgets[slot].font_family = style[0].font_family
+  if tree[0].widgets[slot].font_family == 0:
+    tree[0].widgets[slot].font_family = "Segoe UI"
+  if tree[0].widgets[slot].border_width < 0:
+    tree[0].widgets[slot].border_width = 0
+  if tree[0].widgets[slot].border_width > 256:
+    tree[0].widgets[slot].border_width = 256
+  if tree[0].widgets[slot].radius < 0:
+    tree[0].widgets[slot].radius = 0
+  if tree[0].widgets[slot].radius > 4096:
+    tree[0].widgets[slot].radius = 4096
+  if tree[0].widgets[slot].shadow_size < 0:
+    tree[0].widgets[slot].shadow_size = 0
+  if tree[0].widgets[slot].shadow_size > 256:
+    tree[0].widgets[slot].shadow_size = 256
+  if tree[0].widgets[slot].gradient_axis < tzgui.state._get_TZ_GRADIENT_NONE() || tree[0].widgets[slot].gradient_axis > tzgui.state._get_TZ_GRADIENT_HORIZONTAL():
+    tree[0].widgets[slot].gradient_axis = tzgui.state._get_TZ_GRADIENT_NONE()
+  scale_num:int = tree[0].design_width
+  scale_den:int = tree[0].width
+  if tree[0].design_height * scale_den < scale_num * tree[0].height:
+    scale_num = tree[0].design_height
+    scale_den = tree[0].height
+  if scale_num > 0:
+    tree[0].widgets[slot].design_border_width = tree[0].widgets[slot].border_width * scale_den / scale_num
+    tree[0].widgets[slot].design_radius = tree[0].widgets[slot].radius * scale_den / scale_num
+    tree[0].widgets[slot].design_shadow_size = tree[0].widgets[slot].shadow_size * scale_den / scale_num
+    tree[0].widgets[slot].design_font_size = tree[0].widgets[slot].font_size * scale_den / scale_num
+  tree[0].widgets[slot].dirty = 1
+  if tree[0].widgets[slot].visible != 0:
+    tzgui.geometry._tree_widget_mark_rect(tree, slot)
+  ret 0
+
+fn widget_set_layout(tree:*TzWidgetTree, widget_id:int, layout:*TzWidgetLayout) -> int:
+  if tree == 0 || layout == 0:
+    ret 0 - 1
+  slot:int = tzgui.geometry._tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  if layout[0].mode < tzgui.state._get_TZ_LAYOUT_ABSOLUTE() || layout[0].mode > tzgui.state._get_TZ_LAYOUT_COLUMN():
+    ret 0 - 2
+  if layout[0].justify < tzgui.state._get_TZ_JUSTIFY_START() || layout[0].justify > tzgui.state._get_TZ_JUSTIFY_BETWEEN():
+    ret 0 - 2
+  if layout[0].align < tzgui.state._get_TZ_ALIGN_START() || layout[0].align > tzgui.state._get_TZ_ALIGN_STRETCH():
+    ret 0 - 2
+  tree[0].widgets[slot].layout_mode = layout[0].mode
+  tree[0].widgets[slot].layout_gap = layout[0].gap
+  if tree[0].widgets[slot].layout_gap < 0:
+    tree[0].widgets[slot].layout_gap = 0
+  scale_num:int = tree[0].design_width
+  scale_den:int = tree[0].width
+  if tree[0].design_height * scale_den < scale_num * tree[0].height:
+    scale_num = tree[0].design_height
+    scale_den = tree[0].height
+  if scale_num > 0:
+    tree[0].widgets[slot].design_layout_gap = tree[0].widgets[slot].layout_gap * scale_den / scale_num
+  tree[0].widgets[slot].layout_justify = layout[0].justify
+  tree[0].widgets[slot].layout_align = layout[0].align
+  tree[0].widgets[slot].pad_top = layout[0].pad_top
+  tree[0].widgets[slot].pad_right = layout[0].pad_right
+  tree[0].widgets[slot].pad_bottom = layout[0].pad_bottom
+  tree[0].widgets[slot].pad_left = layout[0].pad_left
+  if tree[0].widgets[slot].pad_top < 0:
+    tree[0].widgets[slot].pad_top = 0
+  if tree[0].widgets[slot].pad_right < 0:
+    tree[0].widgets[slot].pad_right = 0
+  if tree[0].widgets[slot].pad_bottom < 0:
+    tree[0].widgets[slot].pad_bottom = 0
+  if tree[0].widgets[slot].pad_left < 0:
+    tree[0].widgets[slot].pad_left = 0
+  if tree[0].height > 0:
+    tree[0].widgets[slot].design_pad_top = tree[0].widgets[slot].pad_top * tree[0].design_height / tree[0].height
+    tree[0].widgets[slot].design_pad_bottom = tree[0].widgets[slot].pad_bottom * tree[0].design_height / tree[0].height
+  if tree[0].width > 0:
+    tree[0].widgets[slot].design_pad_left = tree[0].widgets[slot].pad_left * tree[0].design_width / tree[0].width
+    tree[0].widgets[slot].design_pad_right = tree[0].widgets[slot].pad_right * tree[0].design_width / tree[0].width
+  ret tzgui.geometry.tree_request_full_redraw(tree, tzgui.state._get_TZ_FULL_REDRAW_LAYOUT_RESET())
+
+fn widget_set_flex(tree:*TzWidgetTree, widget_id:int, grow:int, shrink:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  slot:int = tzgui.geometry._tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  if grow < 0:
+    grow = 0
+  if shrink < 0:
+    shrink = 0
+  tree[0].widgets[slot].grow = grow
+  tree[0].widgets[slot].shrink = shrink
+  ret 0
+
+fn widget_set_align_self(tree:*TzWidgetTree, widget_id:int, align:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  if align < 0 - 1 || align > tzgui.state._get_TZ_ALIGN_STRETCH():
+    ret 0 - 2
+  slot:int = tzgui.geometry._tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  tree[0].widgets[slot].align_self = align
+  ret 0
+
+fn widget_set_margin(tree:*TzWidgetTree, widget_id:int, top:int, right:int, bottom:int, left:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  slot:int = tzgui.geometry._tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  if top < 0:
+    top = 0
+  if right < 0:
+    right = 0
+  if bottom < 0:
+    bottom = 0
+  if left < 0:
+    left = 0
+  tree[0].widgets[slot].margin_top = top
+  tree[0].widgets[slot].margin_right = right
+  tree[0].widgets[slot].margin_bottom = bottom
+  tree[0].widgets[slot].margin_left = left
+  if tree[0].height > 0:
+    tree[0].widgets[slot].design_margin_top = top * tree[0].design_height / tree[0].height
+    tree[0].widgets[slot].design_margin_bottom = bottom * tree[0].design_height / tree[0].height
+  if tree[0].width > 0:
+    tree[0].widgets[slot].design_margin_left = left * tree[0].design_width / tree[0].width
+    tree[0].widgets[slot].design_margin_right = right * tree[0].design_width / tree[0].width
+  ret 0
+
+fn widget_set_padding(tree:*TzWidgetTree, widget_id:int, top:int, right:int, bottom:int, left:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  slot:int = tzgui.geometry._tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  if top < 0:
+    top = 0
+  if right < 0:
+    right = 0
+  if bottom < 0:
+    bottom = 0
+  if left < 0:
+    left = 0
+  tree[0].widgets[slot].pad_top = top
+  tree[0].widgets[slot].pad_right = right
+  tree[0].widgets[slot].pad_bottom = bottom
+  tree[0].widgets[slot].pad_left = left
+  if tree[0].height > 0:
+    tree[0].widgets[slot].design_pad_top = top * tree[0].design_height / tree[0].height
+    tree[0].widgets[slot].design_pad_bottom = bottom * tree[0].design_height / tree[0].height
+  if tree[0].width > 0:
+    tree[0].widgets[slot].design_pad_left = left * tree[0].design_width / tree[0].width
+    tree[0].widgets[slot].design_pad_right = right * tree[0].design_width / tree[0].width
+  ret tzgui.geometry.tree_request_full_redraw(tree, tzgui.state._get_TZ_FULL_REDRAW_LAYOUT_RESET())
+
+fn widget_set_preferred_size(tree:*TzWidgetTree, widget_id:int, w:int, h:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  slot:int = tzgui.geometry._tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  if w <= 0:
+    w = tree[0].widgets[slot].requested_w
+  if h <= 0:
+    h = tree[0].widgets[slot].requested_h
+  widget_update_bounds(tree, widget_id, tree[0].widgets[slot].requested_x, tree[0].widgets[slot].requested_y, w, h)
+  ret 0
+
+fn widget_set_hit_testable(tree:*TzWidgetTree, widget_id:int, enabled:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  slot:int = tzgui.geometry._tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  tree[0].widgets[slot].hit_testable = 0
+  if enabled != 0:
+    tree[0].widgets[slot].hit_testable = 1
+  if tree[0].widgets[slot].hit_testable == 0:
+    if tree[0].hovered_id == widget_id:
+      tzgui.geometry._tree_mark_interaction(tree, widget_id)
+      tree[0].hovered_id = 0
+    if tree[0].pressed_id == widget_id:
+      tzgui.geometry._tree_mark_interaction(tree, widget_id)
+      tree[0].pressed_id = 0
+  ret 0
+
+fn widget_update_bounds(tree:*TzWidgetTree, widget_id:int, x:int, y:int, w:int, h:int) -> int:
+  slot:int = tzgui.geometry._tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  if w <= 0:
+    w = 1
+  if h <= 0:
+    h = 1
+  if tree[0].widgets[slot].visible != 0:
+    tzgui.geometry._tree_widget_mark_rect(tree, slot)
+  tree[0].widgets[slot].requested_x = x
+  tree[0].widgets[slot].requested_y = y
+  tree[0].widgets[slot].requested_w = w
+  tree[0].widgets[slot].requested_h = h
+  if tree[0].width > 0:
+    tree[0].widgets[slot].design_x = x * tree[0].design_width / tree[0].width
+    tree[0].widgets[slot].design_w = w * tree[0].design_width / tree[0].width
+  if tree[0].height > 0:
+    tree[0].widgets[slot].design_y = y * tree[0].design_height / tree[0].height
+    tree[0].widgets[slot].design_h = h * tree[0].design_height / tree[0].height
+  tree[0].widgets[slot].x = x
+  tree[0].widgets[slot].y = y
+  tree[0].widgets[slot].w = w
+  tree[0].widgets[slot].h = h
+  tree[0].widgets[slot].dirty = 1
+  if tree[0].widgets[slot].visible != 0:
+    tzgui.geometry._tree_widget_mark_rect(tree, slot)
+  ret 0
+
+fn tree_layout(tree:*TzWidgetTree) -> int:
+  if tree == 0:
+    ret 0 - 1
+  parents:[int;256]
+  parent_count:int = 0
+  i:int = 0
+  while i < tzgui.state._get_TZ_WIDGET_MAX():
+    if tree[0].widgets[i].alive != 0:
+      parents[parent_count] = i
+      parent_count = parent_count + 1
+    i = i + 1
+  tzgui.geometry._tree_sort_slots_by_id(tree, &parents[0], parent_count)
+
+  changed:int = 0
+  parent_idx:int = 0
+  while parent_idx < parent_count:
+    parent_slot:int = parents[parent_idx]
+    if tree[0].widgets[parent_slot].layout_mode != tzgui.state._get_TZ_LAYOUT_ABSOLUTE():
+      children:[int;256]
+      child_count:int = 0
+      child_i:int = 0
+      while child_i < tzgui.state._get_TZ_WIDGET_MAX():
+        if tree[0].widgets[child_i].alive != 0 && tree[0].widgets[child_i].visible != 0 && tree[0].widgets[child_i].parent == tree[0].widgets[parent_slot].id:
+          children[child_count] = child_i
+          child_count = child_count + 1
+        child_i = child_i + 1
+      tzgui.geometry._tree_sort_slots_by_order(tree, &children[0], child_count)
+
+      if child_count > 0:
+        row_mode:int = tree[0].widgets[parent_slot].layout_mode == tzgui.state._get_TZ_LAYOUT_ROW()
+        inner_x:int = tree[0].widgets[parent_slot].x + tree[0].widgets[parent_slot].pad_left
+        inner_y:int = tree[0].widgets[parent_slot].y + tree[0].widgets[parent_slot].pad_top
+        inner_w:int = tree[0].widgets[parent_slot].w - tree[0].widgets[parent_slot].pad_left - tree[0].widgets[parent_slot].pad_right
+        inner_h:int = tree[0].widgets[parent_slot].h - tree[0].widgets[parent_slot].pad_top - tree[0].widgets[parent_slot].pad_bottom
+        if inner_w < 1:
+          inner_w = 1
+        if inner_h < 1:
+          inner_h = 1
+        main_available:int = inner_h
+        if row_mode != 0:
+          main_available = inner_w
+        gap:int = tree[0].widgets[parent_slot].layout_gap
+        main_used:int = gap * (child_count - 1)
+        flex_weight:int = 0
+        c:int = 0
+        while c < child_count:
+          child_slot:int = children[c]
+          basis:int = tree[0].widgets[child_slot].requested_h
+          margin_before:int = tree[0].widgets[child_slot].margin_top
+          margin_after:int = tree[0].widgets[child_slot].margin_bottom
+          if row_mode != 0:
+            basis = tree[0].widgets[child_slot].requested_w
+            margin_before = tree[0].widgets[child_slot].margin_left
+            margin_after = tree[0].widgets[child_slot].margin_right
+          if basis < 1:
+            basis = 1
+          main_used = main_used + basis + margin_before + margin_after
+          c = c + 1
+        remaining:int = main_available - main_used
+        c = 0
+        while c < child_count:
+          child_slot2:int = children[c]
+          basis2:int = tree[0].widgets[child_slot2].requested_h
+          if row_mode != 0:
+            basis2 = tree[0].widgets[child_slot2].requested_w
+          if basis2 < 1:
+            basis2 = 1
+          if remaining >= 0:
+            flex_weight = flex_weight + tree[0].widgets[child_slot2].grow
+          else:
+            flex_weight = flex_weight + tree[0].widgets[child_slot2].shrink * basis2
+          c = c + 1
+
+        sized:[int;256]
+        c = 0
+        sized_used:int = gap * (child_count - 1)
+        while c < child_count:
+          child_slot3:int = children[c]
+          basis3:int = tree[0].widgets[child_slot3].requested_h
+          margin_before3:int = tree[0].widgets[child_slot3].margin_top
+          margin_after3:int = tree[0].widgets[child_slot3].margin_bottom
+          if row_mode != 0:
+            basis3 = tree[0].widgets[child_slot3].requested_w
+            margin_before3 = tree[0].widgets[child_slot3].margin_left
+            margin_after3 = tree[0].widgets[child_slot3].margin_right
+          if basis3 < 1:
+            basis3 = 1
+          main_size:int = basis3
+          if flex_weight > 0 && remaining > 0:
+            main_size = basis3 + remaining * tree[0].widgets[child_slot3].grow / flex_weight
+          else:
+            if flex_weight > 0 && remaining < 0:
+              reduction:int = (0 - remaining) * tree[0].widgets[child_slot3].shrink * basis3 / flex_weight
+              main_size = basis3 - reduction
+              if main_size < 1:
+                main_size = 1
+          sized[c] = main_size
+          sized_used = sized_used + main_size + margin_before3 + margin_after3
+          c = c + 1
+
+        free_space:int = main_available - sized_used
+        if free_space < 0:
+          free_space = 0
+        offset:int = 0
+        extra_gap:int = 0
+        justify:int = tree[0].widgets[parent_slot].layout_justify
+        if justify == tzgui.state._get_TZ_JUSTIFY_CENTER():
+          offset = free_space / 2
+        if justify == tzgui.state._get_TZ_JUSTIFY_END():
+          offset = free_space
+        if justify == tzgui.state._get_TZ_JUSTIFY_BETWEEN() && child_count > 1:
+          extra_gap = free_space / (child_count - 1)
+        cursor:int = inner_y + offset
+        if row_mode != 0:
+          cursor = inner_x + offset
+        c = 0
+        while c < child_count:
+          child_slot4:int = children[c]
+          child_w:int = tree[0].widgets[child_slot4].requested_w
+          child_h:int = tree[0].widgets[child_slot4].requested_h
+          child_x:int = tree[0].widgets[child_slot4].requested_x
+          child_y:int = tree[0].widgets[child_slot4].requested_y
+          child_align:int = tree[0].widgets[child_slot4].align_self
+          if child_align < 0:
+            child_align = tree[0].widgets[parent_slot].layout_align
+          if row_mode != 0:
+            child_w = sized[c]
+            child_x = cursor + tree[0].widgets[child_slot4].margin_left
+            child_y = inner_y + tree[0].widgets[child_slot4].margin_top
+            cross_used:int = tree[0].widgets[child_slot4].margin_top + tree[0].widgets[child_slot4].margin_bottom + child_h
+            if child_align == tzgui.state._get_TZ_ALIGN_STRETCH():
+              child_h = inner_h - tree[0].widgets[child_slot4].margin_top - tree[0].widgets[child_slot4].margin_bottom
+              if child_h < 1:
+                child_h = 1
+            else:
+              if child_align == tzgui.state._get_TZ_ALIGN_CENTER():
+                child_y = inner_y + (inner_h - cross_used) / 2 + tree[0].widgets[child_slot4].margin_top
+              if child_align == tzgui.state._get_TZ_ALIGN_END():
+                child_y = inner_y + inner_h - tree[0].widgets[child_slot4].margin_bottom - child_h
+            cursor = cursor + tree[0].widgets[child_slot4].margin_left + child_w + tree[0].widgets[child_slot4].margin_right + gap + extra_gap
+          else:
+            child_h = sized[c]
+            child_y = cursor + tree[0].widgets[child_slot4].margin_top
+            child_x = inner_x + tree[0].widgets[child_slot4].margin_left
+            cross_used2:int = tree[0].widgets[child_slot4].margin_left + tree[0].widgets[child_slot4].margin_right + child_w
+            if child_align == tzgui.state._get_TZ_ALIGN_STRETCH():
+              child_w = inner_w - tree[0].widgets[child_slot4].margin_left - tree[0].widgets[child_slot4].margin_right
+              if child_w < 1:
+                child_w = 1
+            else:
+              if child_align == tzgui.state._get_TZ_ALIGN_CENTER():
+                child_x = inner_x + (inner_w - cross_used2) / 2 + tree[0].widgets[child_slot4].margin_left
+              if child_align == tzgui.state._get_TZ_ALIGN_END():
+                child_x = inner_x + inner_w - tree[0].widgets[child_slot4].margin_right - child_w
+            cursor = cursor + tree[0].widgets[child_slot4].margin_top + child_h + tree[0].widgets[child_slot4].margin_bottom + gap + extra_gap
+          if tzgui.geometry._tree_apply_layout_bounds(tree, child_slot4, child_x, child_y, child_w, child_h) > 0:
+            changed = changed + 1
+          c = c + 1
+    else:
+      child_i2:int = 0
+      while child_i2 < tzgui.state._get_TZ_WIDGET_MAX():
+        if tree[0].widgets[child_i2].alive != 0 && tree[0].widgets[child_i2].visible != 0 && tree[0].widgets[child_i2].parent == tree[0].widgets[parent_slot].id:
+          abs_x:int = tree[0].widgets[parent_slot].x + tree[0].widgets[child_i2].requested_x
+          abs_y:int = tree[0].widgets[parent_slot].y + tree[0].widgets[child_i2].requested_y
+          if tzgui.geometry._tree_apply_layout_bounds(tree, child_i2, abs_x, abs_y, tree[0].widgets[child_i2].requested_w, tree[0].widgets[child_i2].requested_h) > 0:
+            changed = changed + 1
+        child_i2 = child_i2 + 1
+    parent_idx = parent_idx + 1
+  ret changed

@@ -1,0 +1,20 @@
+import "tensor"
+
+fn main() -> int:
+  tensor.tape_init()
+  x:Tensor = tensor.tensor_ones_1d(1)
+  x = tensor.tensor_require_grad(x)
+  y:Tensor = tensor.tensor_scale(x, 2.0)
+  loss:Tensor = tensor.tensor_scale(y, 3.0)
+  tensor.tensor_backward(loss)
+  first:float = tensor.tensor_grad_item(x, 0)
+  tensor.tensor_backward(loss)
+  second:float = tensor.tensor_grad_item(x, 0)
+  tensor.tape_reset()
+  tensor.tensor_free_tensor(loss)
+  tensor.tensor_free_tensor(y)
+  tensor.tensor_free_tensor(x)
+  if first != 6.0 || second != 12.0:
+    say "FAIL: repeated backward must accumulate each derivative once; got ", first, ", ", second
+    ret 1
+  ret 0

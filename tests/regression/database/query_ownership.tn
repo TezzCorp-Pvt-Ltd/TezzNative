@@ -1,0 +1,23 @@
+import "tezzdb"
+
+fn main() -> int:
+  unsafe:
+    remove("query_ownership.tdb")
+    remove("query_ownership.tdb.wal")
+    db:*TezzDb = tezzdb.open("query_ownership.tdb")
+    if db == 0: ret 1
+    if tezzdb.table_create(db, "items") != 0: ret 2
+    empty:str = tezzdb.query_all(db, "items")
+    failed:int = 0
+    if empty == 0 || strcmp(empty, "[]") != 0: failed = 1
+    free(empty)
+    if tezzdb.insert(db, "items", "{\"name\":\"one\"}") != 1: failed = 1
+    matching:str = tezzdb.query_where(db, "items", "name", "one")
+    ranged:str = tezzdb.query_range(db, "items", 1, 1)
+    if matching == 0 || ranged == 0: failed = 1
+    if matching != 0 && strcmp(matching, "[{\"name\":\"one\"}]") != 0: failed = 1
+    free(matching)
+    free(ranged)
+    if tezzdb.close(db) != 0: failed = 1
+    if failed != 0: say "FAIL: database query strings must be owned and correctly assembled"
+    ret failed

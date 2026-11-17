@@ -1,0 +1,525 @@
+// mind implementation: backward.
+import "math"
+import "str"
+import "nn"
+import "mind.core"
+import "mind.kernels"
+import "mind.state"
+
+fn mind_backward(model:*float, tokens:*int, targets:*int, seq_len:int, grads:*float) -> float:
+  if model == 0 as *float || tokens == 0 as *int || targets == 0 as *int || grads == 0 as *float || seq_len <= 0:
+    ret 0.0 - 1.0
+
+  vocab:int   = mind.core._mi(model, (*mind.state._state__MH_VOCAB()))
+  dim:int     = mind.core._mi(model, (*mind.state._state__MH_DIM()))
+  q_heads:int = mind.core._mi(model, (*mind.state._state__MH_QH()))
+  kv_heads:int = mind.core._mi(model, (*mind.state._state__MH_KVH()))
+  layers:int  = mind.core._mi(model, (*mind.state._state__MH_LAYERS()))
+  ffn:int     = mind.core._mi(model, (*mind.state._state__MH_FFN()))
+  head_dim:int = mind.core._mi(model, (*mind.state._state__MH_HDIM()))
+  w_off:int   = mind.core._mi(model, (*mind.state._state__MH_WOFF()))
+  nw:int      = mind.core._mi(model, (*mind.state._state__MH_NW()))
+
+  q_dim:int  = q_heads  * head_dim
+  kv_dim:int = kv_heads * head_dim
+
+  // Zero the output grads slab
+  i:int = 0
+  while i < nw:
+    mind.core._mw(grads, w_off + i, 0.0)
+    i = i + 1
+
+  // Allocate contiguous activation and gradient slabs
+  L_SZ:int = seq_len * (dim * 5 + q_dim * 2 + kv_dim * 2 + ffn * 3)
+  act_sz:int = layers * L_SZ + seq_len * dim + seq_len * vocab
+  probs_sz:int = seq_len * q_heads * seq_len
+
+  act_raw:*char
+  d_act_raw:*char
+  probs_raw:*char
+  d_probs_temp_raw:*char
+  unsafe:
+    act_raw = malloc(act_sz * 8)
+    d_act_raw = malloc(act_sz * 8)
+    probs_raw = malloc(probs_sz * 8)
+    d_probs_temp_raw = malloc(seq_len * 8)
+
+  if act_raw == 0 || d_act_raw == 0 || probs_raw == 0 || d_probs_temp_raw == 0:
+    unsafe:
+      if act_raw != 0: free(act_raw)
+      if d_act_raw != 0: free(d_act_raw)
+      if probs_raw != 0: free(probs_raw)
+      if d_probs_temp_raw != 0: free(d_probs_temp_raw)
+    ret 0.0 - 1.0
+
+  act:*float; d_act:*float; probs:*float; d_probs_temp:*float
+  unsafe:
+    act = act_raw as *float
+    d_act = d_act_raw as *float
+    probs = probs_raw as *float
+    d_probs_temp = d_probs_temp_raw as *float
+
+  // Zero activation gradients
+  i = 0
+  while i < act_sz:
+    mind.core._mw(d_act, i, 0.0)
+    i = i + 1
+
+  // â”€â”€ 1. Forward Pass â”€â”€
+
+  // Calculate layer indices/offsets
+  final_norm_off:int = layers * L_SZ
+  logits_off:int = final_norm_off + seq_len * dim
+
+  // Embeddings
+  embed_w:*float
+  unsafe:
+    embed_w = model + w_off
+  nn.nn_embed(tokens, act, embed_w, seq_len, dim)
+
+  l:int = 0
+  while l < layers:
+    lw:int = w_off + mind.core._layer_weights_start(vocab, dim, q_heads, kv_heads, head_dim, ffn, l)
+
+    // Layer bounds
+    off_x_in:int = l * L_SZ
+    off_x_norm1:int = off_x_in + seq_len * dim
+    off_q:int = off_x_norm1 + seq_len * dim
+    off_k:int = off_q + seq_len * q_dim
+    off_v:int = off_k + seq_len * kv_dim
+    off_attn_out:int = off_v + seq_len * kv_dim
+    off_attn_proj:int = off_attn_out + seq_len * q_dim
+    off_x_norm2:int = off_attn_proj + seq_len * dim
+    off_gate:int = off_x_norm2 + seq_len * dim
+    off_up:int = off_gate + seq_len * ffn
+    off_ffn_mid:int = off_up + seq_len * ffn
+    off_ffn_out:int = off_ffn_mid + seq_len * ffn
+
+    // Set residual in
+    if l > 0:
+      prev_ffn:int = (l - 1) * L_SZ + (L_SZ - seq_len * dim)
+      prev_xin:int = (l - 1) * L_SZ
+      j:int = 0
+      while j < seq_len * dim:
+        mind.core._mw(act, off_x_in + j, mind.core._mf(act, prev_xin + j) + mind.core._mf(act, prev_ffn + j))
+        j = j + 1
+
+    // RMSNorm 1
+    ln1_off:int = lw
+    ln1_w:*float
+    unsafe:
+      ln1_w = (model as *char + ln1_off * 8) as *float
+    mind.kernels._rmsnorm_forward(act + off_x_in, act + off_x_norm1, ln1_w, seq_len, dim)
+    lw = lw + dim
+
+    // Projections Q, K, V
+    w_q_off:int = lw; lw = lw + dim * q_dim
+    w_k_off:int = lw; lw = lw + dim * kv_dim
+    w_v_off:int = lw; lw = lw + dim * kv_dim
+    w_o_off:int = lw; lw = lw + q_dim * dim
+
+    w_q:*float; w_k:*float; w_v:*float
+    unsafe:
+      w_q = (model as *char + w_q_off * 8) as *float
+      w_k = (model as *char + w_k_off * 8) as *float
+      w_v = (model as *char + w_v_off * 8) as *float
+
+    mind.kernels._matmul_forward(act + off_x_norm1, w_q, act + off_q, seq_len, dim, q_dim)
+    mind.kernels._matmul_forward(act + off_x_norm1, w_k, act + off_k, seq_len, dim, kv_dim)
+    mind.kernels._matmul_forward(act + off_x_norm1, w_v, act + off_v, seq_len, dim, kv_dim)
+
+    // RoPE
+    mind.kernels._rope_forward(act + off_q, act + off_k, seq_len, q_heads, kv_heads, head_dim, 0)
+
+    // GQA Attention
+    mind.kernels._gqa_forward(act + off_q, act + off_k, act + off_v, act + off_attn_out, probs + l * probs_sz, seq_len, q_heads, kv_heads, head_dim)
+
+    // Output projection
+    w_o:*float
+    unsafe:
+      w_o = (model as *char + w_o_off * 8) as *float
+    mind.kernels._matmul_forward(act + off_attn_out, w_o, act + off_attn_proj, seq_len, q_dim, dim)
+
+    // RMSNorm 2
+    ln2_off:int = lw
+    ln2_w:*float
+    unsafe:
+      ln2_w = (model as *char + ln2_off * 8) as *float
+    j:int = 0
+    while j < seq_len * dim:
+      mind.core._mw(act, off_x_norm2 + j, mind.core._mf(act, off_x_in + j) + mind.core._mf(act, off_attn_proj + j))
+      j = j + 1
+    mind.kernels._rmsnorm_forward(act + off_x_norm2, act + off_x_norm2, ln2_w, seq_len, dim)
+    lw = lw + dim
+
+    // SwiGLU FFN
+    w_gate_off:int = lw; lw = lw + dim * ffn
+    w_up_off:int = lw; lw = lw + dim * ffn
+    w_down_off:int = lw; lw = lw + ffn * dim
+
+    w_gate_p:*float; w_up_p:*float; w_down_p:*float
+    unsafe:
+      w_gate_p = (model as *char + w_gate_off * 8) as *float
+      w_up_p   = (model as *char + w_up_off * 8) as *float
+      w_down_p = (model as *char + w_down_off * 8) as *float
+
+    mind.kernels._matmul_forward(act + off_x_norm2, w_gate_p, act + off_gate, seq_len, dim, ffn)
+    mind.kernels._matmul_forward(act + off_x_norm2, w_up_p, act + off_up, seq_len, dim, ffn)
+    mind.kernels._swiglu_forward(act + off_gate, act + off_up, act + off_ffn_mid, seq_len, ffn)
+    mind.kernels._matmul_forward(act + off_ffn_mid, w_down_p, act + off_ffn_out, seq_len, ffn, dim)
+
+    l = l + 1
+
+  // Final Norm
+  last_ffn:int = (layers - 1) * L_SZ + (L_SZ - seq_len * dim)
+  last_xin:int = (layers - 1) * L_SZ
+  last_xout_raw:*char
+  unsafe:
+    last_xout_raw = malloc(seq_len * dim * 8)
+  last_xout:*float = last_xout_raw as *float
+  j:int = 0
+  while j < seq_len * dim:
+    mind.core._mw(last_xout, j, mind.core._mf(act, last_xin + j) + mind.core._mf(act, last_ffn + j))
+    j = j + 1
+
+  lw_final:int = w_off + vocab * dim + layers * mind.core._mind_layer_weights(dim, q_heads, kv_heads, head_dim, ffn)
+  final_ln_w:*float
+  unsafe:
+    final_ln_w = (model as *char + lw_final * 8) as *float
+  mind.kernels._rmsnorm_forward(last_xout, act + final_norm_off, final_ln_w, seq_len, dim)
+  lw_final = lw_final + dim
+
+  // LM Head
+  lm_head_w:*float
+  unsafe:
+    lm_head_w = (model as *char + lw_final * 8) as *float
+  mind.kernels._matmul_forward(act + final_norm_off, lm_head_w, act + logits_off, seq_len, dim, vocab)
+
+  // Loss and d_logits calculation
+  loss_total:float = 0.0
+  d_logits_raw:*char
+  unsafe:
+    d_logits_raw = malloc(vocab * 8)
+  d_logits:*float = d_logits_raw as *float
+
+  t:int = 0
+  while t < seq_len:
+    target:int = targets[t]
+    // Get logits for this t
+    t_logits:*float
+    unsafe:
+      t_logits = act + logits_off + t * vocab
+    loss_total = loss_total + nn.nn_cross_entropy(t_logits, target, d_logits, vocab)
+    // Copy computed gradients to d_act slab
+    j = 0
+    while j < vocab:
+      mind.core._mw(d_act, logits_off + t * vocab + j, mind.core._mf(d_logits, j))
+      j = j + 1
+    t = t + 1
+  loss_avg:float = loss_total / (seq_len as float)
+
+  unsafe:
+    free(d_logits_raw)
+
+  // ── 2. Backward Pass ──
+
+  // Grad to LM Head
+  // dW_lm += final_norm^T @ d_logits
+  dw_lm:*float
+  unsafe:
+    dw_lm = (grads as *char + lw_final * 8) as *float
+  mind.kernels._matmul_backward_weights(act + final_norm_off, d_act + logits_off, dw_lm, seq_len, dim, vocab)
+
+  // dfinal_norm = d_logits @ W_lm^T
+  dfinal_norm:*float
+  unsafe:
+    dfinal_norm = (d_act as *char + final_norm_off * 8) as *float
+  mind.kernels._matmul_backward_inputs(d_act + logits_off, lm_head_w, dfinal_norm, seq_len, dim, vocab)
+
+  // Backprop Final Norm
+  d_last_xout_raw:*char
+  unsafe:
+    d_last_xout_raw = malloc(seq_len * dim * 8)
+  d_last_xout:*float = d_last_xout_raw as *float
+  i = 0
+  while i < seq_len * dim:
+    mind.core._mw(d_last_xout, i, 0.0)
+    i = i + 1
+
+  dgamma_final:*float
+  unsafe:
+    dgamma_final = (grads as *char + (lw_final - dim) * 8) as *float
+  mind.kernels._rmsnorm_backward(dfinal_norm, last_xout, final_ln_w, d_last_xout, dgamma_final, seq_len, dim)
+
+  // Initialize gradient for the residual stream (backprop down the layers)
+  d_xstream_raw:*char
+  unsafe:
+    d_xstream_raw = malloc(seq_len * dim * 8)
+  d_xstream:*float = d_xstream_raw as *float
+  j = 0
+  while j < seq_len * dim:
+    mind.core._mw(d_xstream, j, mind.core._mf(d_last_xout, j))
+    j = j + 1
+
+  l = layers - 1
+  while l >= 0:
+    lw:int = w_off + mind.core._layer_weights_start(vocab, dim, q_heads, kv_heads, head_dim, ffn, l)
+
+    // Layer bounds
+    off_x_in:int = l * L_SZ
+    off_x_norm1:int = off_x_in + seq_len * dim
+    off_q:int = off_x_norm1 + seq_len * dim
+    off_k:int = off_q + seq_len * q_dim
+    off_v:int = off_k + seq_len * kv_dim
+    off_attn_out:int = off_v + seq_len * kv_dim
+    off_attn_proj:int = off_attn_out + seq_len * q_dim
+    off_x_norm2:int = off_attn_proj + seq_len * dim
+    off_gate:int = off_x_norm2 + seq_len * dim
+    off_up:int = off_gate + seq_len * ffn
+    off_ffn_mid:int = off_up + seq_len * ffn
+    off_ffn_out:int = off_ffn_mid + seq_len * ffn
+
+    // Layer weight pointers
+    ln1_off:int = lw
+    w_q_off:int = ln1_off + dim
+    w_k_off:int = w_q_off + dim * q_dim
+    w_v_off:int = w_k_off + dim * kv_dim
+    w_o_off:int = w_v_off + dim * kv_dim
+    ln2_off:int = w_o_off + q_dim * dim
+    w_gate_off:int = ln2_off + dim
+    w_up_off:int = w_gate_off + dim * ffn
+    w_down_off:int = w_up_off + dim * ffn
+
+    dw_down:*float; dw_gate:*float; dw_up:*float; dw_o:*float; dw_q:*float; dw_k:*float; dw_v:*float
+    dgamma1:*float; dgamma2:*float
+    w_gate_p:*float; w_up_p:*float; w_down_p:*float
+    w_q:*float; w_k:*float; w_v:*float; w_o:*float
+    unsafe:
+      dw_down = (grads as *char + w_down_off * 8) as *float
+      dw_up   = (grads as *char + w_up_off * 8) as *float
+      dw_gate = (grads as *char + w_gate_off * 8) as *float
+      dgamma2 = (grads as *char + ln2_off * 8) as *float
+      dw_o    = (grads as *char + w_o_off * 8) as *float
+      dw_v    = (grads as *char + w_v_off * 8) as *float
+      dw_k    = (grads as *char + w_k_off * 8) as *float
+      dw_q    = (grads as *char + w_q_off * 8) as *float
+      dgamma1 = (grads as *char + ln1_off * 8) as *float
+      w_gate_p = (model as *char + w_gate_off * 8) as *float
+      w_up_p   = (model as *char + w_up_off * 8) as *float
+      w_down_p = (model as *char + w_down_off * 8) as *float
+      w_q = (model as *char + w_q_off * 8) as *float
+      w_k = (model as *char + w_k_off * 8) as *float
+      w_v = (model as *char + w_v_off * 8) as *float
+      w_o = (model as *char + w_o_off * 8) as *float
+
+    // Backprop SwiGLU FFN weights
+    // dW_down += ffn_mid^T @ d_ffn_out
+    // d_xstream is also d_ffn_out because ffn_out adds directly to the residual stream
+    mind.kernels._matmul_backward_weights(act + off_ffn_mid, d_xstream, dw_down, seq_len, ffn, dim)
+
+    // d_ffn_mid = d_ffn_out @ W_down^T
+    d_ffn_mid_raw:*char
+    unsafe:
+      d_ffn_mid_raw = malloc(seq_len * ffn * 8)
+    d_ffn_mid:*float = d_ffn_mid_raw as *float
+    i = 0
+    while i < seq_len * ffn:
+      mind.core._mw(d_ffn_mid, i, 0.0)
+      i = i + 1
+    mind.kernels._matmul_backward_inputs(d_xstream, w_down_p, d_ffn_mid, seq_len, ffn, dim)
+
+    // Backprop SwiGLU FFN activations (d_gate, d_up)
+    d_gate_p_raw:*char
+    d_up_p_raw:*char
+    unsafe:
+      d_gate_p_raw = malloc(seq_len * ffn * 8)
+      d_up_p_raw   = malloc(seq_len * ffn * 8)
+    d_gate_p:*float = d_gate_p_raw as *float
+    d_up_p:*float   = d_up_p_raw   as *float
+    i = 0
+    while i < seq_len * ffn:
+      mind.core._mw(d_gate_p, i, 0.0)
+      mind.core._mw(d_up_p,   i, 0.0)
+      i = i + 1
+
+    mind.kernels._swiglu_backward(d_ffn_mid, act + off_gate, act + off_up, d_gate_p, d_up_p, seq_len, ffn)
+
+    // dW_gate += x_norm2^T @ d_gate
+    mind.kernels._matmul_backward_weights(act + off_x_norm2, d_gate_p, dw_gate, seq_len, dim, ffn)
+    // dW_up += x_norm2^T @ d_up
+    mind.kernels._matmul_backward_weights(act + off_x_norm2, d_up_p, dw_up, seq_len, dim, ffn)
+
+    // dx_norm2 = d_gate @ W_gate^T + d_up @ W_up^T
+    d_x_norm2_raw:*char
+    unsafe:
+      d_x_norm2_raw = malloc(seq_len * dim * 8)
+    d_x_norm2:*float = d_x_norm2_raw as *float
+    i = 0
+    while i < seq_len * dim:
+      mind.core._mw(d_x_norm2, i, 0.0)
+      i = i + 1
+    mind.kernels._matmul_backward_inputs(d_gate_p, w_gate_p, d_x_norm2, seq_len, dim, ffn)
+    mind.kernels._matmul_backward_inputs(d_up_p, w_up_p, d_x_norm2, seq_len, dim, ffn)
+
+    unsafe:
+      free(d_gate_p_raw)
+      free(d_up_p_raw)
+      free(d_ffn_mid_raw)
+
+    // Backprop RMSNorm 2
+    d_x2_raw:*char
+    unsafe:
+      d_x2_raw = malloc(seq_len * dim * 8)
+    d_x2:*float = d_x2_raw as *float
+    i = 0
+    while i < seq_len * dim:
+      mind.core._mw(d_x2, i, 0.0)
+      i = i + 1
+
+    ln2_w:*float
+    unsafe:
+      ln2_w = (model as *char + ln2_off * 8) as *float
+    // Input to norm2 is x_in + attn_proj
+    x2_temp_raw:*char
+    unsafe:
+      x2_temp_raw = malloc(seq_len * dim * 8)
+    x2_temp:*float = x2_temp_raw as *float
+    j = 0
+    while j < seq_len * dim:
+      mind.core._mw(x2_temp, j, mind.core._mf(act, off_x_in + j) + mind.core._mf(act, off_attn_proj + j))
+      j = j + 1
+
+    mind.kernels._rmsnorm_backward(d_x_norm2, x2_temp, ln2_w, d_x2, dgamma2, seq_len, dim)
+    unsafe:
+      free(x2_temp_raw)
+      free(d_x_norm2_raw)
+
+    // Add to d_xstream (which will backprop to the previous layer's residual stream)
+    j = 0
+    while j < seq_len * dim:
+      mind.core._mw(d_xstream, j, mind.core._mf(d_xstream, j) + mind.core._mf(d_x2, j))
+      j = j + 1
+
+    // Backprop attention output projection
+    // dW_o += attn_out^T @ d_x2
+    mind.kernels._matmul_backward_weights(act + off_attn_out, d_x2, dw_o, seq_len, q_dim, dim)
+
+    // d_attn_out = d_x2 @ W_o^T
+    d_attn_out_raw:*char
+    unsafe:
+      d_attn_out_raw = malloc(seq_len * q_dim * 8)
+    d_attn_out:*float = d_attn_out_raw as *float
+    i = 0
+    while i < seq_len * q_dim:
+      mind.core._mw(d_attn_out, i, 0.0)
+      i = i + 1
+    mind.kernels._matmul_backward_inputs(d_x2, w_o, d_attn_out, seq_len, q_dim, dim)
+    unsafe:
+      free(d_x2_raw)
+
+    // GQA Attention Backward
+    dq_raw:*char
+    dk_raw:*char
+    dv_raw:*char
+    unsafe:
+      dq_raw = malloc(seq_len * q_dim * 8)
+      dk_raw = malloc(seq_len * kv_dim * 8)
+      dv_raw = malloc(seq_len * kv_dim * 8)
+    dq:*float = dq_raw as *float
+    dk:*float = dk_raw as *float
+    dv:*float = dv_raw as *float
+    i = 0
+    while i < seq_len * q_dim:
+      mind.core._mw(dq, i, 0.0)
+      i = i + 1
+    i = 0
+    while i < seq_len * kv_dim:
+      mind.core._mw(dk, i, 0.0)
+      mind.core._mw(dv, i, 0.0)
+      i = i + 1
+
+    mind.kernels._gqa_backward(dq, dk, dv, act + off_q, act + off_k, act + off_v, probs + l * probs_sz, d_attn_out, d_probs_temp, seq_len, q_heads, kv_heads, head_dim)
+    unsafe:
+      free(d_attn_out_raw)
+
+    // RoPE Backward (inverse rotation)
+    mind.kernels._rope_backward(dq, dk, seq_len, q_heads, kv_heads, head_dim, 0)
+
+    // Backprop Q, K, V projections
+    // dW_q += x_norm1^T @ dq, etc.
+    mind.kernels._matmul_backward_weights(act + off_x_norm1, dq, dw_q, seq_len, dim, q_dim)
+    mind.kernels._matmul_backward_weights(act + off_x_norm1, dk, dw_k, seq_len, dim, kv_dim)
+    mind.kernels._matmul_backward_weights(act + off_x_norm1, dv, dw_v, seq_len, dim, kv_dim)
+
+    // dx_norm1 = dq @ W_q^T + dk @ W_k^T + dv @ W_v^T
+    d_x_norm1_raw:*char
+    unsafe:
+      d_x_norm1_raw = malloc(seq_len * dim * 8)
+    d_x_norm1:*float = d_x_norm1_raw as *float
+    i = 0
+    while i < seq_len * dim:
+      mind.core._mw(d_x_norm1, i, 0.0)
+      i = i + 1
+    mind.kernels._matmul_backward_inputs(dq, w_q, d_x_norm1, seq_len, dim, q_dim)
+    mind.kernels._matmul_backward_inputs(dk, w_k, d_x_norm1, seq_len, dim, kv_dim)
+    mind.kernels._matmul_backward_inputs(dv, w_v, d_x_norm1, seq_len, dim, kv_dim)
+
+    unsafe:
+      free(dq_raw)
+      free(dk_raw)
+      free(dv_raw)
+
+    // Backprop RMSNorm 1
+    d_xin_temp_raw:*char
+    unsafe:
+      d_xin_temp_raw = malloc(seq_len * dim * 8)
+    d_xin_temp:*float = d_xin_temp_raw as *float
+    i = 0
+    while i < seq_len * dim:
+      mind.core._mw(d_xin_temp, i, 0.0)
+      i = i + 1
+
+    ln1_w:*float
+    unsafe:
+      ln1_w = (model as *char + ln1_off * 8) as *float
+    mind.kernels._rmsnorm_backward(d_x_norm1, act + off_x_in, ln1_w, d_xin_temp, dgamma1, seq_len, dim)
+    unsafe:
+      free(d_x_norm1_raw)
+
+    // Accumulate to the residual stream gradient d_xstream
+    j = 0
+    while j < seq_len * dim:
+      mind.core._mw(d_xstream, j, mind.core._mf(d_xstream, j) + mind.core._mf(d_xin_temp, j))
+      j = j + 1
+    unsafe:
+      free(d_xin_temp_raw)
+
+    l = l - 1
+
+  // Embedding layer backward (accumulate gradients into embedding table)
+  // dembed_table[X[t]] += d_xstream[t]
+  // Embed table is at offset w_off
+  t = 0
+  while t < seq_len:
+    tok_id:int = tokens[t]
+    j = 0
+    while j < dim:
+      gv:float = mind.core._mf(d_xstream, t * dim + j)
+      idx:int = w_off + tok_id * dim + j
+      mind.core._mw(grads, idx, mind.core._mf(grads, idx) + gv)
+      j = j + 1
+    t = t + 1
+
+  // Clean up workspaces
+  unsafe:
+    free(d_xstream_raw)
+    free(d_last_xout_raw)
+    free(last_xout_raw)
+    free(act_raw)
+    free(d_act_raw)
+    free(probs_raw)
+    free(d_probs_temp_raw)
+
+  ret loss_avg
+
+// â”€â”€ mind_save: write weights to file â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

@@ -1,0 +1,28 @@
+import "tztensor"
+import "./support/lib/values.tn"
+
+fn main() -> int:
+  failed:int = 0
+  zero:int = tztensor.tensor_new_2d(0, 2, 0)
+  overflow:int = tztensor.tensor_new_2d(9223372036854775807, 2, 0)
+  if zero != 0 || overflow != 0: failed = 1
+  tztensor.tensor_free(zero)
+  tztensor.tensor_free(overflow)
+  x:int = tztensor.tensor_new_2d(2, 2, 1)
+  values.write(x, 0, 1.0)
+  values.write(x, 1, 2.0)
+  values.write(x, 2, 3.0)
+  values.write(x, 3, 4.0)
+  invalid:int = tztensor.tensor_slice2d(x, 0 - 1, 1, 0, 1)
+  if invalid != 0: failed = 1
+  tztensor.tensor_free(invalid)
+  out:int = tztensor.tensor_slice2d(x, 0, 2, 1, 2)
+  if tztensor.tensor_ndim(out) != 2 || values.read(out, 0) != 2.0 || values.read(out, 1) != 4.0:
+    failed = 1
+  if tztensor.tensor_backward(out) != 0: failed = 1
+  if values.gradient(x, 0) != 0.0 || values.gradient(x, 1) != 1.0 || values.gradient(x, 2) != 0.0 || values.gradient(x, 3) != 1.0:
+    failed = 1
+  tztensor.tensor_free(out)
+  tztensor.tensor_free(x)
+  if failed != 0: say "FAIL: SDK shape validation or slice rank/gradient"
+  ret failed

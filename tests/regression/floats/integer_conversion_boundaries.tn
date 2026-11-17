@@ -1,0 +1,43 @@
+fn accepts_f64(value:f64) -> f64:
+  ret value
+
+fn returns_f64() -> f64:
+  value:u64 = 18446744073709549568 as u64
+  ret value
+
+fn accepts_half(value:f16) -> f16:
+  ret value
+
+fn main() -> int:
+  indefinite:int = 9223372036854775808
+  nan:float = 0.0 / 0.0
+  infinity:float = 1.0 / 0.0
+  if (nan as int) != indefinite || (infinity as int) != indefinite: ret 1
+  if ((0.0 - infinity) as int) != indefinite: ret 2
+  if (9223372036854775808.0 as int) != indefinite: ret 3
+  if (-9223372036854777856.0 as int) != indefinite: ret 4
+  if (9223372036854774784.0 as int) != 9223372036854774784: ret 5
+  if ((nan as f32) as int) != indefinite: ret 6
+  if ((infinity as f32) as int) != indefinite: ret 7
+  high:u64 = 9223372586610589697 as u64
+  if ((high as f32) as f64) != 9223373136366403584.0: ret 8
+  signed_midpoint:int = 4611686293305294849
+  if ((signed_midpoint as f32) as f64) != 4611686568183201792.0: ret 9
+  large:u64 = 18446744073709549568 as u64
+  if (18446744073709549568.0 as u64) != large: ret 10
+  if accepts_f64(large) != 18446744073709549568.0 || returns_f64() != 18446744073709549568.0: ret 11
+  if (nan as u64) != (indefinite as u64): ret 12
+  if ((0.0 - 1.0) as u64) != (indefinite as u64): ret 13
+  if (18446744073709551616.0 as u64) != (indefinite as u64): ret 14
+  if (123 as f32) as f64 != 123.0: ret 15
+  negative:int = 0 - 123
+  if ((negative as f32) as f64) != -123.0: ret 16
+  if ((indefinite as f32) as f64) != -9223372036854775808.0: ret 17
+  small_unsigned:u64 = 60000 as u64
+  if (accepts_half(small_unsigned) as f64) != 60000.0: ret 18
+  if ((large as bf16) as f64) <= 0.0: ret 19
+  if ((large as f8_e4m3) as f64) != 448.0: ret 20
+  if ((large as f8_e5m2) as f64) != 57344.0: ret 21
+  if ((65504.0 as f16) as u64) != (65504 as u64): ret 22
+  if (((infinity as f16) as u64) != (indefinite as u64)): ret 23
+  ret 0

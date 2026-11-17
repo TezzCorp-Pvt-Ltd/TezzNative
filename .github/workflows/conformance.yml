@@ -5,486 +5,254 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  stable-core:
-    runs-on: windows-2022
-    timeout-minutes: 30
+  dedicated-npu-contracts:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download TezzNative SDK
-        shell: pwsh
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned vendor C runtimes
         run: |
-          $ErrorActionPreference = "Stop"
-          if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
-            $PSNativeCommandUseErrorActionPreference = $false
-          }
-          $ProgressPreference = "SilentlyContinue"
-          $cacheKey = if ($env:GITHUB_SHA) { $env:GITHUB_SHA } else { [guid]::NewGuid().ToString("N") }
+          python -m pip install --no-deps --target build/deps/openvino openvino==2025.4.1
+          python -m pip install --no-deps --target build/deps/onnxruntime onnxruntime==1.23.2
+      - name: Verify Intel adapter and device absence without fallback
+        run: python tests/regression/npu/check_openvino.py
+      - name: Verify AMD adapter and device absence without fallback
+        run: python tests/regression/npu/check_ort.py --provider AMD --fetch-headers --out build/verification/npu-amd
+      - name: Verify Qualcomm adapter and device absence without fallback
+        run: python tests/regression/npu/check_ort.py --provider QNN --out build/verification/npu-qnn
+      - name: Retain evidence (contract tests are not device certification)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npu-contracts-${{ runner.os }}
+          path: build/verification/**/results.json
+          if-no-files-found: error
 
-          function Save-Url {
-            param(
-              [string]$Url,
-              [string]$OutFile,
-              [int]$TimeoutSec = 90
-            )
-
-            for ($attempt = 1; $attempt -le 2; $attempt++) {
-              Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
-              if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-                Write-Host "Downloading attempt $attempt with curl from $Url"
-                & curl.exe --http1.1 -fL --retry 1 --retry-all-errors --retry-delay 3 `
-                  --connect-timeout 25 --max-time $TimeoutSec `
-                  -A "TezzNative-GitHub-Actions" `
-                  -o "$OutFile" `
-                  "$Url"
-                if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $OutFile) -and (Get-Item -LiteralPath $OutFile).Length -gt 0) {
-                  return $true
-                }
-                Write-Warning "curl download attempt $attempt failed with exit $LASTEXITCODE"
-              }
-
-              Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
-              try {
-                Write-Host "Downloading attempt $attempt with Invoke-WebRequest from $Url"
-                Invoke-WebRequest `
-                  -UseBasicParsing `
-                  -Headers @{ "User-Agent" = "TezzNative-GitHub-Actions" } `
-                  -TimeoutSec $TimeoutSec `
-                  -Uri $Url `
-                  -OutFile $OutFile
-                if ((Test-Path -LiteralPath $OutFile) -and (Get-Item -LiteralPath $OutFile).Length -gt 0) {
-                  return $true
-                }
-              } catch {
-                Write-Warning "Invoke-WebRequest download attempt $attempt failed: $($_.Exception.Message)"
-              }
-
-              Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
-              if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-                Write-Host "Downloading attempt $attempt with curl IPv4 from $Url"
-                & curl.exe -4 --http1.1 -fL --retry 1 --retry-all-errors --retry-delay 3 `
-                  --connect-timeout 25 --max-time $TimeoutSec `
-                  -A "TezzNative-GitHub-Actions" `
-                  -o "$OutFile" `
-                  "$Url"
-                if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $OutFile) -and (Get-Item -LiteralPath $OutFile).Length -gt 0) {
-                  return $true
-                }
-                Write-Warning "curl IPv4 download attempt $attempt failed with exit $LASTEXITCODE"
-              }
-              Start-Sleep -Seconds (3 * $attempt)
-            }
-            return $false
-          }
-
-          function Assert-Sha256 {
-            param(
-              [string]$Path,
-              [string]$Expected,
-              [string]$Label
-            )
-
-            if ([string]::IsNullOrWhiteSpace($Expected)) {
-              Write-Warning "No expected checksum available for $Label"
-              return
-            }
-            $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToUpperInvariant()
-            if ($actual -ne $Expected.ToUpperInvariant()) {
-              throw "$Label checksum mismatch. Expected $Expected got $actual"
-            }
-            Write-Host "$Label SHA-256 verified: $actual"
-          }
-
-          function Test-MzBinary {
-            param([string]$Path)
-            if (-not (Test-Path -LiteralPath $Path)) {
-              return $false
-            }
-            $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $Path).Path)
-            return ($bytes.Length -gt 1024 -and $bytes[0] -eq 0x4D -and $bytes[1] -eq 0x5A)
-          }
-
-          $manifest = $null
-          try {
-            $manifest = Invoke-RestMethod `
-              -UseBasicParsing `
-              -Headers @{ "User-Agent" = "TezzNative-GitHub-Actions" } `
-              -TimeoutSec 45 `
-              -Uri "https://tezznative.org/download/release_manifest.json?v=$cacheKey"
-          } catch {
-            Write-Warning "Release manifest download failed: $($_.Exception.Message)"
-          }
-
-          function Get-ManifestHash {
-            param([string]$Path)
-            if (-not $manifest -or -not $manifest.artifacts) {
-              return ""
-            }
-            $artifact = $manifest.artifacts | Where-Object { $_.path -eq $Path } | Select-Object -First 1
-            if ($artifact) {
-              return [string]$artifact.sha256
-            }
-            return ""
-          }
-
-          $repoCompiler = Join-Path $PWD "ci\bootstrap\tezzc-windows-x64.exe"
-          if (Test-MzBinary -Path $repoCompiler) {
-            & $repoCompiler check tests\conformance\valid\basic_arithmetic.tn
-            if ($LASTEXITCODE -eq 0) {
-              Write-Host "Using repository bootstrap Windows compiler"
-              "TEZZC=$repoCompiler" | Out-File -FilePath $env:GITHUB_ENV -Append
-              return
-            }
-            Write-Warning "Repository bootstrap Windows compiler failed self-check; trying hosted SDK"
-          }
-
-          $compilerCandidates = @(
-            @{ Url = "https://tezznative.org/download/sdk/bin/tezzc-windows-x64.exe?v=$cacheKey"; Path = "download/sdk/bin/tezzc-windows-x64.exe" },
-            @{ Url = "https://tezznative.org/download/sdk/bin/tezzc.exe?v=$cacheKey"; Path = "download/sdk/bin/tezzc.exe" }
-          )
-          foreach ($candidate in $compilerCandidates) {
-            if (Save-Url -Url $candidate.Url -OutFile "tezzc.exe" -TimeoutSec 75) {
-              if (Test-MzBinary -Path "tezzc.exe") {
-                Assert-Sha256 -Path "tezzc.exe" -Expected (Get-ManifestHash -Path $candidate.Path) -Label "Windows compiler"
-                $compilerPath = (Resolve-Path -LiteralPath tezzc.exe).Path
-                "TEZZC=$compilerPath" | Out-File -FilePath $env:GITHUB_ENV -Append
-                return
-              }
-              Write-Warning "Downloaded compiler is not a Windows executable"
-            }
-          }
-
-          $sdkUrls = @(
-            "https://tezznative.org/download/tezznative-sdk.zip?v=$cacheKey",
-            "https://tezznative.org/api/download_request.php?artifact=windows-sdk&source=github-actions&v=$cacheKey"
-          )
-          $downloaded = $false
-          foreach ($sdkUrl in $sdkUrls) {
-            if (Save-Url -Url $sdkUrl -OutFile "tezznative-sdk.zip" -TimeoutSec 150) {
-              $downloaded = $true
-              break
-            }
-          }
-          if (-not $downloaded) {
-            throw "Unable to download TezzNative SDK from API or static fallback"
-          }
-
-          $zipPath = (Resolve-Path -LiteralPath tezznative-sdk.zip).Path
-          $expectedZip = Get-ManifestHash -Path "download/tezznative-sdk.zip"
-          if ([string]::IsNullOrWhiteSpace($expectedZip)) {
-            try {
-              $shaText = Invoke-WebRequest `
-                -UseBasicParsing `
-                -Headers @{ "User-Agent" = "TezzNative-GitHub-Actions" } `
-                -TimeoutSec 45 `
-                -Uri "https://tezznative.org/download/tezznative-sdk.zip.sha256?v=$cacheKey"
-              $expectedZip = (($shaText.Content.Trim() -split "\s+")[0]).ToUpperInvariant()
-            } catch {
-              Write-Warning "SDK checksum sidecar download failed: $($_.Exception.Message)"
-            }
-          }
-          Assert-Sha256 -Path $zipPath -Expected $expectedZip -Label "Windows SDK ZIP"
-
-          $bytes = [System.IO.File]::ReadAllBytes($zipPath)
-          if ($bytes.Length -lt 4 -or $bytes[0] -ne 0x50 -or $bytes[1] -ne 0x4B) {
-            $previewLength = [Math]::Min(4, $bytes.Length)
-            $preview = if ($previewLength -gt 0) { $bytes[0..($previewLength - 1)] -join "," } else { "<empty>" }
-            throw "Downloaded SDK is not a ZIP archive. First bytes: $preview"
-          }
-          Expand-Archive tezznative-sdk.zip -DestinationPath tezznative-sdk -Force
-          $compilerEntries = Get-ChildItem tezznative-sdk -Recurse -File |
-            Where-Object { $_.Name -like "tezzc*" } |
-            Sort-Object FullName
-          $compilerEntries | ForEach-Object { Write-Host "SDK entry: $($_.FullName) ($($_.Length) bytes)" }
-          $compiler = $compilerEntries |
-            Where-Object { $_.Name -in @("tezzc-windows-x64.exe", "tezzc.exe") } |
-            Sort-Object @{ Expression = { if ($_.Name -eq "tezzc-windows-x64.exe") { 0 } else { 1 } } }, FullName |
-            Select-Object -First 1
-          if (-not $compiler) {
-            throw "tezzc compiler not found in SDK archive"
-          }
-          $probe = Get-ChildItem tezznative-sdk -Recurse -File -Filter tls_connect_ex_probe.tn | Select-Object -First 1
-          if ($probe) {
-            & $compiler.FullName check $probe.FullName
-            if ($LASTEXITCODE -ne 0) {
-              throw "Downloaded SDK compiler failed bundled probe with exit $LASTEXITCODE"
-            }
-          }
-          "TEZZC=$($compiler.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
-
-      - name: Run stable-core conformance
-        shell: powershell
-        timeout-minutes: 5
+  hosted-cpu-emulators:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install hosted cross compilers and instruction emulators
         run: |
-          Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
-          & .\tests\conformance\run.ps1 -Tezzc "$env:TEZZC"
+          sudo apt-get update -qq
+          sudo apt-get install -y gcc-aarch64-linux-gnu gcc-riscv64-linux-gnu \
+            libc6-dev-arm64-cross libc6-dev-riscv64-cross qemu-user
+      - name: Execute source-built hosted ARM64 and RISC-V64 CPU checks
+        run: python3 tests/regression/platform/check_hosted.py --out build/verification/hosted-cpu
+      - name: Verify Hailo provider contract on Linux x64 and emulated ARM64
+        run: python3 tests/regression/npu/check_hailo.py --fetch-headers --cross-aarch64 --out build/verification/npu-hailo
+      - name: Retain emulated CPU evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-cpu-emulators
+          path: |
+            build/verification/hosted-cpu/**/results.json
+            build/verification/npu-hailo/results.json
+          if-no-files-found: error
 
-      - name: Run developer experience gate
-        shell: powershell
-        timeout-minutes: 5
-        run: |
-          Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
-          & .\tests\conformance\run-dx.ps1 -Tezzc "$env:TEZZC"
-
-      - name: Run package trust gate
-        shell: powershell
-        timeout-minutes: 5
-        run: |
-          Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
-          & .\tests\conformance\run-package-trust.ps1 -Tezzc "$env:TEZZC"
-
-      - name: Run Python bridge gate
-        shell: powershell
-        timeout-minutes: 5
-        run: |
-          Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
-          & .\tests\conformance\run-python-bridge.ps1 -Tezzc "$env:TEZZC"
-
-      - name: Run ABI conformance
-        shell: powershell
-        timeout-minutes: 5
-        run: |
-          Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
-          & .\tests\conformance\run-abi.ps1 -Tezzc "$env:TEZZC"
-
-      - name: Check benchmark fixtures
-        shell: powershell
-        timeout-minutes: 5
-        run: |
-          Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
-          & .\benchmarks\run.ps1 -Tezzc "$env:TEZZC" -CheckOnly
-
-      - name: Run native smoke
-        shell: powershell
-        timeout-minutes: 5
-        run: |
-          Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
-          & .\tests\conformance\run-native-smoke.ps1 -Tezzc "$env:TEZZC"
-
-      - name: Run native reliability
-        shell: powershell
-        timeout-minutes: 5
-        run: |
-          Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
-          & .\tests\conformance\run-native-reliability.ps1 -Tezzc "$env:TEZZC"
-
-  linux-stable-core:
-    runs-on: ubuntu-22.04
+  hardware-emulators:
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download TezzNative Linux SDK
+      - name: Install firmware compilers and instruction emulators
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential libssl-dev gcc-avr avr-libc binutils-avr simavr libsimavr-dev libelf-dev \
+            gcc-aarch64-linux-gnu gcc-riscv64-linux-gnu qemu-system-x86 qemu-system-arm qemu-system-misc \
+            grub-pc-bin grub-common xorriso
+
+      - name: Build the checked-out compiler and verify its core
+        run: python3 tests/run.py --build --suite core --backend bc --out build/verification/hardware-compiler
+
+      - name: Execute firmware profiles and verify rejected flows
+        run: python3 tests/hardware/run.py --compiler build/verification/hardware-compiler/compiler/tezzc --out build/verification/hardware
+
+      - name: Verify floating-point boundary bits in firmware emulators
+        run: python3 tests/regression/codegen/check_float_hardware.py --compiler build/verification/hardware-compiler/compiler/tezzc --out build/verification/float-hardware
+
+      - name: Upload firmware and verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hardware-emulator-verification
+          path: |
+            build/verification/hardware/
+            build/verification/float-hardware/
+            build/verification/hardware-compiler/results.json
+          if-no-files-found: error
+
+  source-verification:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y build-essential libssl-dev
+
+      - name: Build the checked-out compiler and run all regressions
+        run: python tests/run.py --build --suite all --out build/verification
+
+      - name: Verify test harness failure handling
+        run: python tests/regression/harness/check_runner.py
+
+      - name: Verify formatter preserves branches and check mode never writes
+        run: python tests/regression/formatter/check_formatter.py --compiler build/verification/compiler/tezzc${{ runner.os == 'Windows' && '.exe' || '' }} --out build/verification/formatter
+
+      - name: Verify native signatures match C interfaces
+        run: python tools/generate_vm_bindings.py --check
+
+      - name: Verify native kernels with independent numerical oracles
+        run: python tests/verify_native.py --out build/verification/native-oracles
+
+      - name: Verify temporal convolution forward and backward against numerical gradients
+        run: python tests/regression/temporal/check_conv1d.py --cpu-library build/verification/native-oracles/${{ runner.os == 'Windows' && 'cpu-oracle.dll' || 'libcpu-oracle.so' }} --out build/verification/temporal-convolution
+
+      - name: Verify native vocoder reconstruction and duration bounds
+        run: python tests/regression/speech/check_vocoder.py --out build/verification/vocoder
+      - name: Verify native speech language model and checkpoint contracts
+        run: python tests/regression/speech/check_language.py --out build/verification/speech-language
+
+      - name: Verify TTS experiment provenance and held-out scoring
+        run: python tests/regression/speech/check_tts_experiment.py
+
+      - name: Verify shared TezzNative TTS text processing and manifest conversion
+        run: python tests/regression/speech/check_tts_text.py --compiler build/verification/compiler/tezzc${{ runner.os == 'Windows' && '.exe' || '' }} --out build/verification/tts-text
+
+      - name: Verify native vision kernels and numerical gradients
+        run: python tests/kernel_vision_numeric.py --out build/verification/vision-oracle ${{ runner.os == 'Linux' && '--sanitize' || '' }}
+
+      - name: Verify speech decoding and CTC precision against exhaustive paths
+        run: python tests/regression/speech/check_decode.py --out build/verification/speech-decoder
+
+      - name: Verify speech experiment provenance and exact validation subsets
+        run: python tests/regression/speech/check_experiment.py --out build/verification/speech-experiment
+
+      - name: Verify full speech coverage, held-out isolation and resume integrity
+        run: python tests/regression/speech/check_coverage.py --out build/verification/speech-coverage
+
+      - name: Verify temporal STT driver paths and checkpoint continuity
+        run: python tests/regression/speech/check_temporal_driver.py --compiler build/verification/compiler/tezzc${{ runner.os == 'Windows' && '.exe' || '' }} --out build/verification/temporal-driver
+
+      - name: Verify Linux SDK refresh includes matching native artifacts and tools
+        run: python tests/regression/packages/check_linux_refresh.py
+
+      - name: Verify tensor conversion bits through bytecode and native CPU kernels
+        run: python tests/regression/tensor_bridge/check_numeric.py --compiler build/verification/compiler/tezzc${{ runner.os == 'Windows' && '.exe' || '' }} --out build/verification/tensor-interop-numeric
+
+      - name: Verify large modules and global storage through bytecode and native execution
+        run: python tests/regression/codegen/check_large_module.py --compiler build/verification/compiler/tezzc${{ runner.os == 'Windows' && '.exe' || '' }} --out build/verification/large-module
+
+      - name: Verify standalone native runtime deployment
+        run: python tests/check_native_imports.py --compiler build/verification/compiler/tezzc${{ runner.os == 'Windows' && '.exe' || '' }} --out build/verification/native-import-artifacts
+
+      - name: Verify Linux native exit terminates runtime worker threads
+        if: runner.os == 'Linux'
+        run: python3 tests/regression/codegen/check_threaded_exit.py --tezzc build/verification/compiler/tezzc --out build/verification/threaded-exit
+
+      - name: Verify SDK training arithmetic
+        run: python tests/sdk_training_numeric.py --compiler build/verification/compiler/tezzc${{ runner.os == 'Windows' && '.exe' || '' }} --out build/verification/sdk-training
+
+      - name: Verify decimal conversion against independent binary64 values
+        run: python tests/regression/sdk_legacy_ai/check_decimal.py --out build/verification/decimal-oracle
+
+      - name: Verify password and session cryptography
+        run: python tests/regression/security/check_crypto.py --out build/verification/security
+
+      - name: Verify HOTP and TOTP against an independent HMAC oracle
+        run: python tests/regression/security/check_otp.py --compiler build/verification/compiler/tezzc${{ runner.os == 'Windows' && '.exe' || '' }} --out build/verification/otp-oracle
+
+      - name: Verify every distributed library import
+        run: python tests/regression/package/check_sources.py --compiler build/verification/compiler/tezzc${{ runner.os == 'Windows' && '.exe' || '' }} --out build/verification/library-sources
+
+      - name: Verify local HTTP server behavior
+        run: python tests/regression/sdk/check_server.py --compiler build/verification/compiler/tezzc${{ runner.os == 'Windows' && '.exe' || '' }} --out build/verification/http-server
+
+      - name: Verify library errors fail programs
+        run: python tests/regression/sdk/check_errors.py --compiler build/verification/compiler/tezzc${{ runner.os == 'Windows' && '.exe' || '' }} --out build/verification/sdk-errors
+
+      - name: Verify database recovery from independently constructed logs
+        run: python tests/regression/database/check_wal.py --compiler build/verification/compiler/tezzc${{ runner.os == 'Windows' && '.exe' || '' }} --out build/verification/database-wal
+
+      - name: Verify emitted integer code with an independent oracle
+        if: runner.os == 'Linux'
+        run: python tests/regression/codegen/check_integer.py --out build/verification/integer-codegen
+
+      - name: Verify emitted floating-point conversions
+        if: runner.os == 'Linux'
+        run: python tests/regression/codegen/check_conversions.py --compiler build/verification/compiler/tezzc --out build/verification/float-codegen
+
+      - name: Verify reduced floating-point bits in generated C and CUDA host code
+        if: runner.os == 'Linux'
+        run: python tests/regression/codegen/check_reduced.py --compiler build/verification/compiler/tezzc --out build/verification/reduced-codegen
+
+      - name: Verify recursive library distribution and isolated installation
+        run: python tests/regression/package/check_libraries.py --compiler build/verification/compiler/tezzc${{ runner.os == 'Windows' && '.exe' || '' }} --out build/verification/library-packaging
+
+      - name: Verify package installer rejects invalid components
+        run: python tests/regression/package/check_install.py --compiler build/verification/compiler/tezzc${{ runner.os == 'Windows' && '.exe' || '' }} --out build/verification/package-install
+
+      - name: Verify TLS certificates, pins, versions, and timeouts
+        if: runner.os == 'Linux'
+        run: python tests/regression/net/check_tls.py --compiler build/verification/compiler/tezzc --out build/verification/tls
+
+      - name: Verify VM memory accesses and undefined behavior
+        if: runner.os == 'Linux'
+        # Instrumentation pushed database/deep_tree beyond the ordinary 45-second limit.
+        run: python tests/run.py --build --sanitize --backend bc --timeout 180 --out build/verification/sanitizers
+
+      - name: Windows tooling and ABI contracts
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $compiler = (Resolve-Path build/verification/compiler/tezzc.exe).Path
+          $env:TEZZ_SDK_ROOT = (Resolve-Path TezzCorp_WebSites/tn_tezzcorp_com/download/sdk).Path
+          foreach ($suite in @("dx", "package-trust", "python-bridge", "abi", "native-reliability")) {
+            & powershell -NoProfile -ExecutionPolicy Bypass -File "./tests/conformance/run-$suite.ps1" -Tezzc $compiler
+            if ($LASTEXITCODE -ne 0) { throw "$suite failed with exit $LASTEXITCODE" }
+          }
+          & powershell -NoProfile -ExecutionPolicy Bypass -File ./benchmarks/run.ps1 -Tezzc $compiler -CheckOnly
+          if ($LASTEXITCODE -ne 0) { throw "Benchmark type checks failed" }
+
+      - name: Linux tooling and ABI contracts
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
-          cache_key="${GITHUB_SHA:-$(date +%s)}"
-          ua="TezzNative-GitHub-Actions"
-
-          fetch_artifact() {
-            local url="$1"
-            local output="$2"
-            local label="$3"
-            local max_time="$4"
-
-            rm -f "$output"
-            echo "Downloading ${label} with curl from ${url}"
-            if curl --http1.1 -fL --retry 2 --retry-all-errors --retry-delay 5 \
-              --connect-timeout 25 --max-time "$max_time" \
-              -A "$ua" \
-              -o "$output" \
-              "$url"; then
-              if [[ -s "$output" ]]; then
-                return 0
-              fi
-              echo "${label} download produced an empty file" >&2
-            fi
-
-            rm -f "$output"
-            echo "Retrying ${label} over IPv4"
-            if curl -4 --http1.1 -fL --retry 1 --retry-all-errors --retry-delay 5 \
-              --connect-timeout 25 --max-time "$max_time" \
-              -A "$ua" \
-              -o "$output" \
-              "$url"; then
-              if [[ -s "$output" ]]; then
-                return 0
-              fi
-              echo "${label} IPv4 download produced an empty file" >&2
-            fi
-
-            if command -v wget >/dev/null 2>&1; then
-              rm -f "$output"
-              echo "Retrying ${label} with wget"
-              if wget --tries=2 --timeout="$max_time" --header="User-Agent: ${ua}" \
-                -O "$output" \
-                "$url"; then
-                if [[ -s "$output" ]]; then
-                  return 0
-                fi
-                echo "${label} wget download produced an empty file" >&2
-              fi
-            fi
-
-            return 1
-          }
-
-          is_elf() {
-            local file="$1"
-            [[ -s "$file" ]] || return 1
-            [[ "$(head -c 4 "$file" | od -An -tx1 | tr -d ' \n')" == "7f454c46" ]]
-          }
-
-          compiler_self_check() {
-            local file="$1"
-            chmod +x "$file"
-            "$file" check tests/conformance/valid/basic_arithmetic.tn >/tmp/tezznative-compiler-self-check.log 2>&1
-          }
-
-          repo_compiler="ci/bootstrap/tezzc-linux-x64"
-          if [[ -f "$repo_compiler" ]] && is_elf "$repo_compiler"; then
-            if compiler_self_check "$repo_compiler"; then
-              echo "Using repository bootstrap Linux compiler"
-              echo "TEZZC=$repo_compiler" >> "$GITHUB_ENV"
-              exit 0
-            fi
-            echo "Repository bootstrap Linux compiler failed self-check; trying hosted SDK" >&2
-            cat /tmp/tezznative-compiler-self-check.log >&2 || true
-          fi
-
-          compiler_gz_urls=(
-            "https://tezznative.org/download/tezzc-linux-x64.gz?v=${cache_key}"
-          )
-          compiler=""
-          for compiler_gz_url in "${compiler_gz_urls[@]}"; do
-            if fetch_artifact "$compiler_gz_url" tezzc-linux-x64.gz "compressed Linux compiler" 180; then
-              if gzip -t tezzc-linux-x64.gz; then
-                gzip -dc tezzc-linux-x64.gz > tezzc-linux-x64
-                if is_elf tezzc-linux-x64; then
-                  if compiler_self_check ./tezzc-linux-x64; then
-                    compiler="./tezzc-linux-x64"
-                    break
-                  fi
-                  echo "Compressed Linux compiler failed self-check; trying the next source" >&2
-                  cat /tmp/tezznative-compiler-self-check.log >&2 || true
-                  continue
-                fi
-                echo "Compressed Linux compiler did not expand to an ELF binary" >&2
-              else
-                echo "Compressed Linux compiler is not a gzip archive" >&2
-              fi
-            fi
+          compiler="$PWD/build/verification/compiler/tezzc"
+          export TEZZ_SDK_ROOT="$PWD/TezzCorp_WebSites/tn_tezzcorp_com/download/sdk"
+          for suite in dx package-trust python-bridge abi native-reliability; do
+            bash "tests/conformance/run-$suite.sh" "$compiler"
           done
-          if [[ -n "$compiler" ]]; then
-            echo "TEZZC=$compiler" >> "$GITHUB_ENV"
-            exit 0
-          fi
+          bash benchmarks/run.sh "$compiler" --check-only
 
-          compiler_urls=(
-            "https://tezznative.org/download/sdk/bin/tezzc-linux-x64?v=${cache_key}"
-          )
-          for compiler_url in "${compiler_urls[@]}"; do
-            if fetch_artifact "$compiler_url" tezzc-linux-x64 "Linux compiler" 60; then
-              if is_elf tezzc-linux-x64; then
-                if compiler_self_check ./tezzc-linux-x64; then
-                  compiler="./tezzc-linux-x64"
-                  break
-                fi
-                echo "Downloaded Linux compiler failed self-check; trying the next source" >&2
-                cat /tmp/tezznative-compiler-self-check.log >&2 || true
-                continue
-              fi
-              echo "Downloaded Linux compiler is not an ELF binary; trying the next source" >&2
-              file tezzc-linux-x64 || true
-              head -c 96 tezzc-linux-x64 || true
-              echo
-            fi
-          done
-          if [[ -n "$compiler" ]]; then
-            echo "TEZZC=$compiler" >> "$GITHUB_ENV"
-            exit 0
-          fi
-
-          sdk_urls=(
-            "https://tezznative.org/download/tezznative-sdk-linux.tar.gz?v=${cache_key}"
-            "https://tezznative.org/api/download_request.php?artifact=linux-sdk&source=github-actions&v=${cache_key}"
-          )
-          downloaded=0
-          for sdk_url in "${sdk_urls[@]}"; do
-            if fetch_artifact "$sdk_url" tezznative-sdk-linux.tar.gz "Linux SDK" 180; then
-              if gzip -t tezznative-sdk-linux.tar.gz; then
-                downloaded=1
-                break
-              fi
-              echo "Downloaded Linux SDK is not a gzip archive; trying the next source" >&2
-              file tezznative-sdk-linux.tar.gz || true
-              head -c 96 tezznative-sdk-linux.tar.gz || true
-              echo
-            fi
-          done
-          if [[ "$downloaded" -ne 1 ]]; then
-            echo "Unable to download TezzNative Linux SDK from direct, API, or static fallback" >&2
-            exit 1
-          fi
-
-          mkdir -p tezznative-sdk
-          tar -xzf tezznative-sdk-linux.tar.gz -C tezznative-sdk
-          find tezznative-sdk -type f -name 'tezzc*' -print
-          compiler="$(find tezznative-sdk -type f -name 'tezzc-linux-x64' | sort | sed -n '1p')"
-          if [[ -z "$compiler" ]]; then
-            compiler="$(find tezznative-sdk -type f -name 'tezzc' | sort | sed -n '1p')"
-          fi
-          if [[ -z "$compiler" ]]; then
-            echo "tezzc compiler not found in Linux SDK archive" >&2
-            exit 1
-          fi
-          if ! is_elf "$compiler"; then
-            echo "SDK compiler is not an ELF binary: ${compiler}" >&2
-            file "$compiler" || true
-            exit 1
-          fi
-          chmod +x "$compiler"
-          echo "TEZZC=$compiler" >> "$GITHUB_ENV"
-
-      - name: Run stable-core conformance
-        shell: bash
-        timeout-minutes: 5
-        run: bash tests/conformance/run.sh "$TEZZC"
-
-      - name: Run developer experience gate
-        shell: bash
-        timeout-minutes: 5
-        run: bash tests/conformance/run-dx.sh "$TEZZC"
-
-      - name: Run package trust gate
-        shell: bash
-        timeout-minutes: 5
-        run: bash tests/conformance/run-package-trust.sh "$TEZZC"
-
-      - name: Run Python bridge gate
-        shell: bash
-        timeout-minutes: 5
-        run: bash tests/conformance/run-python-bridge.sh "$TEZZC"
-
-      - name: Run ABI conformance
-        shell: bash
-        timeout-minutes: 5
-        run: bash tests/conformance/run-abi.sh "$TEZZC"
-
-      - name: Check benchmark fixtures
-        shell: bash
-        timeout-minutes: 5
-        run: bash benchmarks/run.sh "$TEZZC" --check-only
-
-      - name: Run native smoke
-        shell: bash
-        timeout-minutes: 5
-        run: bash tests/conformance/run-native-smoke.sh "$TEZZC"
-
-      - name: Run native reliability
-        shell: bash
-        timeout-minutes: 5
-        run: bash tests/conformance/run-native-reliability.sh "$TEZZC"
+      - name: Upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-${{ runner.os }}
+          path: build/verification/**/results.json
+          if-no-files-found: error

@@ -1,5 +1,7 @@
 // ml module: unified AI/ML surface for TezzNative
 import "tensor"
+import "math"
+import "tensor_ptr"
 import "autodiff"
 import "optim"
 import "data"
@@ -15,80 +17,86 @@ let ML_BACKEND_CPU:int = 0
 let ML_BACKEND_GPU:int = 1
 let ML_BACKEND_NPU:int = 2
 
-// Backend selection (CPU/GPU/NPU)
+// The public Tensor engine is CPU f64. Unsupported backends return -1.
+// GPU-specific kernels are available separately through tensor_gpu/tztensor.
 fn backend_cpu() -> int:
-  ret tensor.tensor_backend(ML_BACKEND_CPU)
+  ret 0
 
 fn backend_gpu() -> int:
-  ret tensor.tensor_backend(ML_BACKEND_GPU)
+  ret 0 - 1
 
 fn backend_npu() -> int:
-  ret tensor.tensor_backend(ML_BACKEND_NPU)
+  ret 0 - 1
 
 // Tensor helpers
 fn tensor_new(shape:*int, rank:int, requires_grad:int) -> *Tensor:
-  ret tensor.tensor_new(shape, rank, requires_grad)
+  ret tensor_ptr.create(shape, rank, requires_grad)
 
 fn tensor_new_dtype(shape:*int, rank:int, dtype:int, requires_grad:int) -> *Tensor:
-  ret tensor.tensor_new_dtype(shape, rank, dtype, requires_grad)
+  ret tensor_ptr.create_dtype(shape, rank, dtype, requires_grad)
 
 fn tensor_view(base:*Tensor, shape:*int, strides:*int, rank:int, offset:int) -> *Tensor:
-  ret tensor.tensor_view(base, shape, strides, rank, offset)
+  ret tensor_ptr.view(base, shape, strides, rank, offset)
 
 fn tensor_from_slice(p:*float, shape:*int, rank:int, requires_grad:int) -> *Tensor:
-  ret tensor.tensor_from_slice(p, shape, rank, requires_grad)
+  ret tensor_ptr.from_slice(p, shape, rank, requires_grad)
 
 fn tensor_from_slice_i(p:*int, shape:*int, rank:int, requires_grad:int) -> *Tensor:
-  ret tensor.tensor_from_slice_i(p, shape, rank, requires_grad)
+  // Integer storage is unavailable in the current f64 engine.
+  ret 0 as *Tensor
 
 fn tensor_from_slice_b(p:*char, shape:*int, rank:int, requires_grad:int) -> *Tensor:
-  ret tensor.tensor_from_slice_b(p, shape, rank, requires_grad)
+  // Boolean storage is unavailable in the current f64 engine.
+  ret 0 as *Tensor
 
 fn tensor_free(t:*Tensor) -> int:
-  ret tensor.tensor_free(t)
+  ret tensor_ptr.release(t)
 
 fn tensor_zero_grad(t:*Tensor) -> int:
-  ret tensor.tensor_zero_grad(t)
+  if t == 0 as *Tensor: ret 0 - 1
+  ret tensor.tensor_zero_grad(*t)
 
 fn tensor_grad_get_f(t:*Tensor, idx:int) -> float:
-  ret tensor.tensor_grad_get_f(t, idx)
+  if t == 0 as *Tensor: ret 0.0
+  ret tensor.tensor_grad_item(*t, idx)
 
 fn add(a:*Tensor, b:*Tensor) -> *Tensor:
-  ret tensor.tensor_add(a, b)
+  ret tensor_ptr.add(a, b)
 
 fn sub(a:*Tensor, b:*Tensor) -> *Tensor:
-  ret tensor.tensor_sub(a, b)
+  ret tensor_ptr.sub(a, b)
 
 fn mul(a:*Tensor, b:*Tensor) -> *Tensor:
-  ret tensor.tensor_mul(a, b)
+  ret tensor_ptr.mul(a, b)
 
 fn div(a:*Tensor, b:*Tensor) -> *Tensor:
-  ret tensor.tensor_div(a, b)
+  ret tensor_ptr.div(a, b)
 
 fn relu(a:*Tensor) -> *Tensor:
-  ret tensor.tensor_relu(a)
+  ret tensor_ptr.relu(a)
 
 fn sigmoid(a:*Tensor) -> *Tensor:
-  ret tensor.tensor_sigmoid(a)
+  ret tensor_ptr.sigmoid(a)
 
 fn sum(a:*Tensor) -> *Tensor:
-  ret tensor.tensor_sum(a)
+  ret tensor_ptr.sum(a)
 
 fn mean(a:*Tensor) -> *Tensor:
-  ret tensor.tensor_mean(a)
+  ret tensor_ptr.mean(a)
 
 fn matmul(a:*Tensor, b:*Tensor) -> *Tensor:
-  ret tensor.tensor_matmul(a, b)
+  ret tensor_ptr.matmul(a, b)
 
 fn matmul_ex(a:*Tensor, b:*Tensor, trans_a:int, trans_b:int) -> *Tensor:
-  ret tensor.tensor_matmul_ex(a, b, trans_a, trans_b)
+  ret tensor_ptr.matmul_ex(a, b, trans_a, trans_b)
 
 fn backward(t:*Tensor) -> int:
-  ret tensor.tensor_backward(t)
+  if t == 0 as *Tensor: ret 0 - 1
+  ret tensor.tensor_backward(*t)
 
 // Optimizers
 fn sgd_step(t:*Tensor, lr:float) -> int:
-  ret optim.sgd_step(t, lr)
+  ret optim.sgd_tensor_simple(t, lr)
 
 fn sgd_step_simd(t:*Tensor, lr:float) -> int:
   ret optim.sgd_step_simd(t, lr)
@@ -188,34 +196,44 @@ fn df_free(df:*DataFrame) -> int:
 
 // Tokenizer helpers
 fn tok_new() -> *Tokenizer:
-  ret tokenizer.tok_new()
+  ret tokenizer.tokenizer_byte_new()
 
 fn tok_free(t:*Tokenizer) -> int:
-  ret tokenizer.tok_free(t)
+  ret tokenizer.tokenizer_free(t)
 
 fn tok_fit_text(t:*Tokenizer, text:str) -> int:
-  ret tokenizer.tok_fit_text(t, text)
+  // This tokenizer encodes an existing vocabulary; fitting is unsupported.
+  ret 0 - 1
 
 fn tok_fit_file(t:*Tokenizer, path:str) -> int:
-  ret tokenizer.tok_fit_file(t, path)
+  ret 0 - 1
 
 fn tok_encode(t:*Tokenizer, text:str, out_ids:*int, max_out:int) -> int:
-  ret tokenizer.tok_encode(t, text, out_ids, max_out)
+  if t == 0 as *Tokenizer || text == 0 as str || out_ids == 0 as *int || max_out < 0: ret 0 - 1
+  ids:*int = tokenizer.tokenizer_encode(t, text)
+  n:int = tokenizer.tokenizer_last_len(t)
+  if ids == 0 as *int || n > max_out: ret 0 - 1
+  memcpy(out_ids as *char, ids as *char, n * 8)
+  ret n
 
 fn tok_decode(t:*Tokenizer, ids:*int, n:int) -> str:
-  ret tokenizer.tok_decode(t, ids, n)
+  ret tokenizer.tokenizer_decode(t, ids, n)
 
 fn tok_save(t:*Tokenizer, path:str) -> int:
-  ret tokenizer.tok_save(t, path)
+  // No legacy vocabulary checkpoint writer exists.
+  ret 0 - 1
 
 fn tok_load(path:str) -> *Tokenizer:
-  ret tokenizer.tok_load(path)
+  ret tokenizer.tokenizer_load(path, 0 as str)
 
 fn tok_size(t:*Tokenizer) -> int:
-  ret tokenizer.tok_size(t)
+  if t == 0 as *Tokenizer: ret 0
+  if t.n_vocab == 0: ret 256
+  ret tokenizer.tokenizer_vocab_size(t)
 
 fn tok_unk_id(t:*Tokenizer) -> int:
-  ret tokenizer.tok_unk_id(t)
+  if t == 0 as *Tokenizer: ret 0 - 1
+  ret t.unk_id
 
 // Deterministic model/tensor serialization
 fn dense_new(in_dim:int, out_dim:int, name:str) -> *DenseModel:
@@ -288,32 +306,10 @@ fn _clamp_ml_f(x:float, lo:float, hi:float) -> float:
   ret x
 
 fn _exp_ml_fast(x:float) -> float:
-  xc:float = _clamp_ml_f(x, 0.0 - 10.0, 10.0)
-  x2:float = xc * xc
-  x3:float = x2 * xc
-  x4:float = x3 * xc
-  x5:float = x4 * xc
-  ret 1.0 + xc + (0.5 * x2) + ((1.0 / 6.0) * x3) + ((1.0 / 24.0) * x4) + ((1.0 / 120.0) * x5)
+  ret math.exp(x)
 
 fn _log_ml_pos(x:float) -> float:
-  if x <= 0.0:
-    ret 0.0 - 20.0
-  v:float = x
-  k:int = 0
-  while v > 2.0:
-    v = v * 0.5
-    k = k + 1
-  while v < 0.5:
-    v = v * 2.0
-    k = k - 1
-  y:float = (v - 1.0) / (v + 1.0)
-  y2:float = y * y
-  term1:float = y
-  term2:float = term1 * y2
-  term3:float = term2 * y2
-  term4:float = term3 * y2
-  ln_v:float = 2.0 * (term1 + (term2 / 3.0) + (term3 / 5.0) + (term4 / 7.0))
-  ret ln_v + ((k as float) * 0.69314718056)
+  ret math.log(x)
 
 fn dense_linear_forward_f32(logits:*float, x:*float, w:*float, b:*float, rows:int, in_dim:int, classes:int) -> int:
   if logits == 0 || x == 0 || w == 0 || b == 0:
@@ -351,6 +347,12 @@ fn softmax_nll_loss_grad_f32(loss_out:*float, grad_logits:*float, probs:*float, 
     ret 0 - 105
   if classes <= 0:
     ret 0 - 106
+  // Validate every row before mutating output buffers.
+  checked:int = 0
+  while checked < rows:
+    unsafe:
+      if labels[checked] < 0 || labels[checked] >= classes: ret 0 - 108
+    checked = checked + 1
   inv_rows:float = 1.0 / (rows as float)
   loss:float = 0.0
   r:int = 0
@@ -398,13 +400,8 @@ fn softmax_nll_loss_grad_f32(loss_out:*float, grad_logits:*float, probs:*float, 
     y:int = 0
     unsafe:
       y = labels[r]
-    if y < 0 || y >= classes:
-      y = 0
-    p:float = 0.0
     unsafe:
-      p = probs[base + y]
-    p = _clamp_ml_f(p, 0.000001, 1.0)
-    loss = loss - _log_ml_pos(p)
+      loss = loss + _log_ml_pos(sum_e) + (max_v - logits[base + y])
     c4:int = 0
     while c4 < classes:
       idx:int = base + c4

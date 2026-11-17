@@ -1,0 +1,98 @@
+// Compare the same TN model and optimizer on CPU and physical CUDA.
+import "stt_temporal"
+import "stt_temporal.state"
+import "tzcpu"
+import "tzgpu"
+import "math"
+
+fn near(a:float, b:float) -> int:
+  if stt_temporal.state.finite(a) == 0 || stt_temporal.state.finite(b) == 0: ret 0
+  if math.absf(a - b) > 0.0002 * (1.0 + math.absf(b)): ret 0
+  ret 1
+
+fn buffers(cpu:int, gpu:int, count:int, exact:int) -> int:
+  host:int = tzcpu.tz_cpu_zeros(count)
+  if host == 0: ret 0
+  if stt_temporal.state.to_host(host, gpu, count, 1) != 0:
+    tzcpu.tz_cpu_free(host)
+    ret 0
+  result:int = 1
+  unsafe:
+    p:*f32 = cpu as *f32
+    q:*f32 = host as *f32
+    i:int = 0
+    while i < count:
+      if (exact != 0 && p[i] != q[i]) || near(p[i] as float, q[i] as float) == 0:
+        say "TEMPORAL_CUDA_DIFFERENCE", i, p[i], q[i]
+        result = 0
+        break
+      i = i + 1
+  tzcpu.tz_cpu_free(host)
+  ret result
+
+fn states(cpu:*TemporalStt, gpu:*TemporalStt, exact:int) -> int:
+  unsafe:
+    if cpu == 0 || gpu == 0 || (*cpu).device != 0 || (*gpu).device != 1: ret 0
+    if (*cpu).count != (*gpu).count || (*cpu).hidden != (*gpu).hidden || (*cpu).seed != (*gpu).seed: ret 0
+    if (*cpu).step != (*gpu).step || (*cpu).beta1_power != (*gpu).beta1_power || (*cpu).beta2_power != (*gpu).beta2_power: ret 0
+    if buffers((*cpu).params, (*gpu).params, (*cpu).count, exact) == 0: ret 0
+    if buffers((*cpu).moment, (*gpu).moment, (*cpu).count, exact) == 0: ret 0
+    if buffers((*cpu).variance, (*gpu).variance, (*cpu).count, exact) == 0: ret 0
+  ret 1
+
+fn main() -> int:
+  if tzgpu.tz_cuda_device_count() <= 0: ret 1
+  unsafe:
+    cpu:*TemporalStt = stt_temporal.create(8, 0, 73)
+    gpu:*TemporalStt = stt_temporal.create(8, 1, 73)
+    if cpu == 0 || gpu == 0: ret 2
+    count:int = (*cpu).count
+    if states(cpu, gpu, 1) == 0: ret 3
+    mel:[float;3440]
+    i:int = 0
+    while i < 3440:
+      mel[i] = ((i * 17 + i / 80 * 11) % 71) as float / 10.0 - 10.0
+      i = i + 1
+    labels:[int;3] = [3, 4, 3]
+    a:float = 0.0
+    b:float = 0.0
+    if stt_temporal.backward(cpu, &mel[0], 43, &labels[0], 3, &a) != 0: ret 4
+    if stt_temporal.backward(gpu, &mel[0], 43, &labels[0], 3, &b) != 0: ret 5
+    if near(a, b) == 0 || buffers((*cpu).gradient, (*gpu).gradient, count, 0) == 0: ret 6
+    baseline:float = a
+    i = 0
+    while i < 20:
+      if stt_temporal.train(cpu, &mel[0], 43, &labels[0], 3, 1000, &a) != 0: ret 7
+      if stt_temporal.train(gpu, &mel[0], 43, &labels[0], 3, 1000, &b) != 0: ret 8
+      if near(a, b) == 0: ret 9
+      if states(cpu, gpu, 0) == 0: ret 10
+      if stt_temporal.steps(cpu) != i + 1 || stt_temporal.steps(gpu) != i + 1: ret 13
+      i = i + 1
+    if a >= baseline || b >= baseline: ret 14
+    if (*cpu).beta1_power != (*gpu).beta1_power || (*cpu).beta2_power != (*gpu).beta2_power: ret 15
+    labels[0] = 0
+    if stt_temporal.train(gpu, &mel[0], 43, &labels[0], 3, 1000, &b) != -1 || stt_temporal.steps(gpu) != 20: ret 16
+    labels[0] = 3
+    path:str = "temporal_cuda_checkpoint.tntc"
+    // GPU -> disk -> CPU preserves every parameter and optimizer value exactly.
+    if stt_temporal.save(gpu, path) != 0: ret 18
+    restored_cpu:*TemporalStt = stt_temporal.load(path, 0)
+    if states(restored_cpu, gpu, 1) == 0: ret 19
+    if stt_temporal.train(restored_cpu, &mel[0], 43, &labels[0], 3, 1000, &a) != 0: ret 20
+    if stt_temporal.train(gpu, &mel[0], 43, &labels[0], 3, 1000, &b) != 0: ret 21
+    if near(a, b) == 0 || states(restored_cpu, gpu, 0) == 0: ret 22
+    // CPU -> replacement checkpoint -> GPU has the same resume contract.
+    if stt_temporal.save(cpu, path) != 0: ret 23
+    restored_gpu:*TemporalStt = stt_temporal.load(path, 1)
+    if states(cpu, restored_gpu, 1) == 0: ret 24
+    if stt_temporal.train(cpu, &mel[0], 43, &labels[0], 3, 1000, &a) != 0: ret 25
+    if stt_temporal.train(restored_gpu, &mel[0], 43, &labels[0], 3, 1000, &b) != 0: ret 26
+    if near(a, b) == 0 || states(cpu, restored_gpu, 0) == 0: ret 27
+    if remove(path) != 0: ret 28
+    stt_temporal.free_model(restored_cpu)
+    stt_temporal.free_model(restored_gpu)
+    stt_temporal.free_model(cpu)
+    stt_temporal.free_model(gpu)
+    if tzgpu.tz_cuda_sync() != 0: ret 17
+    say "TEMPORAL_STT_CUDA_PARITY_PASS"
+    ret 0

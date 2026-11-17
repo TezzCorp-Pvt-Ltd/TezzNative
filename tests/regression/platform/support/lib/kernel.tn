@@ -1,0 +1,5 @@
+struct KernelRecord:
+  value:int
+
+fn kernel_value() -> int:
+  ret 22

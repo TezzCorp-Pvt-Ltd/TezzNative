@@ -1,0 +1,4 @@
+import "arduino"
+
+fn main() -> int:
+  ret 0

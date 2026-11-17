@@ -1,0 +1,296 @@
+// json implementation: api.
+import "runtime"
+import "json.parser"
+import "json.state"
+
+fn json_kind(v:*JsonVal) -> int:
+  if v == 0:
+    ret (*json.state._state_JSON_NULL())
+  ret (*v).kind
+
+fn json_is_null(v:*JsonVal) -> int:
+  if v == 0:
+    ret 1
+  ret (*v).kind == (*json.state._state_JSON_NULL())
+
+fn json_bool(v:*JsonVal) -> int:
+  if v == 0:
+    ret 0
+  ret (*v).bval
+
+fn json_int(v:*JsonVal) -> int:
+  if v == 0:
+    ret 0
+  if (*v).kind == (*json.state._state_JSON_FLOAT()):
+    ret (*v).fval as int
+  ret (*v).ival
+
+fn json_float(v:*JsonVal) -> float:
+  if v == 0:
+    ret 0.0
+  if (*v).kind == (*json.state._state_JSON_INT()):
+    ret (*v).ival as float
+  ret (*v).fval
+
+fn json_str(v:*JsonVal) -> str:
+  if v == 0:
+    ret 0 as str
+  ret (*v).sval
+
+fn json_len(v:*JsonVal) -> int:
+  if v == 0:
+    ret 0
+  ret (*v).count
+
+fn json_at(v:*JsonVal, idx:int) -> *JsonVal:
+  if v == 0:
+    ret 0 as *JsonVal
+  if idx < 0 || idx >= (*v).count:
+    ret 0 as *JsonVal
+  ret (*v).children + idx
+
+fn json_get(v:*JsonVal, name:str) -> *JsonVal:
+  if v == 0 || name == 0:
+    ret 0 as *JsonVal
+  cnt:int = (*v).count
+  ks:str = (*v).keys
+  if ks == 0:
+    ret 0 as *JsonVal
+  nlen:int = len(name)
+  ki:int = 0
+  pos:int = 0
+  while ki < cnt:
+    start:int = pos
+    while ks[pos] != 0 as char && ks[pos] as int != 10:
+      pos = pos + 1
+    klen:int = pos - start
+    if ks[pos] as int == 10:
+      pos = pos + 1
+    if klen == nlen:
+      if json.parser._json_streqn(ks, start, name, nlen) != 0:
+        ret (*v).children + ki
+    ki = ki + 1
+  ret 0 as *JsonVal
+
+// ---------------------------------------------------------------------------
+// Serializer
+// ---------------------------------------------------------------------------
+
+// Internal: write integer to a dynamic buffer
+
+fn json_null_val() -> *JsonVal:
+  v:*JsonVal = json.parser._json_new_val()
+  if v == 0:
+    ret 0 as *JsonVal
+  (*v).kind = (*json.state._state_JSON_NULL())
+  ret v
+
+fn json_bool_val(b:int) -> *JsonVal:
+  v:*JsonVal = json.parser._json_new_val()
+  if v == 0:
+    ret 0 as *JsonVal
+  (*v).kind = (*json.state._state_JSON_BOOL())
+  (*v).bval = b != 0
+  ret v
+
+fn json_int_val(n:int) -> *JsonVal:
+  v:*JsonVal = json.parser._json_new_val()
+  if v == 0:
+    ret 0 as *JsonVal
+  (*v).kind = (*json.state._state_JSON_INT())
+  (*v).ival = n
+  ret v
+
+fn json_float_val(f:float) -> *JsonVal:
+  v:*JsonVal = json.parser._json_new_val()
+  if v == 0:
+    ret 0 as *JsonVal
+  (*v).kind = (*json.state._state_JSON_FLOAT())
+  (*v).fval = f
+  ret v
+
+fn json_str_val(s:str) -> *JsonVal:
+  v:*JsonVal = json.parser._json_new_val()
+  if v == 0:
+    ret 0 as *JsonVal
+  (*v).kind = (*json.state._state_JSON_STRING())
+  if s != 0:
+    (*v).sval = runtime.rt_strdup(s) as str
+  ret v
+
+fn json_array() -> *JsonVal:
+  v:*JsonVal = json.parser._json_new_val()
+  if v == 0:
+    ret 0 as *JsonVal
+  (*v).kind = (*json.state._state_JSON_ARRAY())
+  ret v
+
+fn json_object() -> *JsonVal:
+  v:*JsonVal = json.parser._json_new_val()
+  if v == 0:
+    ret 0 as *JsonVal
+  (*v).kind = (*json.state._state_JSON_OBJECT())
+  kbuf:*char = json.parser._json_alloc(64)
+  if kbuf != 0:
+    (*v).keys     = kbuf as str
+    (*v).keys_cap = 64
+  ret v
+
+fn json_array_push(arr:*JsonVal, child:*JsonVal) -> int:
+  if arr == 0 || child == 0:
+    ret 0 - 1
+  cnt:int = (*arr).count
+  cap:int = (*arr).cap
+  if cnt >= cap:
+    if json.parser._json_grow_children(arr) != 0:
+      ret 0 - 1
+  dst:*JsonVal = (*arr).children + cnt
+  (*dst).kind     = (*child).kind
+  (*dst).bval     = (*child).bval
+  (*dst).ival     = (*child).ival
+  (*dst).fval     = (*child).fval
+  (*dst).sval     = (*child).sval
+  (*dst).count    = (*child).count
+  (*dst).cap      = (*child).cap
+  (*dst).children = (*child).children
+  (*dst).keys     = (*child).keys
+  (*dst).keys_len = (*child).keys_len
+  (*dst).keys_cap = (*child).keys_cap
+  (*arr).count = cnt + 1
+  // Child is absorbed — zero out original to prevent double-free
+  (*child).sval     = 0 as str
+  (*child).children = 0 as *JsonVal
+  (*child).keys     = 0 as str
+  free(child)
+  ret 0
+
+fn json_object_set(obj:*JsonVal, key:str, child:*JsonVal) -> int:
+  if obj == 0 || key == 0 || child == 0:
+    ret 0 - 1
+  cnt:int = (*obj).count
+  cap:int = (*obj).cap
+  if cnt >= cap:
+    if json.parser._json_grow_children(obj) != 0:
+      ret 0 - 1
+  dst:*JsonVal = (*obj).children + cnt
+  (*dst).kind     = (*child).kind
+  (*dst).bval     = (*child).bval
+  (*dst).ival     = (*child).ival
+  (*dst).fval     = (*child).fval
+  (*dst).sval     = (*child).sval
+  (*dst).count    = (*child).count
+  (*dst).cap      = (*child).cap
+  (*dst).children = (*child).children
+  (*dst).keys     = (*child).keys
+  (*dst).keys_len = (*child).keys_len
+  (*dst).keys_cap = (*child).keys_cap
+  (*obj).count = cnt + 1
+  json.parser._json_append_key(obj, key)
+  // Child absorbed — zero out
+  (*child).sval     = 0 as str
+  (*child).children = 0 as *JsonVal
+  (*child).keys     = 0 as str
+  free(child)
+  ret 0
+
+// ---------------------------------------------------------------------------
+// Free — depth-bounded recursive tree walk
+// ---------------------------------------------------------------------------
+
+// Internal: free all string/key fields and children of v at given depth.
+// Children are stored as flat arrays — we free each slot's string fields,
+// then free the array block itself, then free v.
+
+fn _json_free_node(v:*JsonVal, depth:int) -> int:
+  if v == 0:
+    ret 0
+  cnt:int = (*v).count
+  ch:*JsonVal = (*v).children
+  if ch != 0 && cnt > 0 && depth > 0:
+    i:int = 0
+    while i < cnt:
+      slot:*JsonVal = ch + i
+      // Recurse into slot (slot itself is part of the array; don't free slot)
+      _json_free_node_fields(slot, depth - 1)
+      i = i + 1
+  if (*v).sval != 0:
+    free((*v).sval as *char)
+    (*v).sval = 0 as str
+  if (*v).keys != 0:
+    free((*v).keys as *char)
+    (*v).keys = 0 as str
+  if (*v).children != 0:
+    free((*v).children)
+    (*v).children = 0 as *JsonVal
+  ret 0
+
+// Internal: free string fields of a slot (not the slot itself — it's embedded)
+
+fn _json_free_node_fields(v:*JsonVal, depth:int) -> int:
+  if v == 0:
+    ret 0
+  cnt:int = (*v).count
+  ch:*JsonVal = (*v).children
+  if ch != 0 && cnt > 0 && depth > 0:
+    i:int = 0
+    while i < cnt:
+      slot:*JsonVal = ch + i
+      _json_free_node_fields(slot, depth - 1)
+      i = i + 1
+  if (*v).sval != 0:
+    free((*v).sval as *char)
+    (*v).sval = 0 as str
+  if (*v).keys != 0:
+    free((*v).keys as *char)
+    (*v).keys = 0 as str
+  if (*v).children != 0:
+    free((*v).children)
+    (*v).children = 0 as *JsonVal
+  ret 0
+
+fn json_free(v:*JsonVal) -> int:
+  if v == 0:
+    ret 0
+  _json_free_node_fields(v, 64)
+  free(v)
+  ret 0
+
+// ---------------------------------------------------------------------------
+// API aliases — backward compatibility with examples
+// ---------------------------------------------------------------------------
+
+fn json_object_find(v:*JsonVal, name:str) -> *JsonVal:
+  ret json_get(v, name)
+
+fn json_array_len(v:*JsonVal) -> int:
+  ret json_len(v)
+
+fn json_array_get(v:*JsonVal, idx:int) -> *JsonVal:
+  ret json_at(v, idx)
+
+fn json_get_string(v:*JsonVal) -> str:
+  ret json_str(v)
+
+fn json_get_int(v:*JsonVal) -> int:
+  ret json_int(v)
+
+fn json_get_float(v:*JsonVal) -> float:
+  ret json_float(v)
+
+fn json_get_bool(v:*JsonVal) -> int:
+  ret json_bool(v)
+
+// json_string — create a JSON_STRING node from a literal
+
+fn json_string(s:str) -> *JsonVal:
+  ret json_str_val(s)
+
+// json_number — create a JSON_INT node from an integer
+
+fn json_number(n:int) -> *JsonVal:
+  ret json_int_val(n)
+
+// json_bool_node — create a JSON_BOOL node
+
+fn json_bool_node(b:int) -> *JsonVal:
+  ret json_bool_val(b)

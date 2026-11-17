@@ -1,0 +1,15 @@
+import "hardware"
+
+fn product(a:f64, b:f64) -> f64:
+  ret a * b
+
+fn main() -> int:
+  id:int = hardware.target_id()
+  value:f64 = (id as f64) / 2.0
+  if product(value, 2.0) != (id as f64): ret 1
+  small:f32 = id as f32
+  converted:f64 = small as f64
+  if converted != (id as f64): ret 2
+  if ((small + 0.25 as f32) as f64) != converted + 0.25: ret 3
+  if hardware.write("TEZZ_HW_FLOAT_OK\n") != 17: ret 4
+  ret 0

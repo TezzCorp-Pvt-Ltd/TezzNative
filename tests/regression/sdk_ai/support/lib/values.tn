@@ -1,0 +1,17 @@
+import "tztensor"
+
+fn read(t:int, index:int) -> float:
+  unsafe:
+    values:*f32 = tztensor.tensor_data(t) as *f32
+    ret values[index] as float
+
+fn write(t:int, index:int, value:float) -> int:
+  unsafe:
+    values:*f32 = tztensor.tensor_data(t) as *f32
+    values[index] = value as f32
+  ret 0
+
+fn gradient(t:int, index:int) -> float:
+  unsafe:
+    values:*f32 = tztensor.tensor_grad(t) as *f32
+    ret values[index] as float

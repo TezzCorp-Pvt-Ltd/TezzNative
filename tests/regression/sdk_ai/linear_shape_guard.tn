@@ -1,0 +1,20 @@
+import "tztensor"
+import "./support/lib/values.tn"
+
+fn main() -> int:
+  x:int = tztensor.tensor_new_2d(1, 1, 0)
+  w:int = tztensor.tensor_new_2d(1, 1, 0)
+  out:int = tztensor.tensor_new_2d(1, 2, 0)
+  values.write(x, 0, 2.0)
+  values.write(w, 0, 3.0)
+  tztensor.tensor_fill(out, 17.0 as f32)
+  status:int = tztensor.tensor_linear(x, w, 0, out)
+  changed:int = 0
+  if values.read(out, 0) != 17.0 || values.read(out, 1) != 17.0: changed = 1
+  tztensor.tensor_free(x)
+  tztensor.tensor_free(w)
+  tztensor.tensor_free(out)
+  if status >= 0 || changed != 0:
+    say "FAIL: linear accepted or wrote an invalid output shape"
+    ret 1
+  ret 0

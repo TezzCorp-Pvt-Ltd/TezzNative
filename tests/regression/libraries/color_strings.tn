@@ -1,0 +1,32 @@
+import "color"
+
+fn main() -> int:
+  unsafe:
+    color.color_force(3)
+    styled:str = color.italic("hello")
+    if styled == 0 || len(styled) <= 5:
+      ret 1
+    free(styled)
+    bar:str = color.progress_bar("progress", 50, 4, color.color_green(), color.color_gray())
+    if bar == 0:
+      ret 2
+    free(bar)
+    table:*ColorTable = color.color_table_new(1)
+    if table == 0:
+      ret 3
+    color.color_table_set_header(table, 0, "header")
+    cells:[str;1] = ["cell"]
+    color.color_table_add_row(table, &cells[0])
+    if color.color_table_print(table) != 0:
+      ret 4
+    color.color_table_free(table)
+    color.color_force(0)
+    plain:str = color.bold("hello")
+    if plain == 0 || strcmp(plain, "hello") != 0:
+      ret 5
+    free(plain)
+    empty:str = color.gradient_text("", 0, 0)
+    if empty == 0 || len(empty) != 0:
+      ret 6
+    free(empty)
+    ret 0

@@ -1,0 +1,21 @@
+import "hardware"
+
+fn main() -> int:
+  unsafe:
+    if hardware.target_id() != 2: ret 1
+    buffer:[char;4]
+    if hardware.uart_read(&buffer[0], 0) != 0: ret 2
+    if hardware.uart_write(0 as *char, 1) != 0 - 1: ret 3
+    if hardware.uart_read(0 as *char, 1) != 0 - 1: ret 4
+    if hardware.write("TEZZ_HW_READY\n") != 14: ret 5
+    start:int = hardware.micros()
+    used:int = 0
+    while used < 4:
+      if hardware.micros() - start > 2000000: ret 6
+      count:int = hardware.uart_read(&buffer[used], 4 - used)
+      if count < 0: ret 7
+      used = used + count
+    if buffer[0] != 112 as char || buffer[1] != 105 as char || buffer[2] != 110 as char || buffer[3] != 103 as char: ret 8
+    if hardware.uart_write(&buffer[0], 4) != 4: ret 9
+    if hardware.write("\n") != 1: ret 10
+  ret 0

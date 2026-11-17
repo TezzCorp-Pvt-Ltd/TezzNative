@@ -1,0 +1,375 @@
+// io implementation: filesystem.
+
+import "io.state"
+import "io.bigfile"
+import "io.streams"
+import "io.paths"
+
+fn read_all(path:str) -> str:
+  if path == 0:
+    ret 0 as str
+  ret read_file(path)
+
+fn write_all(path:str, data:str) -> int:
+  if path == 0 || data == 0:
+    ret 0 - 1
+  n:int = len(data)
+  if n < 0:
+    ret 0 - 1
+  wrote:int = write_file(path, data, n)
+  if wrote != n:
+    ret 0 - 1
+  ret wrote
+
+fn write_all_bytes(path:str, data:*char, n:int) -> int:
+  if path == 0 || data == 0 || n < 0:
+    ret 0 - 1
+  h:*char = fopen(path, "wb")
+  if h == 0 as *char:
+    ret 0 - 1
+  w:int = fwrite(data, 1, n, h)
+  fclose(h)
+  if w != n:
+    ret 0 - 1
+  ret w
+
+fn append_all(path:str, data:str) -> int:
+  if path == 0 || data == 0:
+    ret 0 - 1
+  n:int = len(data)
+  h:*char = fopen(path, "ab")
+  if h == 0 as *char:
+    ret 0 - 1
+  w:int = fwrite(data, 1, n, h)
+  fclose(h)
+  ret w
+
+fn copy_file(src:str, dst:str) -> int:
+  if src == 0 || dst == 0:
+    ret 0 - 1
+  // Use chunk streaming for large-file safety
+  bf:*BigFile = io.bigfile.bigfile_open(src, io.state._get_IO_CHUNK_DEFAULT())
+  if bf == 0:
+    ret 0 - 1
+  sw:*StreamWriter = io.streams.stream_writer_open(dst)
+  if sw == 0:
+    io.bigfile.bigfile_close(bf)
+    ret 0 - 1
+  while io.bigfile.bigfile_eof(bf) == 0:
+    chunk:str = io.bigfile.bigfile_read_chunk(bf)
+    if chunk == 0:
+      break
+    nr:int = io.bigfile.bigfile_last_read(bf)
+    io.streams.stream_write(sw, chunk as *char, nr)
+    free(chunk)
+  io.bigfile.bigfile_close(bf)
+  io.streams.stream_writer_close(sw)
+  ret 0
+
+fn move_file(src:str, dst:str) -> int:
+  if rename(src, dst) == 0:
+    ret 0
+  n:int = copy_file(src, dst)
+  if n < 0:
+    ret 0 - 1
+  remove(src)
+  ret 0
+
+fn file_size_bytes(path:str) -> int:
+  if path == 0:
+    ret 0 - 1
+  h:*char = fopen(path, "rb")
+  if h == 0 as *char:
+    ret 0 - 1
+  if fseek(h, 0, io.state._get_SEEK_END()) != 0:
+    fclose(h)
+    ret 0 - 1
+  sz:int = ftell(h)
+  fclose(h)
+  if sz < 0:
+    ret 0 - 1
+  ret sz
+
+fn file_exists(path:str) -> int:
+  if path == 0:
+    ret 0
+  if path_exists(path) == 0:
+    ret 0
+  if path_is_dir(path) != 0:
+    ret 0
+  ret 1
+
+fn dir_exists(path:str) -> int:
+  if path == 0:
+    ret 0
+  if path_exists(path) == 0:
+    ret 0
+  ret path_is_dir(path)
+
+fn file_delete(path:str) -> int:
+  if path == 0:
+    ret 0 - 1
+  ret remove(path)
+
+fn file_rename(old:str, new_path:str) -> int:
+  if old == 0 || new_path == 0:
+    ret 0 - 1
+  ret rename(old, new_path)
+
+// ─────────────────────────────────────────────────────────────
+// Directory helpers
+// ─────────────────────────────────────────────────────────────
+
+fn cwd() -> str:
+  ret get_cwd()
+
+fn dir_make(path:str) -> int:
+  if path == 0:
+    ret 0 - 1
+  ret mkdir(path)
+
+fn dir_remove(path:str) -> int:
+  if path == 0:
+    ret 0 - 1
+  ret rmdir(path)
+
+fn dir_list(p:str) -> str:
+  if p == 0:
+    ret 0 as str
+  ret list_dir(p)
+
+fn dir_list_rec(p:str) -> str:
+  if p == 0:
+    ret 0 as str
+  ret _dir_list_rec_impl(p, 0)
+
+fn _str_append_line(out:str, item:str) -> str:
+  if item == 0:
+    ret out
+  if len(item) == 0:
+    ret out
+  if out == 0 || len(out) == 0:
+    next0:str = io.paths._str_dup(item)
+    if out != 0:
+      free(out)
+    ret next0
+  next1:str = io.paths._str_join3(out, "\n", item)
+  free(out)
+  ret next1
+
+fn _dir_list_rec_impl(path:str, depth:int) -> str:
+  if path == 0:
+    ret 0 as str
+  if depth > 64:
+    ret io.paths._str_dup("")
+  listing:str = dir_list(path)
+  if listing == 0:
+    ret 0 as str
+
+  out:str = io.paths._str_dup("")
+  start:int = 0
+  ln:int = len(listing)
+  idx:int = 0
+  while idx <= ln:
+    at_end:int = 0
+    ch:int = 0
+    if idx == ln:
+      at_end = 1
+    else:
+      unsafe:
+        ch = (listing as *char)[idx] as int
+    if at_end != 0 || ch == 10:
+      if idx > start:
+        name:str = io.paths._str_slice(listing, start, idx)
+        if name != 0:
+          full:str = io.paths.path_join_portable(path, name)
+          if full != 0:
+            out = _str_append_line(out, full)
+            if path_is_dir(full) != 0:
+              child:str = _dir_list_rec_impl(full, depth + 1)
+              if child != 0:
+                out = _str_append_line(out, child)
+                free(child)
+            free(full)
+          free(name)
+      start = idx + 1
+    idx = idx + 1
+
+  free(listing)
+  if out == 0:
+    ret io.paths._str_dup("")
+  ret out
+
+fn _glob_match_impl(pat:str, text:str) -> int:
+  if pat == 0 || text == 0:
+    ret 0
+  plen:int = len(pat)
+  tlen:int = len(text)
+  pi:int = 0
+  ti:int = 0
+  star:int = 0 - 1
+  mark:int = 0
+  while ti < tlen:
+    pc:int = 0
+    tc:int = 0
+    if pi < plen:
+      unsafe:
+        pc = (pat as *char)[pi] as int
+    unsafe:
+      tc = (text as *char)[ti] as int
+    if pi < plen && (pc == 63 || pc == tc):
+      pi = pi + 1
+      ti = ti + 1
+      continue
+    if pi < plen && pc == 42:
+      star = pi
+      mark = ti
+      pi = pi + 1
+      continue
+    if star >= 0:
+      pi = star + 1
+      mark = mark + 1
+      ti = mark
+      continue
+    ret 0
+  while pi < plen:
+    pc2:int = 0
+    unsafe:
+      pc2 = (pat as *char)[pi] as int
+    if pc2 != 42:
+      break
+    pi = pi + 1
+  if pi == plen:
+    ret 1
+  ret 0
+
+fn glob_list(p:str) -> str:
+  if p == 0:
+    ret 0 as str
+  n:int = len(p)
+  last_sep:int = 0 - 1
+  i:int = 0
+  while i < n:
+    c:int = 0
+    unsafe:
+      c = (p as *char)[i] as int
+    if c == 47 || c == 92:
+      last_sep = i
+    i = i + 1
+
+  dir:str
+  pat:str
+  if last_sep >= 0:
+    dir = io.paths._str_slice(p, 0, last_sep)
+    pat = io.paths._str_slice(p, last_sep + 1, n)
+  else:
+    dir = io.paths._str_dup(".")
+    pat = io.paths._str_dup(p)
+  if dir == 0 || pat == 0:
+    if dir != 0:
+      free(dir)
+    if pat != 0:
+      free(pat)
+    ret 0 as str
+
+  listing:str = dir_list(dir)
+  if listing == 0:
+    free(dir)
+    free(pat)
+    ret 0 as str
+
+  out:str = io.paths._str_dup("")
+  start:int = 0
+  ln:int = len(listing)
+  idx:int = 0
+  while idx <= ln:
+    at_end:int = 0
+    ch:int = 0
+    if idx == ln:
+      at_end = 1
+    else:
+      unsafe:
+        ch = (listing as *char)[idx] as int
+    if at_end != 0 || ch == 10:
+      if idx > start:
+        name:str = io.paths._str_slice(listing, start, idx)
+        if name != 0:
+          if _glob_match_impl(pat, name) != 0:
+            full:str = io.paths.path_join_portable(dir, name)
+            if full != 0:
+              if out == 0 || len(out) == 0:
+                next0:str = io.paths._str_dup(full)
+                if out != 0:
+                  free(out)
+                out = next0
+              else:
+                next1:str = io.paths._str_join3(out, "\n", full)
+                free(out)
+                out = next1
+              free(full)
+          free(name)
+      start = idx + 1
+    idx = idx + 1
+
+  free(listing)
+  free(dir)
+  free(pat)
+  if out == 0:
+    ret io.paths._str_dup("")
+  ret out
+
+fn walk_dir(path:str, cb:fn(str)->int) -> int:
+  lst:str = dir_list_rec(path)
+  if lst == 0:
+    ret 0 - 1
+  i:int = 0
+  start:*char = lst as *char
+  for ;;:
+    c:int = (lst as *char)[i] as int
+    if c == 0:
+      if start != (lst as *char) + i:
+        if cb(start as str) != 0:
+          free(lst)
+          ret 1
+      break
+    if c == 10:
+      (lst as *char)[i] = 0 as char
+      if cb(start as str) != 0:
+        free(lst)
+        ret 1
+      start = (lst as *char) + i + 1
+    i += 1
+  free(lst)
+  ret 0
+
+// Walk with file name + size info
+
+fn walk_dir_ex(path:str, cb:fn(str, int)->int) -> int:
+  lst:str = dir_list_rec(path)
+  if lst == 0:
+    ret 0 - 1
+  i:int = 0
+  start:*char = lst as *char
+  for ;;:
+    c:int = (lst as *char)[i] as int
+    if c == 0:
+      if start != (lst as *char) + i:
+        sz:int = file_size_bytes(start as str)
+        if cb(start as str, sz) != 0:
+          free(lst)
+          ret 1
+      break
+    if c == 10:
+      (lst as *char)[i] = 0 as char
+      sz2:int = file_size_bytes(start as str)
+      if cb(start as str, sz2) != 0:
+        free(lst)
+        ret 1
+      start = (lst as *char) + i + 1
+    i += 1
+  free(lst)
+  ret 0
+
+// ─────────────────────────────────────────────────────────────
+// Path helpers (OS-backed)
+// ─────────────────────────────────────────────────────────────

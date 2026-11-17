@@ -1,0 +1,10 @@
+fn identity(pointer:*char) -> *char:
+  ret pointer
+
+fn main() -> int:
+  pointer:*char
+  unsafe:
+    pointer = malloc(8)
+    free(pointer)
+  pointer = identity(pointer)
+  ret 0

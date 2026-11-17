@@ -1,0 +1,27 @@
+// tezz-hardware-module: raspi3b
+// Bare-metal Pi 3B profile. This module does not use the Linux raspi API.
+// BCM GPIO numbers 0..27; UART0 reserves GPIO14 and GPIO15.
+
+extern fn tn_hw_pi3_uart_init(baud:int) -> int
+extern fn tn_hw_pi3_gpio_mode(pin:int, mode:int) -> int
+extern fn tn_hw_pi3_gpio_write(pin:int, value:int) -> int
+extern fn tn_hw_pi3_gpio_read(pin:int) -> int
+
+fn uart_init(baud:int) -> int:
+  ret tn_hw_pi3_uart_init(baud)
+
+fn gpio_mode(pin:int, mode:int) -> int:
+  ret tn_hw_pi3_gpio_mode(pin, mode)
+
+fn gpio_input(pin:int) -> int:
+  ret tn_hw_pi3_gpio_mode(pin, 0)
+
+fn gpio_output(pin:int) -> int:
+  ret tn_hw_pi3_gpio_mode(pin, 1)
+
+fn gpio_write(pin:int, value:int) -> int:
+  ret tn_hw_pi3_gpio_write(pin, value)
+
+fn gpio_read(pin:int) -> int:
+  ret tn_hw_pi3_gpio_read(pin)
+

@@ -1,0 +1,26 @@
+import "npu"
+import "tensor"
+
+fn main() -> int:
+  // This fixture is run with the source-built runtime without an NPU provider.
+  if npu.available() != 0:
+    say "FAIL: an unconfigured runtime claimed NPU availability"
+    ret 1
+  data:[float;2] = [-2.0, 3.0]
+  unsafe:
+    status:int = npu.launch_kernel(0, (&data[0]) as *char, 2)
+    if status >= 0 || data[0] != -2.0 || data[1] != 3.0:
+      say "FAIL: NPU operation silently executed on another device"
+      ret 2
+  a:TensorData = tensor.tensor_new(1, 1)
+  b:TensorData = tensor.tensor_new(1, 1)
+  result:TensorData = npu.smart_matmul(a, b)
+  failed:int = 0
+  unsafe:
+    if result.data != 0 as *float:
+      say "FAIL: NPU matmul silently selected another backend"
+      failed = 1
+  tensor.tensor_free(result)
+  tensor.tensor_free(a)
+  tensor.tensor_free(b)
+  ret failed

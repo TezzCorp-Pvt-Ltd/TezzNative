@@ -1,0 +1,20 @@
+import "autograd"
+import "tensor"
+
+fn main() -> int:
+  autograd.autograd_init(128)
+  x:Tensor = tensor.tensor_ones_2d(1, 1)
+  x = tensor.tensor_require_grad(x)
+  y:Tensor = autograd.ag_scale(x, 2.0)
+  loss:Tensor = autograd.ag_scale(y, 3.0)
+  first:int = autograd.autograd_backward(loss)
+  second:int = autograd.autograd_backward(loss)
+  value:float = tensor.tensor_grad_item(x, 0)
+  autograd.autograd_reset()
+  tensor.tensor_free_tensor(loss)
+  tensor.tensor_free_tensor(y)
+  tensor.tensor_free_tensor(x)
+  if first != 0 || second != 0 || value != 12.0:
+    say "FAIL: legacy autograd must share the tensor tape and clear intermediate adjoints; got ", value
+    ret 1
+  ret 0

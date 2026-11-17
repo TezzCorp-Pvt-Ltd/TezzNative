@@ -1,0 +1,26 @@
+import "tztensor"
+import "./support/lib/values.tn"
+
+fn main() -> int:
+  a:int = tztensor.tensor_new_2d(1, 2, 1)
+  b:int = tztensor.tensor_new_2d(2, 2, 1)
+  values.write(a, 0, 1.0)
+  values.write(a, 1, 2.0)
+  values.write(b, 0, 3.0)
+  values.write(b, 1, 4.0)
+  values.write(b, 2, 5.0)
+  values.write(b, 3, 6.0)
+  out:int = tztensor.tensor_matmul_infix(a, b)
+  tztensor.tensor_backward(out)
+  failed:int = 0
+  if values.read(out, 0) != 13.0 || values.read(out, 1) != 16.0:
+    failed = 1
+  if values.gradient(a, 0) != 7.0 || values.gradient(a, 1) != 11.0:
+    failed = 1
+  if values.gradient(b, 0) != 1.0 || values.gradient(b, 1) != 1.0 || values.gradient(b, 2) != 2.0 || values.gradient(b, 3) != 2.0:
+    failed = 1
+  tztensor.tensor_free(out)
+  tztensor.tensor_free(b)
+  tztensor.tensor_free(a)
+  if failed != 0: say "FAIL: SDK row-major matrix product or gradients"
+  ret failed

@@ -1,0 +1,143 @@
+import "stt_temporal"
+import "stt_temporal.state"
+import "stt_temporal.checkpoint"
+
+fn same(left:*TemporalStt, right:*TemporalStt):
+  unsafe:
+    if (*left).step != (*right).step || (*left).count != (*right).count:
+      ret 0
+    if (*left).beta1_power != (*right).beta1_power || (*left).beta2_power != (*right).beta2_power:
+      ret 0
+    let p:*f32 = (*left).params as *f32
+    let q:*f32 = (*right).params as *f32
+    let m:*f32 = (*left).moment as *f32
+    let n:*f32 = (*right).moment as *f32
+    let v:*f32 = (*left).variance as *f32
+    let w:*f32 = (*right).variance as *f32
+    let i = 0
+    while i < (*left).count:
+      if p[i] != q[i] || m[i] != n[i] || v[i] != w[i]:
+        ret 0
+      i = i + 1
+  ret 1
+
+fn main():
+  unsafe:
+    if stt_temporal.create(7, 0, 42) != 0 || stt_temporal.create(8, 2, 42) != 0:
+      ret 1
+    let model:*TemporalStt = stt_temporal.create(8, 0, 42)
+    let twin:*TemporalStt = stt_temporal.create(8, 0, 42)
+    if model == 0 || twin == 0 || same(model, twin) != 1:
+      ret 2
+    stt_temporal.free_model(twin)
+    let a:[f64;1280]
+    let b:[f64;1280]
+    let i = 0
+    while i < 1280:
+      if i % 80 < 40:
+        a[i] = 0
+        b[i] = -10
+      else:
+        a[i] = -10
+        b[i] = 0
+      i = i + 1
+    let first:[i64;1] = [3]
+    let second:[i64;1] = [4]
+    let output:[u8;64]
+    if stt_temporal.predict(model, &a[0], 16, &output[0], 64, 16) >= 0:
+      ret 3
+    let baseline:f64 = 0
+    let value:f64 = 0
+    if stt_temporal.loss(model, &a[0], 16, &first[0], 1, &baseline) != 0:
+      ret 4
+    i = 0
+    while i < 120:
+      if stt_temporal.train(model, &a[0], 16, &first[0], 1, 3000, &value) != 0:
+        ret 5
+      if stt_temporal.train(model, &b[0], 16, &second[0], 1, 3000, &value) != 0:
+        ret 6
+      i = i + 1
+    if stt_temporal.loss(model, &a[0], 16, &first[0], 1, &value) != 0 || value >= baseline * 0.20000000000000001:
+      ret 7
+    if stt_temporal.predict(model, &a[0], 16, &output[0], 64, 16) != 1 || output[0] != 97 as u8:
+      ret 8
+    if stt_temporal.predict(model, &b[0], 16, &output[0], 64, 16) != 1 || output[0] != 98 as u8:
+      ret 9
+    if stt_temporal.steps(model) != 240:
+      ret 10
+    first[0] = 0
+    if stt_temporal.train(model, &a[0], 16, &first[0], 1, 1000, &value) == 0 || stt_temporal.steps(model) != 240:
+      ret 11
+    first[0] = 3
+    let nan_bits:*i64 = (&a[0]) as *i64
+    nan_bits[0] = 9221120237041090561
+    if stt_temporal.train(model, &a[0], 16, &first[0], 1, 1000, &value) == 0 || stt_temporal.steps(model) != 240:
+      ret 12
+    a[0] = 0
+    let path:*u8 = "temporal-stt-roundtrip.tntc"
+    if stt_temporal.save(model, path) != 0:
+      ret 13
+    let temporary:*u8 = "temporal-stt-roundtrip.tntc.tmp"
+    let file:*u8 = stt_temporal.checkpoint.speech_file_open(temporary, 1)
+    let marker:u8 = 90 as u8
+    if file == 0 || fwrite(&marker, 1, 1, file) != 1 || fclose(file) != 0:
+      ret 21
+    if stt_temporal.save(model, path) == 0:
+      ret 22
+    file = stt_temporal.checkpoint.speech_file_open(temporary, 0)
+    marker = 0 as u8
+    if file == 0 || fread(&marker, 1, 1, file) != 1 || marker != 90 as u8 || fclose(file) != 0:
+      ret 23
+    if stt_temporal.checkpoint.speech_file_remove(temporary) != 0:
+      ret 24
+    twin = stt_temporal.load(path, 0)
+    if twin == 0 || same(model, twin) != 1:
+      ret 14
+    if stt_temporal.train(model, &a[0], 16, &first[0], 1, 1000, &value) != 0:
+      ret 15
+    if stt_temporal.train(twin, &a[0], 16, &first[0], 1, 1000, &value) != 0 || same(model, twin) != 1:
+      ret 16
+    stt_temporal.free_model(twin)
+    if stt_temporal.save(model, path) != 0:
+      ret 25
+    twin = stt_temporal.load(path, 0)
+    if twin == 0 || same(model, twin) != 1:
+      ret 26
+    stt_temporal.free_model(twin)
+    let unicode_path:*u8 = "temporal-stt-é.tntc"
+    if stt_temporal.save(model, unicode_path) != 0:
+      ret 27
+    twin = stt_temporal.load(unicode_path, 0)
+    if twin == 0 || same(model, twin) != 1:
+      ret 28
+    stt_temporal.free_model(twin)
+    if stt_temporal.checkpoint.speech_file_remove(unicode_path) != 0:
+      ret 29
+    file = fopen(path, "r+b")
+    if file == 0 || fseek(file, 216, 0) != 0:
+      ret 17
+    let original:u8 = 0 as u8
+    if fread(&original, 1, 1, file) != 1 || fseek(file, 216, 0) != 0:
+      ret 18
+    original = (original as i64 ^ 1) as u8
+    if fwrite(&original, 1, 1, file) != 1 || fclose(file) != 0:
+      ret 19
+    if stt_temporal.load(path, 0) != 0:
+      ret 20
+    if stt_temporal.save(model, path) != 0:
+      ret 30
+    file = fopen(path, "ab")
+    if file == 0 || fwrite(&marker, 1, 1, file) != 1 || fclose(file) != 0:
+      ret 31
+    if stt_temporal.load(path, 0) != 0:
+      ret 32
+    file = fopen(path, "wb")
+    if file == 0 || fwrite(&marker, 1, 1, file) != 1 || fclose(file) != 0:
+      ret 33
+    if stt_temporal.load(path, 0) != 0:
+      ret 34
+    remove(path)
+    stt_temporal.free_model(model)
+    say("temporal_stt_learning_resume_crc_pass")
+    ret 0
+

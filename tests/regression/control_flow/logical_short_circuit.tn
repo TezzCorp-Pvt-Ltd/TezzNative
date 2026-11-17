@@ -1,0 +1,25 @@
+let visits:int = 0
+
+fn touch(value:int) -> int:
+  visits = visits + 1
+  ret value
+
+fn main() -> int:
+  left:int = 0 && touch(1)
+  right:int = 1 || touch(0)
+  if visits != 0: ret 1
+  if left != 0: ret 2
+  if right != 1: ret 3
+  if (2 && 4) != 1: ret 4
+  if (2 || 4) != 1: ret 5
+  if (0 || touch(7)) != 1: ret 6
+  if (2 && touch(0)) != 0: ret 7
+  if visits != 2: ret 8
+  if (0 && (1 / 0)) != 0: ret 9
+  if (1 || (1 / 0)) != 1: ret 10
+  if (0.0 || 2.5) != 1: ret 11
+  if (-0.0 && touch(1)) != 0: ret 12
+  if ((-0.0 as f32) || 0) != 0: ret 13
+  if (1.25 && 2.5) != 1: ret 14
+  if visits != 2: ret 15
+  ret 0

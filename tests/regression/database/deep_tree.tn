@@ -1,0 +1,44 @@
+import "tezzdb"
+
+fn main() -> int:
+  unsafe:
+    remove("deep_tree.tdb")
+    remove("deep_tree.tdb.wal")
+    db:*TezzDb = tezzdb.open("deep_tree.tdb")
+    if db == 0: ret 1
+    if tezzdb.table_create(db, "items") != 0: ret 2
+    data:[char;513]
+    i:int = 0
+    while i < 512:
+      data[i] = 120 as char
+      i = i + 1
+    data[512] = 0 as char
+    if tezzdb.begin(db) != 0: ret 3
+    i = 1
+    // More than 300 split leaves forces the first internal/root split.
+    while i <= 2600:
+      if tezzdb.insert_pk(db, "items", i, (&data[0]) as str) != i:
+        say "FAIL: deep B-tree insert ", i
+        ret 4
+      i = i + 1
+    if tezzdb.commit(db) != 0 || tezzdb.close(db) != 0: ret 5
+    db = tezzdb.open("deep_tree.tdb")
+    if db == 0 || tezzdb.table_row_count(db, "items") != 2600: ret 6
+    i = 1
+    while i <= 2600:
+      value:str = tezzdb.get(db, "items", i)
+      if value == 0 || strcmp(value, (&data[0]) as str) != 0:
+        say "FAIL: deep B-tree lookup ", i
+        ret 7
+      free(value)
+      i = i + 1
+    if tezzdb.begin(db) != 0: ret 8
+    i = 2601
+    while i <= 3400:
+      if tezzdb.insert_pk(db, "items", i, (&data[0]) as str) != i: ret 9
+      i = i + 1
+    if tezzdb.rollback(db) != 0 || tezzdb.close(db) != 0: ret 10
+    db = tezzdb.open("deep_tree.tdb")
+    if db == 0 || tezzdb.table_row_count(db, "items") != 2600: ret 11
+    if tezzdb.get(db, "items", 3400) != 0 as str: ret 12
+    ret tezzdb.close(db)

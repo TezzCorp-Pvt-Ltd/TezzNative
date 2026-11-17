@@ -1,0 +1,613 @@
+// net implementation: http.
+
+import "net.state"
+import "net.transport"
+import "net.urls"
+
+fn _tolower_ascii(c:int) -> int:
+  if c >= 65 && c <= 90:
+    ret c + 32
+  ret c
+
+fn _eq_nocase_range(s:str, from_i:int, to_i:int, name:str) -> int:
+  if s == 0 || name == 0:
+    ret 0
+  nlen:int = len(name)
+  if (to_i - from_i) != nlen:
+    ret 0
+  i:int = 0
+  while i < nlen:
+    av:int = s[from_i + i] as int
+    bv:int = name[i] as int
+    a:int = _tolower_ascii(av & 255)
+    b:int = _tolower_ascii(bv & 255)
+    if a != b:
+      ret 0
+    i = i + 1
+  ret 1
+
+fn _substr_dup(s:str, start:int, end:int) -> str:
+  if s == 0:
+    ret 0 as str
+  slen:int = len(s)
+  st:int = start
+  en:int = end
+  if st < 0:
+    st = 0
+  if st > slen:
+    st = slen
+  if en < st:
+    en = st
+  if en > slen:
+    en = slen
+  n:int = en - st
+  out:*char = malloc(n + 1)
+  if out == 0:
+    ret 0 as str
+  if n > 0:
+    unsafe:
+      memcpy(out, (s as *char) + st, n)
+  out[n] = 0 as char
+  ret out as str
+
+fn _parse_int_dec(s:str) -> int:
+  if s == 0:
+    ret 0
+  i:int = 0
+  while s[i] == 32 as char || s[i] == 9 as char || s[i] == 13 as char || s[i] == 10 as char:
+    i = i + 1
+  sign:int = 1
+  if s[i] == 45 as char:
+    sign = 0 - 1
+    i = i + 1
+  else if s[i] == 43 as char:
+    i = i + 1
+  v:int = 0
+  seen:int = 0
+  while 1:
+    c:int = (s[i] as int) & 255
+    if c < 48 || c > 57:
+      break
+    v = (v * 10) + (c - 48)
+    seen = 1
+    i = i + 1
+  if seen == 0:
+    ret 0
+  ret v * sign
+
+fn _find_header_end_index(buf:*char, n:int) -> int:
+  if buf == 0 || n < 2:
+    ret 0 - 1
+  i:int = 0
+  while i + 1 < n:
+    if (((buf[i] as int) & 255) == 10):
+      if (((buf[i + 1] as int) & 255) == 10):
+        ret i + 2
+    if i + 3 < n && (((buf[i] as int) & 255) == 13):
+      if (((buf[i + 1] as int) & 255) == 10):
+        if (((buf[i + 2] as int) & 255) == 13):
+          if (((buf[i + 3] as int) & 255) == 10):
+            ret i + 4
+    if i + 3 < n && (((buf[i] as int) & 255) == 114): // 'r' fallback when CR escapes are normalized
+      if (((buf[i + 1] as int) & 255) == 10):
+        if (((buf[i + 2] as int) & 255) == 114):
+          if (((buf[i + 3] as int) & 255) == 10):
+            ret i + 4
+    i = i + 1
+  ret 0 - 1
+
+fn _recv_exact(sock:int, buf:*char, n:int) -> int:
+  if sock < 0 || buf == 0 || n < 0:
+    ret net.state._get_NET_ERR()
+  got:int = 0
+  chunk_buf:[char;2048]
+  while got < n:
+    chunk:int = n - got
+    if chunk > 2048:
+      chunk = 2048
+    r:int = net_recv(sock, &chunk_buf[0], chunk)
+    if r <= 0:
+      ret net.state._get_NET_ERR()
+    i:int = 0
+    while i < r:
+      buf[got + i] = chunk_buf[i]
+      i = i + 1
+    got = got + r
+  ret got
+
+fn _contains_nocase(hay:str, needle:str) -> int:
+  if hay == 0 || needle == 0:
+    ret 0
+  hn:int = len(hay)
+  nn:int = len(needle)
+  if nn <= 0:
+    ret 1
+  if nn > hn:
+    ret 0
+  i:int = 0
+  while i + nn <= hn:
+    j:int = 0
+    ok:int = 1
+    while j < nn:
+      av:int = 0
+      bv:int = 0
+      unsafe:
+        av = hay[i + j] as int
+        bv = needle[j] as int
+      a:int = _tolower_ascii(av & 255)
+      b:int = _tolower_ascii(bv & 255)
+      if a != b:
+        ok = 0
+        break
+      j = j + 1
+    if ok != 0:
+      ret 1
+    i = i + 1
+  ret 0
+
+fn _header_has_token(value:str, token:str) -> int:
+  if value == 0 || token == 0:
+    ret 0
+  n:int = len(value)
+  i:int = 0
+  while i < n:
+    while i < n:
+      c0:int = net.transport._byte_at(value, i)
+      if c0 == 44 || c0 == 32 || c0 == 9:
+        i = i + 1
+      else:
+        break
+    start:int = i
+    end:int = i
+    while i < n:
+      c1:int = net.transport._byte_at(value, i)
+      if c1 == 44:
+        break
+      if c1 == 59:
+        j:int = i
+        while j < n && net.transport._byte_at(value, j) != 44:
+          j = j + 1
+        end = i
+        i = j
+        break
+      end = i + 1
+      i = i + 1
+    while end > start:
+      c2:int = net.transport._byte_at(value, end - 1)
+      if c2 == 32 || c2 == 9:
+        end = end - 1
+      else:
+        break
+    if end > start && _eq_nocase_range(value, start, end, token) != 0:
+      ret 1
+    if i < n && net.transport._byte_at(value, i) == 44:
+      i = i + 1
+  ret 0
+
+fn _line_end_index(s:str, n:int, start:int) -> int:
+  if s == 0:
+    ret 0 - 1
+  i:int = start
+  if i < 0:
+    i = 0
+  while i < n:
+    c:int = net.transport._byte_at(s, i)
+    if c == 10 || c == 13:
+      ret i
+    if c == 114 && (i + 1) < n:
+      if net.transport._byte_at(s, i + 1) == 10:
+        ret i
+    i = i + 1
+  ret 0 - 1
+
+fn _skip_line_break(s:str, n:int, i:int) -> int:
+  if s == 0 || i >= n:
+    ret i
+  c:int = net.transport._byte_at(s, i)
+  if c == 13:
+    if (i + 1) < n && net.transport._byte_at(s, i + 1) == 10:
+      ret i + 2
+    ret i + 1
+  if c == 10:
+    ret i + 1
+  if c == 114 && (i + 1) < n && net.transport._byte_at(s, i + 1) == 10:
+    ret i + 2
+  ret i
+
+fn _http_content_length_or_missing(msg:str) -> int:
+  h:str = http_get_header(msg, "Content-Length")
+  if h == 0:
+    ret 0 - 1
+  n:int = _parse_int_dec(h)
+  free(h)
+  if n < 0:
+    n = 0
+  ret n
+
+fn _http_chunked_complete_index(msg:str, total:int, body_start:int) -> int:
+  if msg == 0 || body_start < 0:
+    ret 0 - 1
+  i:int = body_start
+  while i < total:
+    line_end:int = _line_end_index(msg, total, i)
+    if line_end < 0:
+      ret 0 - 1
+    sz:int = net.urls._parse_hex_slice(msg, i, line_end)
+    after_line:int = _skip_line_break(msg, total, line_end)
+    if after_line == line_end:
+      ret 0 - 1
+    if sz <= 0:
+      j:int = after_line
+      while j < total:
+        trailer_end:int = _line_end_index(msg, total, j)
+        if trailer_end < 0:
+          ret 0 - 1
+        next:int = _skip_line_break(msg, total, trailer_end)
+        if trailer_end == j:
+          ret next
+        j = next
+      ret 0 - 1
+    if after_line + sz > total:
+      ret 0 - 1
+    i = after_line + sz
+    next_data:int = _skip_line_break(msg, total, i)
+    if next_data == i:
+      ret 0 - 1
+    i = next_data
+  ret 0 - 1
+
+// HTTP server helpers.
+
+fn http_server_listen(host:str, port:int, backlog:int) -> int:
+  b:int = backlog
+  if b <= 0:
+    b = 64
+  ret net.transport.tcp_listen(host, port, b)
+
+fn http_server_accept(listener:int, timeout_ms:int) -> int:
+  if listener < 0:
+    ret net.state._get_NET_ERR()
+  cli:int = net_accept(listener)
+  if cli < 0:
+    ret net.state._get_NET_ERR()
+  if timeout_ms > 0:
+    net_set_timeout(cli, timeout_ms)
+  ret cli
+
+// Reads one HTTP request (headers + body when Content-Length is present).
+// Returns heap string (caller frees) or 0 on allocation/read failure.
+
+fn http_read_request(sock:int, max_bytes:int) -> str:
+  if sock < 0:
+    ret 0 as str
+  lim:int = max_bytes
+  if lim <= 0:
+    lim = 65536
+  out:*char = malloc(lim + 1)
+  if out == 0:
+    ret 0 as str
+  got:int = 0
+  header_end:int = 0 - 1
+  target:int = 0 - 1
+  chunk_buf:[char;2048]
+  while got < lim:
+    chunk:int = lim - got
+    if chunk > 2048:
+      chunk = 2048
+    r:int = net_recv(sock, &chunk_buf[0], chunk)
+    if r <= 0:
+      break
+    i:int = 0
+    while i < r:
+      out[got + i] = chunk_buf[i]
+      i = i + 1
+    got = got + r
+    out[got] = 0 as char
+    if header_end < 0:
+      header_end = _find_header_end_index(out, got)
+      if header_end >= 0:
+        cl:int = http_content_length(out as str)
+        if cl < 0:
+          cl = 0
+        target = header_end + cl
+        if target <= got:
+          break
+      continue
+    if target >= 0 && got >= target:
+      break
+  out[got] = 0 as char
+  ret out as str
+
+// Reads one HTTP response and stops when Content-Length or chunked framing is complete.
+// Falls back to close/timeout-delimited reads when the response has no body framing.
+
+fn http_read_response(sock:int, max_bytes:int) -> str:
+  if sock < 0:
+    ret 0 as str
+  lim:int = max_bytes
+  if lim <= 0:
+    lim = net.state._get_NET_DEFAULT_MAX_READ()
+  out:*char = malloc(lim + 1)
+  if out == 0:
+    ret 0 as str
+  got:int = 0
+  header_end:int = 0 - 1
+  target:int = 0 - 1
+  chunked:int = 0
+  chunk_buf:[char;2048]
+  while got < lim:
+    chunk:int = lim - got
+    if chunk > 2048:
+      chunk = 2048
+    r:int = net_recv(sock, &chunk_buf[0], chunk)
+    if r <= 0:
+      break
+    i:int = 0
+    while i < r:
+      out[got + i] = chunk_buf[i]
+      i = i + 1
+    got = got + r
+    out[got] = 0 as char
+    if header_end < 0:
+      header_end = _find_header_end_index(out, got)
+      if header_end >= 0:
+        te:str = http_get_header(out as str, "Transfer-Encoding")
+        if te != 0:
+          if _header_has_token(te, "chunked") != 0:
+            chunked = 1
+          free(te)
+        if chunked == 0:
+          cl:int = _http_content_length_or_missing(out as str)
+          if cl >= 0:
+            target = header_end + cl
+        if target >= 0 && got >= target:
+          break
+        if chunked != 0 && _http_chunked_complete_index(out as str, got, header_end) >= 0:
+          break
+      continue
+    if target >= 0 && got >= target:
+      break
+    if chunked != 0 && _http_chunked_complete_index(out as str, got, header_end) >= 0:
+      break
+  out[got] = 0 as char
+  ret out as str
+
+fn http_method(req:str) -> str:
+  if req == 0:
+    ret 0 as str
+  i:int = 0
+  while req[i] != 0 as char && req[i] != 32 as char && req[i] != 9 as char && req[i] != 13 as char && req[i] != 10 as char:
+    i = i + 1
+  ret _substr_dup(req, 0, i)
+
+fn http_path(req:str) -> str:
+  if req == 0:
+    ret 0 as str
+  i:int = 0
+  while req[i] != 0 as char && req[i] != 32 as char && req[i] != 9 as char && req[i] != 13 as char && req[i] != 10 as char:
+    i = i + 1
+  while req[i] == 32 as char || req[i] == 9 as char:
+    i = i + 1
+  start:int = i
+  while req[i] != 0 as char && req[i] != 32 as char && req[i] != 9 as char && req[i] != 13 as char && req[i] != 10 as char:
+    i = i + 1
+  ret _substr_dup(req, start, i)
+
+fn http_version(req:str) -> str:
+  if req == 0:
+    ret 0 as str
+  i:int = 0
+  while req[i] != 0 as char && req[i] != 32 as char && req[i] != 9 as char && req[i] != 13 as char && req[i] != 10 as char:
+    i = i + 1
+  while req[i] == 32 as char || req[i] == 9 as char:
+    i = i + 1
+  while req[i] != 0 as char && req[i] != 32 as char && req[i] != 9 as char && req[i] != 13 as char && req[i] != 10 as char:
+    i = i + 1
+  while req[i] == 32 as char || req[i] == 9 as char:
+    i = i + 1
+  start:int = i
+  while req[i] != 0 as char && req[i] != 13 as char && req[i] != 10 as char:
+    i = i + 1
+  ret _substr_dup(req, start, i)
+
+fn http_get_header(req:str, name:str) -> str:
+  if req == 0 || name == 0:
+    ret 0 as str
+  n:int = len(req)
+  i:int = 0
+  while i < n:
+    c0:int = net.transport._byte_at(req, i)
+    if c0 == 0 || c0 == 10 || c0 == 13:
+      break
+    i = i + 1
+  while i < n:
+    c1:int = net.transport._byte_at(req, i)
+    if c1 == 10 || c1 == 13:
+      i = i + 1
+    else:
+      break
+  while i < n:
+    c2:int = net.transport._byte_at(req, i)
+    if c2 == 0 || c2 == 10 || c2 == 13:
+      break
+    line_start:int = i
+    while i < n:
+      c3:int = net.transport._byte_at(req, i)
+      if c3 == 0 || c3 == 10 || c3 == 13:
+        break
+      i = i + 1
+    line_end:int = i
+    while i < n:
+      c4:int = net.transport._byte_at(req, i)
+      if c4 == 10 || c4 == 13:
+        i = i + 1
+      else:
+        break
+
+    if line_end <= line_start:
+      continue
+
+    colon:int = line_start
+    while colon < line_end:
+      if net.transport._byte_at(req, colon) == 58: // ':'
+        break
+      colon = colon + 1
+    if colon >= line_end:
+      continue
+
+    ks:int = line_start
+    while ks < colon:
+      c5:int = net.transport._byte_at(req, ks)
+      if c5 == 32 || c5 == 9:
+        ks = ks + 1
+      else:
+        break
+    ke:int = colon
+    while ke > ks:
+      c6:int = net.transport._byte_at(req, ke - 1)
+      if c6 == 32 || c6 == 9:
+        ke = ke - 1
+      else:
+        break
+    key:str = _substr_dup(req, ks, ke)
+    if key != 0 && net.transport._streq_nocase(key, name) != 0:
+      vs:int = colon + 1
+      while vs < line_end:
+        c7:int = net.transport._byte_at(req, vs)
+        if c7 == 32 || c7 == 9:
+          vs = vs + 1
+        else:
+          break
+      ve:int = line_end
+      while ve > vs:
+        c8:int = net.transport._byte_at(req, ve - 1)
+        if c8 == 32 || c8 == 9:
+          ve = ve - 1
+        else:
+          break
+      free(key)
+      ret _substr_dup(req, vs, ve)
+    if key != 0:
+      free(key)
+  ret 0 as str
+
+fn http_content_length(req:str) -> int:
+  h:str = http_get_header(req, "Content-Length")
+  if h == 0:
+    ret 0
+  n:int = _parse_int_dec(h)
+  free(h)
+  ret n
+
+fn http_status_text(code:int) -> str:
+  if code == 100:
+    ret "Continue"
+  else if code == 101:
+    ret "Switching Protocols"
+  else if code == 200:
+    ret "OK"
+  else if code == 201:
+    ret "Created"
+  else if code == 202:
+    ret "Accepted"
+  else if code == 204:
+    ret "No Content"
+  else if code == 301:
+    ret "Moved Permanently"
+  else if code == 302:
+    ret "Found"
+  else if code == 304:
+    ret "Not Modified"
+  else if code == 400:
+    ret "Bad Request"
+  else if code == 401:
+    ret "Unauthorized"
+  else if code == 403:
+    ret "Forbidden"
+  else if code == 404:
+    ret "Not Found"
+  else if code == 405:
+    ret "Method Not Allowed"
+  else if code == 409:
+    ret "Conflict"
+  else if code == 429:
+    ret "Too Many Requests"
+  else if code == 500:
+    ret "Internal Server Error"
+  else if code == 501:
+    ret "Not Implemented"
+  else if code == 503:
+    ret "Service Unavailable"
+  ret "OK"
+
+// Writes a full HTTP response.
+
+fn http_write_response_ex(sock:int, status:int, content_type:str, body:str, extra_headers:str) -> int:
+  if sock < 0:
+    ret net.state._get_NET_ERR()
+  ctype:str = content_type
+  if ctype == 0 || ctype[0] == 0 as char:
+    ctype = "text/plain; charset=utf-8"
+  payload:str = body
+  if payload == 0:
+    payload = ""
+  code_s:str = net.transport._itoa(status)
+  stxt:str = http_status_text(status)
+  clen_s:str = net.transport._itoa(len(payload))
+
+  l1:str = net.transport._join3("HTTP/1.1 ", code_s, " ")
+  l2:str = net.transport._join2(l1, stxt)
+  l3:str = net.transport._join2(l2, "\r\nServer: TezzNative/1.0\r\nConnection: close\r\nContent-Type: ")
+  l4:str = net.transport._join2(l3, ctype)
+  l5:str = net.transport._join2(l4, "\r\nContent-Length: ")
+  l6:str = net.transport._join2(l5, clen_s)
+  l7:str = 0 as str
+  if extra_headers != 0 && extra_headers[0] != 0 as char:
+    l8:str = net.transport._join2(l6, "\r\n")
+    l9:str = net.transport._join2(l8, extra_headers)
+    l7 = net.transport._join2(l9, "\r\n\r\n")
+    free(l8)
+    free(l9)
+  else:
+    l7 = net.transport._join2(l6, "\r\n\r\n")
+  resp:str = net.transport._join2(l7, payload)
+  w:int = net.transport.tcp_send_all(sock, resp as *char, len(resp))
+
+  free(code_s)
+  free(clen_s)
+  free(l1)
+  free(l2)
+  free(l3)
+  free(l4)
+  free(l5)
+  free(l6)
+  free(l7)
+  free(resp)
+
+  if w < 0:
+    ret net.state._get_NET_ERR()
+  ret net.state._get_NET_OK()
+
+fn http_write_response(sock:int, status:int, content_type:str, body:str) -> int:
+  ret http_write_response_ex(sock, status, content_type, body, "")
+
+fn http_respond_text(sock:int, status:int, text:str) -> int:
+  ret http_write_response(sock, status, "text/plain; charset=utf-8", text)
+
+fn http_respond_json(sock:int, status:int, json:str) -> int:
+  ret http_write_response(sock, status, "application/json; charset=utf-8", json)
+
+fn http_respond_not_found(sock:int) -> int:
+  ret http_respond_text(sock, 404, "Not Found")
+
+fn http_respond_bad_request(sock:int) -> int:
+  ret http_respond_text(sock, 400, "Bad Request")
+
+// ------------------------------
+// HTTP routing helpers
+// ------------------------------
+
+// Normalize request/path input to route path:
+// - accepts raw request line or full request buffer
+// - strips query/fragment
+// - guarantees "/" for empty path

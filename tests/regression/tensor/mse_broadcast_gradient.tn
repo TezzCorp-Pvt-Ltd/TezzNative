@@ -1,0 +1,25 @@
+import "tensor"
+
+fn main() -> int:
+  tensor.tape_init()
+  pred:Tensor = tensor.tensor_zeros_2d(1, 2)
+  pred = tensor.tensor_require_grad(pred)
+  target:Tensor = tensor.tensor_ones_2d(2, 2)
+  target = tensor.tensor_require_grad(target)
+  loss:Tensor = tensor.tensor_mse_loss(pred, target)
+  tensor.tensor_backward(loss)
+  failed:int = 0
+  if tensor.tensor_get1(loss, 0) != 1.0 || tensor.tensor_grad_item(pred, 0) != 0.0 - 1.0 || tensor.tensor_grad_item(pred, 1) != 0.0 - 1.0:
+    failed = 1
+  i:int = 0
+  while i < 4:
+    if tensor.tensor_grad_item(target, i) != 0.5:
+      failed = 1
+    i = i + 1
+  tensor.tape_reset()
+  tensor.tensor_free_tensor(loss)
+  tensor.tensor_free_tensor(target)
+  tensor.tensor_free_tensor(pred)
+  if failed != 0:
+    say "FAIL: broadcast MSE must normalize and collapse both operand gradients"
+  ret failed

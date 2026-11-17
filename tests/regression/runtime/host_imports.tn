@@ -1,0 +1,11 @@
+extern fn get_env(name:str) -> str
+
+fn main() -> int:
+  path:str = get_env("PATH")
+  if path == 0: ret 1
+  if len(path) == 0: ret 2
+  missing:str = get_env("TEZZ_NATIVE_TEST_VARIABLE_THAT_DOES_NOT_EXIST")
+  if missing != 0: ret 3
+  unsafe:
+    free(path as *char)
+  ret 0

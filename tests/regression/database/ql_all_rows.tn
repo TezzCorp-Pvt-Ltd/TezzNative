@@ -1,0 +1,28 @@
+import "tezzdb"
+import "tezzdbql"
+
+fn main() -> int:
+  unsafe:
+    remove("ql_all.tdb")
+    remove("ql_all.tdb.wal")
+    db:*TezzDb = tezzdb.open("ql_all.tdb")
+    if db == 0: ret 1
+    tezzdb.table_create(db, "items")
+    i:int = 0
+    while i < 3:
+      tezzdb.insert(db, "items", "{\"flag\":\"old\",\"kept\":7}")
+      i = i + 1
+    result:*TzQueryResult = tezzdbql.db_query0(db as *char, "SELECT * FROM items WHERE id = 2 LIMIT 1;")
+    if tezzdbql.db_result_row_count(result) != 1: ret 2
+    tezzdbql.db_result_free(result)
+    if tezzdbql.db_exec0(db as *char, "UPDATE items SET flag = 'new'") != 3: ret 3
+    row:str = tezzdb.get(db, "items", 2)
+    if tezzdb.row_get_int(row, "kept") != 7: ret 4
+    free(row)
+    result = tezzdbql.db_query0(db as *char, "SELECT * FROM items LIMIT 0")
+    if tezzdbql.db_result_row_count(result) != 0: ret 5
+    tezzdbql.db_result_free(result)
+    if tezzdbql.db_exec0(db as *char, "DELETE FROM items WHERE flag = 'new'") != 3: ret 6
+    if tezzdb.table_row_count(db, "items") != 0: ret 7
+    tezzdb.close(db)
+  ret 0

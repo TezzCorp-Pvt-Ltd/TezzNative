@@ -1339,6 +1339,7 @@ fn parse_name_ver(nv:str, out_name:*char, out_ver:*char) -> int:
     ret 0
   if str_has_char(nv, 64) != 0:
     ret parse_namever_token(nv, out_name, out_ver)
+  if package_name_valid(nv) == 0: ret 0
   copy_into_buf(out_name, nv, 128)
   copy_into_buf(out_ver, "0.1.0", 64)
   ret 1
@@ -1364,9 +1365,23 @@ fn copy_into_buf(dst:*char, src:str, max_len:int) -> int:
   dst[i] = 0 as char
   ret 1
 
+fn package_name_valid(name:str) -> int:
+  if name == 0: ret 0
+  n:int = len(name)
+  if n < 1 || n > 127: ret 0
+  i:int = 0
+  while i < n:
+    c:int = name[i] as int
+    letter:int = (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95
+    if letter == 0 && (i == 0 || !((c >= 48 && c <= 57) || c == 45)): ret 0
+    i = i + 1
+  ret 1
+
 fn parse_namever_token(tok:str, out_name:*char, out_ver:*char) -> int:
   if tok == 0 || out_name == 0 || out_ver == 0:
     ret 0
+  n:int = len(tok)
+  if n < 3 || n > 191: ret 0
   tok2:str = str_join2("", tok)
   if tok2 == 0:
     ret 0
@@ -1377,9 +1392,24 @@ fn parse_namever_token(tok:str, out_name:*char, out_ver:*char) -> int:
       at = i
       break
     i = i + 1
-  if at <= 0:
+  if at <= 0 || at > 127 || n - at - 1 < 1 || n - at - 1 > 63:
     free(tok2)
     ret 0
+  // Validate the complete token before writing either fixed-size output.
+  tok2[at] = 0 as char
+  if package_name_valid(tok2) == 0:
+    free(tok2)
+    ret 0
+  tok2[at] = 64 as char
+  i = at + 1
+  while i < n:
+    c:int = tok2[i] as int
+    digit:int = c >= 48 && c <= 57
+    letter:int = (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
+    if (i == at + 1 && digit == 0) || (digit == 0 && letter == 0 && c != 46 && c != 43 && c != 45):
+      free(tok2)
+      ret 0
+    i = i + 1
   j:int = 0
   while j < at:
     out_name[j] = tok2[j]
@@ -1724,6 +1754,186 @@ fn cmd_add() -> int:
     ret 0 - 1
   ret cmd_get()
 
+struct PackageParts:
+  count:int
+  paths:[str;512]
+  hashes:[int;512]
+
+fn package_parts_free(parts:*PackageParts) -> int:
+  if parts == 0: ret 0
+  i:int = 0
+  while i < (*parts).count:
+    free((*parts).paths[i])
+    i = i + 1
+  free(parts)
+  ret 0
+
+fn package_component_valid(name:str, path:str) -> int:
+  if package_name_valid(name) == 0 || path == 0: ret 0
+  n:int = len(path)
+  prefix:int = len(name)
+  if n < prefix + 5 || n > 255 || ends_with_tn(path) == 0: ret 0
+  if starts_with(path, name) == 0 || path[prefix] != 47: ret 0
+  segment:int = 0
+  i:int = 0
+  while i < n - 3:
+    c:int = path[i] as int
+    if c == 47:
+      if segment == 0: ret 0
+      segment = 0
+    else:
+      if !((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95 || c == 45): ret 0
+      segment = segment + 1
+    i = i + 1
+  ret segment > 0
+
+fn package_parts_read(facade:str, name:str) -> *PackageParts:
+  data:str = io.read_all(facade)
+  if data == 0: ret 0 as *PackageParts
+  if len(data) > 1048576:
+    free(data)
+    ret 0 as *PackageParts
+  parts:*PackageParts = (*PackageParts)malloc(sizeof(PackageParts))
+  if parts == 0:
+    free(data)
+    ret 0 as *PackageParts
+  (*parts).count = 0
+  cursor:int = 0
+  valid:int = 1
+  while 1:
+    line:str = next_manifest_line(data, &cursor)
+    if line == 0: break
+    if starts_with(line, "// package-file") != 0:
+      if starts_with(line, "// package-file ") == 0 || (*parts).count >= 512:
+        valid = 0
+      else:
+        end:int = 16
+        while line[end] != 0 && line[end] != 32 && line[end] != 9: end = end + 1
+        path:str = substr_dup(line, 16, end)
+        while line[end] == 32 || line[end] == 9: end = end + 1
+        checksum:str = substr_dup(line, end, len(line))
+        if package_component_valid(name, path) == 0 || is_hex8(checksum) == 0:
+          valid = 0
+        else:
+          i:int = 0
+          while i < (*parts).count:
+            if streq((*parts).paths[i], path) != 0: valid = 0
+            i = i + 1
+        if valid != 0:
+          (*parts).paths[(*parts).count] = path
+          (*parts).hashes[(*parts).count] = parse_hex(checksum)
+          (*parts).count = (*parts).count + 1
+        else:
+          free(path)
+        free(checksum)
+    free(line)
+    if valid == 0: break
+  free(data)
+  if valid == 0:
+    package_parts_free(parts)
+    ret 0 as *PackageParts
+  ret parts
+
+fn package_parent_dirs(root:str, relative:str) -> int:
+  if ensure_dir(root) != 0: ret -1
+  i:int = 0
+  while relative[i] != 0:
+    if relative[i] == 47:
+      component:str = substr_dup(relative, 0, i)
+      directory:str = path_join(root, component)
+      free(component)
+      result:int = ensure_dir(directory)
+      free(directory)
+      if result != 0: ret -1
+    i = i + 1
+  ret 0
+
+fn package_stage_part(root:str, relative:str, want:int, sdk:str, url:str) -> int:
+  if package_parent_dirs(root, relative) != 0: ret -1
+  stage:str = path_join(root, relative)
+  if path_exists(stage) != 0 && crc32_source_file(stage) == want:
+    free(stage)
+    ret 0
+  temporary:str = str_join2(stage, ".tmp")
+  if path_exists(temporary) != 0: remove(temporary)
+  copied:int = 0
+  if sdk != 0 && sdk[0] != 0:
+    library:str = path_join(sdk, "lib")
+    source:str = path_join(library, relative)
+    free(library)
+    if path_exists(source) != 0 && crc32_source_file(source) == want:
+      if io.copy_file(source, temporary) >= 0: copied = 1
+    free(source)
+  if copied == 0 && url != 0:
+    end:int = len(url) - 1
+    while end >= 0 && url[end] != 47: end = end - 1
+    if end >= 0:
+      base:str = substr_dup(url, 0, end + 1)
+      source_url:str = str_join2(base, relative)
+      free(base)
+      if net.download(source_url, temporary) == 0: copied = 1
+      free(source_url)
+  result:int = -1
+  if copied != 0 && path_exists(temporary) != 0 && crc32_source_file(temporary) == want:
+    if path_exists(stage) != 0: remove(stage)
+    if io.move_file(temporary, stage) == 0: result = 0
+  if path_exists(temporary) != 0: remove(temporary)
+  free(stage)
+  free(temporary)
+  ret result
+
+fn package_parts_install(facade:str, name:str, cache:str, sdk:str, url:str, destination:str) -> int:
+  parts:*PackageParts = package_parts_read(facade, name)
+  if parts == 0:
+    say "invalid package component manifest"
+    ret -1
+  root:str = str_join2(cache, ".parts")
+  result:int = 0
+  i:int = 0
+  // Verify the complete inventory before installing any component or facade.
+  while i < (*parts).count:
+    if package_stage_part(root, (*parts).paths[i], (*parts).hashes[i], sdk, url) != 0:
+      say "package component missing or checksum mismatch:", (*parts).paths[i]
+      result = -1
+      break
+    i = i + 1
+  i = 0
+  while result == 0 && i < (*parts).count:
+    relative:str = (*parts).paths[i]
+    if package_parent_dirs(destination, relative) != 0:
+      result = -1
+      break
+    source:str = path_join(root, relative)
+    target:str = path_join(destination, relative)
+    if io.copy_file(source, target) < 0: result = -1
+    if result == 0 && crc32_source_file(target) != (*parts).hashes[i]: result = -1
+    free(source)
+    free(target)
+    i = i + 1
+  free(root)
+  package_parts_free(parts)
+  ret result
+
+fn package_parts_remove(facade:str, name:str, destination:str) -> int:
+  if path_exists(facade) == 0: ret 0
+  parts:*PackageParts = package_parts_read(facade, name)
+  if parts == 0: ret -1
+  result:int = 0
+  i:int = 0
+  while i < (*parts).count:
+    target:str = path_join(destination, (*parts).paths[i])
+    if path_exists(target) != 0 && crc32_source_file(target) != (*parts).hashes[i]: result = -1
+    free(target)
+    i = i + 1
+  i = 0
+  while result == 0 && i < (*parts).count:
+    target:str = path_join(destination, (*parts).paths[i])
+    if path_exists(target) != 0 && remove(target) != 0: result = -1
+    free(target)
+    i = i + 1
+  package_parts_free(parts)
+  ret result
+
 fn cmd_remove() -> int:
   if user_args_count() < 2:
     say "tezz remove <name>"
@@ -1738,18 +1948,30 @@ fn cmd_remove() -> int:
       ret 0 - 1
     dep_name = namebuf
   else:
+    if package_name_valid(raw) == 0:
+      say "remove: invalid package name"
+      ret -1
     copy_into_buf(namebuf, raw, 128)
+    dep_name = namebuf
   if dep_name == 0 || dep_name[0] == 0:
     say "remove: empty package name"
     ret 0 - 1
-  if rewrite_tezz_mod_without_dep(dep_name) != 0:
-    ret 0 - 1
-  if rewrite_tezz_lock_without_dep(dep_name) != 0:
-    ret 0 - 1
   lib0:str = str_join3("lib/", dep_name, "")
   libp:str = str_join2(lib0, ".tn")
+  if package_parts_remove(libp, dep_name, "lib") != 0:
+    say "remove: invalid manifest or modified package component"
+    free(lib0)
+    free(libp)
+    ret -1
+  if rewrite_tezz_mod_without_dep(dep_name) != 0 || rewrite_tezz_lock_without_dep(dep_name) != 0:
+    free(lib0)
+    free(libp)
+    ret -1
   if path_exists(libp) != 0:
-    remove(libp)
+    if remove(libp) != 0:
+      free(lib0)
+      free(libp)
+      ret -1
   free(lib0)
   free(libp)
   say "ok"
@@ -2031,25 +2253,21 @@ fn cmd_get() -> int:
 
   out0:str = path_join(dest_lib, namebuf)
   out_path:str = str_join2(out0, ".tn")
-  copy_ok:int = io.copy_file(cache, out_path)
+  copy_ok:int = -1
+  if package_parts_install(cache, namebuf, cache, sdk_root, url, dest_lib) == 0:
+    copy_ok = io.copy_file(cache, out_path)
+    if copy_ok >= 0 && crc32_source_file(out_path) != crc32_source_file(cache): copy_ok = -1
   if copy_ok < 0:
-    // If SDK path is read-only (common in Program Files), keep cache usable.
-    if project_mode != 0:
-      ensure_dir("lib")
-      out_local0:str = str_join3("lib/", namebuf, "")
-      out_local:str = str_join2(out_local0, ".tn")
-      if io.copy_file(cache, out_local) < 0:
-        warn_copy:str = str_join3("warning: install target not writable: ", out_path, "")
-        say warn_copy
-        free(warn_copy)
-        say "warning: package kept in .tezz/cache and will resolve via lock/cache fallback"
-      free(out_local0)
-      free(out_local)
-    else:
-      warn_copy2:str = str_join3("warning: install target not writable: ", out_path, "")
-      say warn_copy2
-      free(warn_copy2)
-      say "warning: package kept in .tezz/cache"
+    say "package installation failed; dependency metadata was not updated"
+    free(out0)
+    free(out_path)
+    free(base1)
+    free(base2)
+    free(cache)
+    free(tmp)
+    if dest_lib_owned != 0: free(dest_lib)
+    if mod_path_owned != 0: free(mod_path)
+    ret -1
   free(out0)
 
   // compute checksum if missing

@@ -1,0 +1,419 @@
+// tensor implementation: tape.
+import "simd"
+import "math"
+import "io"
+import "str"
+import "tensor.numeric"
+import "tensor.operators"
+import "tensor.state"
+import "tensor.storage"
+
+fn tape_get() -> *TapeNode:
+  if (*tensor.state._state__tape_raw()) == 0 as *TapeNode:
+    (*tensor.state._state__tape_raw()) = (*TapeNode)malloc((*tensor.state._state__tape_cap()) * sizeof(TapeNode))
+    if (*tensor.state._state__tape_raw()) == 0 as *TapeNode: (*tensor.state._state__tape_error()) = 1
+  ret (*tensor.state._state__tape_raw())
+
+fn tape_init() -> int:
+  tape_reset()
+  if tape_get() == 0 as *TapeNode: ret 0 - 1
+  ret 0
+
+fn tape_reset() -> int:
+  if (*tensor.state._state__tape_raw()) != 0 as *TapeNode:
+    i:int = 0
+    while i < (*tensor.state._state__tape_len()):
+      node:*TapeNode = (*tensor.state._state__tape_raw()) + i
+      _tape_free_saved_tensor(node.arg0)
+      _tape_free_saved_tensor(node.arg1)
+      _tape_free_saved_tensor(node.arg2)
+      _tape_free_saved_tensor(node.saved_out)
+      tensor.storage._tensor_gradient_release(node.out_grad)
+      tensor.storage._tensor_gradient_release(node.arg0_grad)
+      tensor.storage._tensor_gradient_release(node.arg1_grad)
+      tensor.storage._tensor_gradient_release(node.arg2_grad)
+      i = i + 1
+  (*tensor.state._state__tape_len()) = 0
+  (*tensor.state._state__tape_error()) = 0
+  ret 0
+
+fn tape_set_enabled(en:int) -> int:
+  (*tensor.state._state__tape_enabled()) = en
+  ret 0
+
+fn tape_is_enabled() -> int:
+  ret (*tensor.state._state__tape_enabled())
+
+fn tape_len() -> int:
+  ret (*tensor.state._state__tape_len())
+
+// Safe Struct Load and Store helpers
+
+fn tensor_load_p(p:*Tensor) -> Tensor:
+  t:Tensor
+  unsafe:
+    t.data = p.data
+    t.ndim = p.ndim
+    t.shape0 = p.shape0
+    t.shape1 = p.shape1
+    t.shape2 = p.shape2
+    t.shape3 = p.shape3
+    t.shape4 = p.shape4
+    t.shape5 = p.shape5
+    t.shape6 = p.shape6
+    t.shape7 = p.shape7
+    t.stride0 = p.stride0
+    t.stride1 = p.stride1
+    t.stride2 = p.stride2
+    t.stride3 = p.stride3
+    t.stride4 = p.stride4
+    t.stride5 = p.stride5
+    t.stride6 = p.stride6
+    t.stride7 = p.stride7
+    t.offset = p.offset
+    t.size = p.size
+    t.dtype = p.dtype
+    t.is_view = p.is_view
+    t.requires_grad = p.requires_grad
+    t.grad = p.grad
+    t.node_id = p.node_id
+  ret t
+
+fn tensor_store_p(dst:*Tensor, src:Tensor) -> int:
+  unsafe:
+    dst.data = src.data
+    dst.ndim = src.ndim
+    dst.shape0 = src.shape0
+    dst.shape1 = src.shape1
+    dst.shape2 = src.shape2
+    dst.shape3 = src.shape3
+    dst.shape4 = src.shape4
+    dst.shape5 = src.shape5
+    dst.shape6 = src.shape6
+    dst.shape7 = src.shape7
+    dst.stride0 = src.stride0
+    dst.stride1 = src.stride1
+    dst.stride2 = src.stride2
+    dst.stride3 = src.stride3
+    dst.stride4 = src.stride4
+    dst.stride5 = src.stride5
+    dst.stride6 = src.stride6
+    dst.stride7 = src.stride7
+    dst.offset = src.offset
+    dst.size = src.size
+    dst.dtype = src.dtype
+    dst.is_view = src.is_view
+    dst.requires_grad = src.requires_grad
+    dst.grad = src.grad
+    dst.node_id = src.node_id
+  ret 0
+
+fn _tape_save_tensor(t:Tensor) -> *Tensor:
+  p:*Tensor = (*Tensor)malloc(sizeof(Tensor))
+  if p == 0 as *Tensor:
+    (*tensor.state._state__tape_error()) = 1
+    ret p
+  value:Tensor = tensor.storage._tensor_clone_raw(t)
+  if t.size > 0 && value.data == 0 as *float:
+    free(p as *char)
+    (*tensor.state._state__tape_error()) = 1
+    ret 0 as *Tensor
+  tensor_store_p(p, value)
+  ret p
+
+fn _tape_free_saved_tensor(p:*Tensor) -> int:
+  unsafe:
+    if p != 0 as *Tensor:
+      t:Tensor = tensor_load_p(p)
+      tensor.storage.tensor_free_tensor(t)
+      free(p as *char)
+  ret 0
+
+fn tensor_zeros_raw(ndim:int, d0:int, d1:int, d2:int, d3:int) -> Tensor:
+  t:Tensor = tensor.storage.tensor_empty_raw(ndim, d0, d1, d2, d3)
+  tensor.storage.tensor_fill(t, 0.0)
+  ret t
+
+fn tensor_ones_raw(ndim:int, d0:int, d1:int, d2:int, d3:int) -> Tensor:
+  t:Tensor = tensor.storage.tensor_empty_raw(ndim, d0, d1, d2, d3)
+  tensor.storage.tensor_fill(t, 1.0)
+  ret t
+
+fn tensor_require_grad(t:Tensor) -> Tensor:
+  out:Tensor = t
+  if out.data == 0 as *float || out.size <= 0:
+    out.requires_grad = 0
+    ret out
+  if out.grad == 0 as *Tensor:
+    owner:*TensorGradient = (*TensorGradient)malloc(sizeof(TensorGradient))
+    if owner == 0 as *TensorGradient:
+      (*tensor.state._state__tape_error()) = 1
+      ret out
+    g_ptr:*Tensor = (*Tensor)owner
+    value:Tensor = tensor.storage._tensor_zeros_like(out)
+    if value.data == 0 as *float:
+      free(g_ptr as *char)
+      (*tensor.state._state__tape_error()) = 1
+      ret out
+    tensor_store_p(g_ptr, value)
+    owner.refs = 1
+    out.grad = g_ptr
+  out.requires_grad = 1
+  ret out
+
+fn tensor_get_grad(t:Tensor) -> Tensor:
+  if t.grad != 0 as *Tensor:
+    out:Tensor = tensor_load_p(t.grad)
+    out.is_view = 1
+    out.grad = 0 as *Tensor
+    out.requires_grad = 0
+    out.node_id = 0
+    ret out
+  ret tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0)
+
+fn tensor_grad_item(t:Tensor, idx:int) -> float:
+  unsafe:
+    if t.grad != 0 as *Tensor:
+      if idx >= 0 && idx < t.grad.size && t.grad.data != 0 as *float:
+        ret t.grad.data[idx]
+  ret 0.0
+
+fn tensor_zero_grad_p(p:*Tensor) -> int:
+  unsafe:
+    if p != 0 as *Tensor && p.grad != 0 as *Tensor:
+      g:*Tensor = p.grad
+      if g.data != 0 as *float:
+        i:int = 0
+        while i < g.size:
+          g.data[i] = 0.0
+          i = i + 1
+  ret 0
+
+fn tensor_zero_grad(t:Tensor) -> int:
+  unsafe:
+    if t.grad != 0 as *Tensor:
+      g:*Tensor = t.grad
+      if g.data != 0 as *float:
+        i:int = 0
+        while i < g.size:
+          g.data[i] = 0.0
+          i = i + 1
+  ret 0
+
+fn tensor_accumulate_grad(target_grad:*Tensor, g:Tensor) -> int:
+  if target_grad == 0 as *Tensor || g.data == 0 as *float:
+    ret 0 - 1
+  if target_grad.size != g.size || target_grad.data == 0 as *float:
+    ret 0 - 1
+  i:int = 0
+  while i < g.size:
+    target_grad.data[i] = target_grad.data[i] + g.data[tensor.storage._tensor_unravel_offset(g, i)]
+    i = i + 1
+  ret 0
+
+// Automatic broadcast gradient collapse
+
+fn tensor_collapse_to_shape(grad:Tensor, target:Tensor) -> Tensor:
+  out:Tensor = tensor.storage._tensor_zeros_like(target)
+  if out.data == 0 as *float || grad.data == 0 as *float || grad.ndim < target.ndim:
+    ret out
+  i:int = 0
+  while i < grad.size:
+    dst:int = tensor.numeric._tensor_broadcast_offset(out, grad, i)
+    if dst < 0 || dst >= out.size:
+      tensor.storage.tensor_free_tensor(out)
+      ret tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0)
+    out.data[dst] = out.data[dst] + grad.data[tensor.storage._tensor_unravel_offset(grad, i)]
+    i = i + 1
+  ret out
+
+// Tape recording helpers
+
+fn _tape_next() -> *TapeNode:
+  if (*tensor.state._state__tape_enabled()) == 0: ret 0 as *TapeNode
+  if (*tensor.state._state__tape_len()) >= (*tensor.state._state__tape_cap()):
+    (*tensor.state._state__tape_error()) = 1
+    ret 0 as *TapeNode
+  tape:*TapeNode = tape_get()
+  if tape == 0 as *TapeNode: ret tape
+  node:*TapeNode = tape + (*tensor.state._state__tape_len())
+  node.op_type = 0
+  node.out_grad = 0 as *Tensor
+  node.has_arg0 = 0
+  node.arg0_grad = 0 as *Tensor
+  node.arg0 = 0 as *Tensor
+  node.has_arg1 = 0
+  node.arg1_grad = 0 as *Tensor
+  node.arg1 = 0 as *Tensor
+  node.arg2_grad = 0 as *Tensor
+  node.arg2 = 0 as *Tensor
+  node.saved_out = 0 as *Tensor
+  node.scalar_val = 0.0
+  node.axis = 0
+  node.keepdim = 0
+  node.active = 0
+  (*tensor.state._state__tape_len()) = (*tensor.state._state__tape_len()) + 1
+  ret node
+
+fn _tape_save_layout(t:Tensor) -> *Tensor:
+  p:*Tensor = (*Tensor)malloc(sizeof(Tensor))
+  if p == 0 as *Tensor:
+    (*tensor.state._state__tape_error()) = 1
+    ret p
+  layout:Tensor = t
+  layout.data = 0 as *float
+  layout.grad = 0 as *Tensor
+  layout.requires_grad = 0
+  layout.is_view = 1
+  tensor_store_p(p, layout)
+  ret p
+
+fn tape_record_binary(op:int, out:Tensor, arg0:Tensor, arg1:Tensor, s:float, ax:int, kd:int) -> int:
+  node:*TapeNode = _tape_next()
+  if node == 0 as *TapeNode: ret 0 - 1
+  node.op_type = op
+  node.out_grad = out.grad
+  node.has_arg0 = 1
+  node.arg0_grad = arg0.grad
+  node.arg0 = _tape_save_tensor(arg0)
+  node.has_arg1 = 1
+  node.arg1_grad = arg1.grad
+  node.arg1 = _tape_save_tensor(arg1)
+  node.scalar_val = s
+  node.axis = ax
+  node.keepdim = kd
+  tensor.storage._tensor_gradient_retain(node.out_grad)
+  tensor.storage._tensor_gradient_retain(node.arg0_grad)
+  tensor.storage._tensor_gradient_retain(node.arg1_grad)
+  if (*tensor.state._state__tape_error()) != 0: ret 0 - 1
+  ret 0
+
+fn tape_record_unary(op:int, out:Tensor, arg0:Tensor, saved_out:Tensor, s:float, ax:int, kd:int) -> int:
+  node:*TapeNode = _tape_next()
+  if node == 0 as *TapeNode: ret 0 - 1
+  node.op_type = op
+  node.out_grad = out.grad
+  node.has_arg0 = 1
+  node.arg0_grad = arg0.grad
+  node.arg0 = _tape_save_tensor(arg0)
+  if saved_out.data != 0 as *float:
+    node.saved_out = _tape_save_tensor(saved_out)
+  node.scalar_val = s
+  node.axis = ax
+  node.keepdim = kd
+  tensor.storage._tensor_gradient_retain(node.out_grad)
+  tensor.storage._tensor_gradient_retain(node.arg0_grad)
+  if (*tensor.state._state__tape_error()) != 0: ret 0 - 1
+  ret 0
+
+// Loss Functions with Autograd Tape Integration
+
+fn _tape_record_ternary(op:int, out:Tensor, a:Tensor, b:Tensor, c:Tensor, scalar:float) -> int:
+  if tape_record_binary(op, out, a, b, scalar, 0, 0) != 0:
+    ret 0 - 1
+  node:*TapeNode = tape_get() + ((*tensor.state._state__tape_len()) - 1)
+  node.arg2 = _tape_save_tensor(c)
+  node.arg2_grad = c.grad
+  tensor.storage._tensor_gradient_retain(node.arg2_grad)
+  if (*tensor.state._state__tape_error()) != 0: ret 0 - 1
+  ret 0
+
+fn _tape_record_view(out:Tensor, parent:Tensor) -> int:
+  node:*TapeNode = _tape_next()
+  if node == 0 as *TapeNode: ret 0 - 1
+  node.op_type = (*tensor.state._state_AUTOGRAD_OP_VIEW())
+  node.out_grad = out.grad
+  node.has_arg0 = 1
+  node.arg0_grad = parent.grad
+  node.arg0 = _tape_save_layout(parent)
+  node.saved_out = _tape_save_layout(out)
+  tensor.storage._tensor_gradient_retain(node.out_grad)
+  tensor.storage._tensor_gradient_retain(node.arg0_grad)
+  if (*tensor.state._state__tape_error()) != 0: ret 0 - 1
+  ret 0
+
+fn tensor_mse_loss(pred:Tensor, target:Tensor) -> Tensor:
+  diff:Tensor = tensor.numeric._tensor_sub_raw(pred, target)
+  if diff.data == 0 as *float || diff.size <= 0:
+    ret tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0)
+  diff_sq:Tensor = tensor.numeric._tensor_mul_raw(diff, diff)
+  loss_val:float = tensor.numeric.tensor_mean_all(diff_sq)
+  tensor.storage.tensor_free_tensor(diff)
+  tensor.storage.tensor_free_tensor(diff_sq)
+
+  loss:Tensor = tensor.storage.tensor_1d(1)
+  tensor.storage.tensor_set1(loss, 0, loss_val)
+
+  if (*tensor.state._state__tape_enabled()) != 0 && (pred.requires_grad != 0 || target.requires_grad != 0):
+    loss = tensor_require_grad(loss)
+    tape_record_binary((*tensor.state._state_AUTOGRAD_OP_MSE_LOSS()), loss, pred, target, 0.0, 0, 0)
+  ret loss
+
+fn tensor_cross_entropy_loss(logits:Tensor, target_probs:Tensor) -> Tensor:
+  if logits.ndim < 1 || logits.data == 0 as *float || target_probs.data == 0 as *float || logits.size <= 0 || logits.ndim != target_probs.ndim:
+    ret tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0)
+  axis:int = 0
+  while axis < logits.ndim:
+    if tensor.storage.tensor_shape(logits, axis) != tensor.storage.tensor_shape(target_probs, axis):
+      ret tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0)
+    axis = axis + 1
+  d:int = tensor.storage.tensor_shape(logits, logits.ndim - 1)
+  rows:int = logits.size / d
+  previous_recording:int = (*tensor.state._state__tape_enabled())
+  (*tensor.state._state__tape_enabled()) = 0
+  probs:Tensor = tensor.operators.tensor_softmax(logits, logits.ndim - 1)
+  (*tensor.state._state__tape_enabled()) = previous_recording
+  total_loss:float = 0.0
+  row:int = 0
+  while row < rows:
+    max_v:float = logits.data[tensor.storage._tensor_unravel_offset(logits, row * d)]
+    j:int = 1
+    while j < d:
+      value:float = logits.data[tensor.storage._tensor_unravel_offset(logits, row * d + j)]
+      if value > max_v: max_v = value
+      j = j + 1
+    sum_exp:float = 0.0
+    j = 0
+    while j < d:
+      sum_exp = sum_exp + math.exp(logits.data[tensor.storage._tensor_unravel_offset(logits, row * d + j)] - max_v)
+      j = j + 1
+    log_sum:float = math.log(sum_exp)
+    j = 0
+    while j < d:
+      value:float = logits.data[tensor.storage._tensor_unravel_offset(logits, row * d + j)]
+      target:float = target_probs.data[tensor.storage._tensor_unravel_offset(target_probs, row * d + j)]
+      total_loss = total_loss - target * ((value - max_v) - log_sum)
+      j = j + 1
+    row = row + 1
+  loss:Tensor = tensor.storage.tensor_1d(1)
+  tensor.storage.tensor_set1(loss, 0, total_loss / (rows as float))
+  if (*tensor.state._state__tape_enabled()) != 0 && (logits.requires_grad != 0 || target_probs.requires_grad != 0):
+    loss = tensor_require_grad(loss)
+    if tape_record_unary((*tensor.state._state_AUTOGRAD_OP_CROSS_ENTROPY()), loss, logits, probs, rows as float, 0, 0) == 0:
+      node:*TapeNode = tape_get() + ((*tensor.state._state__tape_len()) - 1)
+      node.has_arg1 = 1
+      node.arg1_grad = target_probs.grad
+      node.arg1 = _tape_save_tensor(target_probs)
+      tensor.storage._tensor_gradient_retain(node.arg1_grad)
+  tensor.storage.tensor_free_tensor(probs)
+  ret loss
+
+fn tensor_sum_all_t(a:Tensor) -> Tensor:
+  s_val:float = tensor.numeric.tensor_sum_all(a)
+  c:Tensor = tensor.storage.tensor_1d(1)
+  tensor.storage.tensor_set1(c, 0, s_val)
+  if (*tensor.state._state__tape_enabled()) != 0 && a.requires_grad != 0:
+    c = tensor_require_grad(c)
+    tape_record_unary((*tensor.state._state_AUTOGRAD_OP_SUM_ALL()), c, a, tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0), 0.0, 0, 0)
+  ret c
+
+fn tensor_mean_all_t(a:Tensor) -> Tensor:
+  m_val:float = tensor.numeric.tensor_mean_all(a)
+  c:Tensor = tensor.storage.tensor_1d(1)
+  tensor.storage.tensor_set1(c, 0, m_val)
+  if (*tensor.state._state__tape_enabled()) != 0 && a.requires_grad != 0:
+    c = tensor_require_grad(c)
+    tape_record_unary((*tensor.state._state_AUTOGRAD_OP_MEAN_ALL()), c, a, tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0), 0.0, 0, 0)
+  ret c
+
+// Reverse-Mode Backward Pass Execution

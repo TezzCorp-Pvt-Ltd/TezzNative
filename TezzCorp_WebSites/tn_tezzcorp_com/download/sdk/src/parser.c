@@ -582,6 +582,9 @@ static Expr* parse_unary(Parser* P){
      free h      -> free(h)
   */
   if(tok_is(P, TK_MALLOC) || tok_is(P, TK_FREE)){
+    Lexer next = P->lex;
+    lex_next(&next);
+    if(next.cur.kind==TK_LPAREN) return parse_postfix(P);
     SrcLoc loc = tok_loc(&P->lex);
     Token t = P->lex.cur;
     lex_next(&P->lex);

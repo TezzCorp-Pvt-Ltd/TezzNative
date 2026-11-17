@@ -18,6 +18,10 @@ machine-readable layout checks on Windows and Linux x64.
 - Fixed arrays are inline storage in structs and keep the element alignment.
 - Struct fields are laid out in declaration order with C-style alignment and
   tail padding to the maximum field alignment.
+- Aggregate layouts are finalized after imports and forward declarations are
+  complete, including nested fixed arrays and embedded base structs. `sizeof`
+  and `alignof` use these completed layouts. Recursive pointer fields are legal;
+  recursive by-value fields are rejected because they have no finite size.
 - Function pointers are represented as native C function pointers when used
   through pointer types.
 

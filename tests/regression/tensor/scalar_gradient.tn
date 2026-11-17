@@ -1,0 +1,26 @@
+import "tensor"
+
+fn main() -> int:
+  tensor.tape_init()
+  x:Tensor = tensor.tensor_ones_1d(3)
+  x = tensor.tensor_require_grad(x)
+  shifted:Tensor = tensor.tensor_add_scalar(x, 5.0)
+  y:Tensor = tensor.tensor_sub_scalar(shifted, 2.0)
+  loss:Tensor = tensor.tensor_sum_all_t(y)
+  status:int = tensor.tensor_backward(loss)
+  failed:int = 0
+  i:int = 0
+  while i < 3:
+    if tensor.tensor_get1(y, i) != 4.0 || tensor.tensor_grad_item(x, i) != 1.0:
+      failed = 1
+    i = i + 1
+  if status != 0:
+    failed = 1
+  tensor.tape_reset()
+  tensor.tensor_free_tensor(loss)
+  tensor.tensor_free_tensor(y)
+  tensor.tensor_free_tensor(shifted)
+  tensor.tensor_free_tensor(x)
+  if failed != 0:
+    say "FAIL: scalar add/subtract must preserve the input gradient"
+  ret failed

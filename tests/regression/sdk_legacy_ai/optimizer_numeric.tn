@@ -1,0 +1,31 @@
+import "optim"
+import "tensor"
+import "math"
+
+fn main() -> int:
+  unsafe:
+    parameters:[float;1] = [1.0]
+    gradients:[float;1] = [2.0]
+    m:*float = optim.alloc_state(1)
+    v:*float = optim.alloc_state(1)
+    if m == 0 || v == 0: ret 1
+    if optim.adam_default(&parameters[0], &gradients[0], m, v, 1, 0.1, 1) != 0: ret 2
+    if math.absf(parameters[0] - 0.9) > 0.000001: ret 3
+    if optim.adam_default(&parameters[0], &gradients[0], m, v, 1, 0.1, 2) != 0: ret 4
+    if math.absf(parameters[0] - 0.8) > 0.000001: ret 5
+    optim.free_state(m)
+    optim.free_state(v)
+    p:Tensor = tensor.tensor_ones_1d(1)
+    p = tensor.tensor_require_grad(p)
+    p.grad.data[0] = 2.0
+    state:AdamState = optim.adam_init(1, 0.9, 0.999, 0.00000001)
+    first:int = optim.adam_step(&p, &state, 0.1)
+    second:int = optim.adam_step(&p, &state, 0.1)
+    if first != 0 || second != 0:
+      say "FAIL: Adam state update ", first, ", ", second, " sizes ", state.length, ", ", state.m.size, ", ", state.v.size, " hyper ", state.beta1, ", ", state.beta2, ", ", state.eps
+      ret 6
+    if state.step != 2 || math.absf(p.data[0] - 0.8) > 0.000001: ret 7
+    optim.adam_free(state)
+    tensor.tensor_free_tensor(p)
+  ret 0
+

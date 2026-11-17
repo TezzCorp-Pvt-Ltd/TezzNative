@@ -1,0 +1,24 @@
+import "tezzdb"
+
+fn main() -> int:
+  unsafe:
+    remove("large_value.tdb")
+    remove("large_value.tdb.wal")
+    db:*TezzDb = tezzdb.open("large_value.tdb")
+    if db == 0: ret 1
+    tezzdb.table_create(db, "items")
+    data:*char = malloc(601)
+    i:int = 0
+    while i < 600:
+      data[i] = 120 as char
+      i = i + 1
+    data[600] = 0 as char
+    failed:int = 0
+    if tezzdb.insert(db, "items", data as str) != 1: failed = 1
+    value:str = tezzdb.get(db, "items", 1)
+    if value == 0 || strcmp(value, data as str) != 0: failed = 1
+    free(value)
+    tezzdb.close(db)
+    free(data)
+    if failed != 0: say "FAIL: database value larger than the inline threshold must round trip"
+    ret failed

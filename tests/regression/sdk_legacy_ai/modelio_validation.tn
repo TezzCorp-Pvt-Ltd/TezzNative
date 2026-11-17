@@ -1,0 +1,36 @@
+import "modelio"
+import "tensor_ptr"
+import "tensor"
+import "tnx"
+
+fn save_text(text:str, path:str) -> int:
+  value:*TnxValue = tnx.decode(text)
+  if value == 0: ret 0 - 1
+  result:int = tnx.save_b(path, value)
+  tnx.release(value)
+  ret result
+
+fn main() -> int:
+  unsafe:
+    if save_text("{\"schema\":\"tezz_tensor_v1\",\"dtype\":0,\"rank\":1,\"shape\":[2],\"data\":[1.25,-2.5]}", "legacy.tnxb") != 0: ret 1
+    value:*Tensor = modelio.tensor_load_tnxb("legacy.tnxb")
+    if value == 0:
+      say "FAIL: legacy floating checkpoint rejected"
+      ret 2
+    if value.dtype != tensor.tensor_dtype_f64() || value.data[0] != 1.25 || value.data[1] != 0.0 - 2.5:
+      say "FAIL: legacy checkpoint values ", value.dtype, ", ", value.data[0], ", ", value.data[1]
+      ret 2
+    tensor_ptr.release(value)
+    if save_text("{\"schema\":\"tezz_tensor_v2\",\"dtype\":1,\"rank\":1,\"shape\":[2],\"data\":[1,2,3]}", "invalid.tnxb") != 0: ret 3
+    value = modelio.tensor_load_tnxb("invalid.tnxb")
+    if value != 0: ret 4
+    if save_text("{\"schema\":\"tezz_tensor_v2\",\"dtype\":1,\"rank\":1,\"shape\":[2],\"data\":[1,\"bad\"]}", "invalid.tnxb") != 0: ret 5
+    value = modelio.tensor_load_tnxb("invalid.tnxb")
+    if value != 0: ret 6
+    if save_text("{\"schema\":\"tezz_tensor_v1\",\"dtype\":1,\"rank\":1,\"shape\":[1],\"data\":[1]}", "invalid.tnxb") != 0: ret 7
+    value = modelio.tensor_load_tnxb("invalid.tnxb")
+    if value != 0: ret 8
+    if save_text("{\"schema\":\"tezz_dense_v1\",\"in_dim\":2,\"out_dim\":2,\"w\":[1,2],\"b\":[0,0]}", "invalid.tnxb") != 0: ret 9
+    model:*DenseModel = modelio.dense_load("invalid.tnxb")
+    if model != 0: ret 10
+  ret 0

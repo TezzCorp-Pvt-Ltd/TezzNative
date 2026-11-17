@@ -1,0 +1,425 @@
+// tzgui implementation: tree.
+import "gui"
+import "frame"
+import "io"
+import "os"
+import "tzgui.state"
+import "tzgui.geometry"
+import "tzgui.layout"
+import "tzgui.widgets"
+
+fn tree_init(out:*TzWidgetTree, width:int, height:int) -> int:
+  if out == 0:
+    ret 0 - 1
+  widgets:*TzWidget = (*TzWidget)malloc(sizeof(TzWidget) * tzgui.state._get_TZ_WIDGET_MAX())
+  if widgets == 0:
+    ret 0 - 2
+  text_storage:*char = malloc(tzgui.state._get_TZ_WIDGET_TEXT_MAX() * tzgui.state._get_TZ_WIDGET_MAX())
+  if text_storage == 0:
+    free(widgets)
+    ret 0 - 2
+  damage:*TzDamage = (*TzDamage)malloc(sizeof(TzDamage))
+  if damage == 0:
+    free(widgets)
+    free(text_storage)
+    ret 0 - 2
+  damage[0].rects = 0 as *TzRect
+  damage[0].n = 0
+  damage[0].overflow = 0
+  if out[0].widgets != 0:
+    free(out[0].widgets)
+  if out[0].text_storage != 0:
+    free(out[0].text_storage)
+  if out[0].damage != 0:
+    frame.tz_damage_deinit(out[0].damage)
+    free(out[0].damage)
+  out[0].widgets = widgets
+  out[0].text_storage = text_storage
+  out[0].damage = damage
+  if width <= 0:
+    width = 1024
+  if height <= 0:
+    height = 768
+  out[0].width = width
+  out[0].height = height
+  out[0].design_width = width
+  out[0].design_height = height
+  out[0].clear_color = 1052946
+  out[0].next_id = 1
+  out[0].next_order = 1
+  out[0].widget_count = 0
+  out[0].full_redraw_reason = tzgui.state._get_TZ_FULL_REDRAW_TREE_RESET()
+  out[0].hovered_id = 0
+  out[0].pressed_id = 0
+  out[0].focus_id = 0
+  out[0].pointer_buttons = 0
+  out[0].pointer_x = 0
+  out[0].pointer_y = 0
+  out[0].active_touch_id = 0
+  out[0].active_touch = 0
+  out[0].present_x = 0
+  out[0].present_y = 0
+  out[0].present_w = 0
+  out[0].present_h = 0
+  if frame.tz_damage_reset(out[0].damage) != 0:
+    free(out[0].widgets)
+    free(out[0].text_storage)
+    free(out[0].damage)
+    out[0].widgets = 0 as *TzWidget
+    out[0].text_storage = 0 as *char
+    out[0].damage = 0 as *TzDamage
+    ret 0 - 3
+  i:int = 0
+  while i < tzgui.state._get_TZ_WIDGET_MAX():
+    out[0].widgets[i].text = out[0].text_storage + i * tzgui.state._get_TZ_WIDGET_TEXT_MAX()
+    out[0].widgets[i].id = 0
+    out[0].widgets[i].parent = 0
+    out[0].widgets[i].kind = tzgui.state._get_TZ_WIDGET_PANEL()
+    out[0].widgets[i].x = 0
+    out[0].widgets[i].y = 0
+    out[0].widgets[i].w = 0
+    out[0].widgets[i].h = 0
+    out[0].widgets[i].z = 0
+    out[0].widgets[i].order = 0
+    out[0].widgets[i].visible = 0
+    out[0].widgets[i].alive = 0
+    out[0].widgets[i].dirty = 0
+    out[0].widgets[i].bg = 2105376
+    out[0].widgets[i].fg = 16777215
+    out[0].widgets[i].design_x = 0
+    out[0].widgets[i].design_y = 0
+    out[0].widgets[i].design_w = 0
+    out[0].widgets[i].design_h = 0
+    out[0].widgets[i].requested_x = 0
+    out[0].widgets[i].requested_y = 0
+    out[0].widgets[i].requested_w = 0
+    out[0].widgets[i].requested_h = 0
+    out[0].widgets[i].grow = 0
+    out[0].widgets[i].shrink = 1
+    out[0].widgets[i].align_self = 0 - 1
+    out[0].widgets[i].margin_top = 0
+    out[0].widgets[i].margin_right = 0
+    out[0].widgets[i].margin_bottom = 0
+    out[0].widgets[i].margin_left = 0
+    out[0].widgets[i].design_margin_top = 0
+    out[0].widgets[i].design_margin_right = 0
+    out[0].widgets[i].design_margin_bottom = 0
+    out[0].widgets[i].design_margin_left = 0
+    out[0].widgets[i].layout_mode = tzgui.state._get_TZ_LAYOUT_ABSOLUTE()
+    out[0].widgets[i].layout_gap = 0
+    out[0].widgets[i].layout_justify = tzgui.state._get_TZ_JUSTIFY_START()
+    out[0].widgets[i].layout_align = tzgui.state._get_TZ_ALIGN_START()
+    out[0].widgets[i].pad_top = 0
+    out[0].widgets[i].pad_right = 0
+    out[0].widgets[i].pad_bottom = 0
+    out[0].widgets[i].pad_left = 0
+    out[0].widgets[i].design_pad_top = 0
+    out[0].widgets[i].design_pad_right = 0
+    out[0].widgets[i].design_pad_bottom = 0
+    out[0].widgets[i].design_pad_left = 0
+    out[0].widgets[i].design_layout_gap = 0
+    out[0].widgets[i].border_color = 0x334155
+    out[0].widgets[i].border_width = 0
+    out[0].widgets[i].radius = 0
+    out[0].widgets[i].design_border_width = 0
+    out[0].widgets[i].design_radius = 0
+    out[0].widgets[i].gradient_color = 0
+    out[0].widgets[i].gradient_axis = tzgui.state._get_TZ_GRADIENT_NONE()
+    out[0].widgets[i].shadow_color = 0x03060C
+    out[0].widgets[i].shadow_size = 0
+    out[0].widgets[i].design_shadow_size = 0
+    out[0].widgets[i].text_align = 0
+    out[0].widgets[i].hover_bg = 0
+    out[0].widgets[i].pressed_bg = 0
+    out[0].widgets[i].disabled_bg = 0
+    out[0].widgets[i].focus_color = 0x818CF8
+    out[0].widgets[i].hover_border = 0 - 1
+    out[0].widgets[i].text_scale = 1
+    out[0].widgets[i].text_bold = 0
+    out[0].widgets[i].font_size = 0
+    out[0].widgets[i].design_font_size = 0
+    out[0].widgets[i].font_weight = 0
+    out[0].widgets[i].font_family = "Segoe UI"
+    out[0].widgets[i].icon_id = 0
+    out[0].widgets[i].icon_size = 0
+    out[0].widgets[i].design_icon_size = 0
+    out[0].widgets[i].icon_color = 0x334155
+    out[0].widgets[i].hit_testable = 0
+    out[0].widgets[i].enabled = 1
+    out[0].widgets[i].focusable = 0
+    out[0].widgets[i].tab_index = 0
+    tzgui.geometry._tree_clear_text(out[0].widgets[i].text)
+    i = i + 1
+  frame.tz_damage_add_clipped(out[0].damage, 0, 0, width, height, width, height)
+  ret 0
+
+// Resize the retained tree with its framebuffer. Geometry is scaled in the
+// parent-local coordinate system, so nested absolute and flex layouts keep
+// their relationships. Font and decoration sizes use the smaller axis to
+// stay legible without becoming distorted on unusually shaped windows.
+
+fn tree_resize(tree:*TzWidgetTree, width:int, height:int) -> int:
+  if tree == 0 || tree[0].widgets == 0 || tree[0].damage == 0:
+    ret 0 - 1
+  if width < 1 || height < 1:
+    ret 0 - 2
+  design_width:int = tree[0].design_width
+  design_height:int = tree[0].design_height
+  if design_width <= 0 || design_height <= 0:
+    ret 0 - 3
+  if width == tree[0].width && height == tree[0].height:
+    ret 0
+  font_num:int = width
+  font_den:int = design_width
+  if height * font_den < font_num * design_height:
+    font_num = height
+    font_den = design_height
+  i:int = 0
+  while i < tzgui.state._get_TZ_WIDGET_MAX():
+    if tree[0].widgets[i].alive != 0:
+      w:*TzWidget = &tree[0].widgets[i]
+      if w[0].parent <= 0:
+        w[0].requested_x = w[0].design_x * width / design_width
+        w[0].requested_y = w[0].design_y * height / design_height
+        w[0].requested_w = w[0].design_w * width / design_width
+        w[0].requested_h = w[0].design_h * height / design_height
+        if w[0].requested_w < 1:
+          w[0].requested_w = 1
+        if w[0].requested_h < 1:
+          w[0].requested_h = 1
+        w[0].x = w[0].requested_x
+        w[0].y = w[0].requested_y
+        w[0].w = w[0].requested_w
+        w[0].h = w[0].requested_h
+      else:
+        w[0].requested_x = w[0].design_x * width / design_width
+        w[0].requested_y = w[0].design_y * height / design_height
+        w[0].requested_w = w[0].design_w * width / design_width
+        w[0].requested_h = w[0].design_h * height / design_height
+        if w[0].requested_w < 1:
+          w[0].requested_w = 1
+        if w[0].requested_h < 1:
+          w[0].requested_h = 1
+      w[0].margin_top = w[0].design_margin_top * height / design_height
+      w[0].margin_bottom = w[0].design_margin_bottom * height / design_height
+      w[0].margin_left = w[0].design_margin_left * width / design_width
+      w[0].margin_right = w[0].design_margin_right * width / design_width
+      w[0].pad_top = w[0].design_pad_top * height / design_height
+      w[0].pad_bottom = w[0].design_pad_bottom * height / design_height
+      w[0].pad_left = w[0].design_pad_left * width / design_width
+      w[0].pad_right = w[0].design_pad_right * width / design_width
+      w[0].layout_gap = w[0].design_layout_gap * font_num / font_den
+      w[0].border_width = w[0].design_border_width * font_num / font_den
+      w[0].radius = w[0].design_radius * font_num / font_den
+      w[0].shadow_size = w[0].design_shadow_size * font_num / font_den
+      w[0].icon_size = w[0].design_icon_size * font_num / font_den
+      if w[0].design_font_size > 0:
+        w[0].font_size = w[0].design_font_size * font_num / font_den
+      w[0].dirty = 1
+    i = i + 1
+  tree[0].width = width
+  tree[0].height = height
+  tree[0].hovered_id = 0
+  tree[0].pressed_id = 0
+  tree[0].pointer_buttons = 0
+  tree[0].active_touch = 0
+  tree[0].active_touch_id = 0
+  frame.tz_damage_reset(tree[0].damage)
+  tzgui.geometry.tree_request_full_redraw(tree, tzgui.state._get_TZ_FULL_REDRAW_LAYOUT_RESET())
+  tzgui.layout.tree_layout(tree)
+  ret 1
+
+fn tree_deinit(tree:*TzWidgetTree) -> int:
+  if tree == 0:
+    ret 0 - 1
+  if tree[0].widgets != 0:
+    free(tree[0].widgets)
+    tree[0].widgets = 0 as *TzWidget
+  if tree[0].text_storage != 0:
+    free(tree[0].text_storage)
+    tree[0].text_storage = 0 as *char
+  if tree[0].damage != 0:
+    frame.tz_damage_deinit(tree[0].damage)
+    free(tree[0].damage)
+    tree[0].damage = 0 as *TzDamage
+  tree[0].widget_count = 0
+  tree[0].hovered_id = 0
+  tree[0].pressed_id = 0
+  tree[0].focus_id = 0
+  tree[0].active_touch_id = 0
+  tree[0].active_touch = 0
+  ret 0
+
+fn tree_set_clear_color(tree:*TzWidgetTree, color:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  tree[0].clear_color = color
+  tree[0].full_redraw_reason = tzgui.state._get_TZ_FULL_REDRAW_THEME_RESET()
+  frame.tz_damage_add_clipped(tree[0].damage, 0, 0, tree[0].width, tree[0].height, tree[0].width, tree[0].height)
+  ret 0
+
+fn tree_full_redraw_reason(tree:*TzWidgetTree) -> int:
+  if tree == 0:
+    ret tzgui.state._get_TZ_FULL_REDRAW_TREE_RESET()
+  ret tree[0].full_redraw_reason
+
+fn tree_widget_count(tree:*TzWidgetTree) -> int:
+  if tree == 0:
+    ret 0
+  ret tree[0].widget_count
+
+fn widget_add(tree:*TzWidgetTree, spec:*TzWidgetSpec) -> int:
+  if tree == 0 || spec == 0:
+    ret 0 - 1
+  if spec[0].parent > 0 && tzgui.geometry._tree_widget_slot_by_id(tree, spec[0].parent) < 0:
+    ret 0 - 3
+  slot:int = 0 - 1
+  i:int = 0
+  while i < tzgui.state._get_TZ_WIDGET_MAX():
+    if tree[0].widgets[i].alive == 0:
+      slot = i
+      break
+    i = i + 1
+  if slot < 0:
+    ret 0 - 2
+  ww:int = spec[0].w
+  hh:int = spec[0].h
+  if ww <= 0:
+    ww = 1
+  if hh <= 0:
+    hh = 1
+  kind:int = spec[0].kind
+  if kind < tzgui.state._get_TZ_WIDGET_PANEL() || kind > tzgui.state._get_TZ_WIDGET_BUTTON():
+    kind = tzgui.state._get_TZ_WIDGET_PANEL()
+  vis:int = 1
+  if spec[0].visible == 0:
+    vis = 0
+  wid:int = tree[0].next_id
+  tree[0].next_id = tree[0].next_id + 1
+  tree[0].widgets[slot].id = wid
+  tree[0].widgets[slot].parent = spec[0].parent
+  tree[0].widgets[slot].kind = kind
+  tree[0].widgets[slot].x = spec[0].x
+  tree[0].widgets[slot].y = spec[0].y
+  tree[0].widgets[slot].w = ww
+  tree[0].widgets[slot].h = hh
+  tree[0].widgets[slot].z = spec[0].z
+  tree[0].widgets[slot].order = tree[0].next_order
+  tree[0].next_order = tree[0].next_order + 1
+  tree[0].widgets[slot].visible = vis
+  tree[0].widgets[slot].alive = 1
+  tree[0].widgets[slot].dirty = 1
+  tree[0].widgets[slot].bg = spec[0].bg
+  tree[0].widgets[slot].fg = spec[0].fg
+  tree[0].widgets[slot].design_x = spec[0].x * tree[0].design_width / tree[0].width
+  tree[0].widgets[slot].design_y = spec[0].y * tree[0].design_height / tree[0].height
+  tree[0].widgets[slot].design_w = ww * tree[0].design_width / tree[0].width
+  tree[0].widgets[slot].design_h = hh * tree[0].design_height / tree[0].height
+  tree[0].widgets[slot].requested_x = spec[0].x
+  tree[0].widgets[slot].requested_y = spec[0].y
+  tree[0].widgets[slot].requested_w = ww
+  tree[0].widgets[slot].requested_h = hh
+  tree[0].widgets[slot].grow = 0
+  tree[0].widgets[slot].shrink = 1
+  tree[0].widgets[slot].align_self = 0 - 1
+  tree[0].widgets[slot].margin_top = 0
+  tree[0].widgets[slot].margin_right = 0
+  tree[0].widgets[slot].margin_bottom = 0
+  tree[0].widgets[slot].margin_left = 0
+  tree[0].widgets[slot].design_margin_top = 0
+  tree[0].widgets[slot].design_margin_right = 0
+  tree[0].widgets[slot].design_margin_bottom = 0
+  tree[0].widgets[slot].design_margin_left = 0
+  tree[0].widgets[slot].layout_mode = tzgui.state._get_TZ_LAYOUT_ABSOLUTE()
+  tree[0].widgets[slot].layout_gap = 0
+  tree[0].widgets[slot].layout_justify = tzgui.state._get_TZ_JUSTIFY_START()
+  tree[0].widgets[slot].layout_align = tzgui.state._get_TZ_ALIGN_START()
+  tree[0].widgets[slot].pad_top = 0
+  tree[0].widgets[slot].pad_right = 0
+  tree[0].widgets[slot].pad_bottom = 0
+  tree[0].widgets[slot].pad_left = 0
+  tree[0].widgets[slot].design_pad_top = 0
+  tree[0].widgets[slot].design_pad_right = 0
+  tree[0].widgets[slot].design_pad_bottom = 0
+  tree[0].widgets[slot].design_pad_left = 0
+  tree[0].widgets[slot].design_layout_gap = 0
+  tree[0].widgets[slot].border_color = 0x334155
+  tree[0].widgets[slot].border_width = 0
+  tree[0].widgets[slot].radius = 0
+  tree[0].widgets[slot].design_border_width = 0
+  tree[0].widgets[slot].design_radius = 0
+  tree[0].widgets[slot].gradient_color = 0
+  tree[0].widgets[slot].gradient_axis = tzgui.state._get_TZ_GRADIENT_NONE()
+  tree[0].widgets[slot].shadow_color = 0x03060C
+  tree[0].widgets[slot].shadow_size = 0
+  tree[0].widgets[slot].design_shadow_size = 0
+  tree[0].widgets[slot].text_align = 0
+  tree[0].widgets[slot].hover_bg = tzgui.geometry._tree_color_scale(spec[0].bg, 112)
+  tree[0].widgets[slot].pressed_bg = tzgui.geometry._tree_color_scale(spec[0].bg, 82)
+  tree[0].widgets[slot].disabled_bg = tzgui.geometry._tree_color_scale(spec[0].bg, 70)
+  tree[0].widgets[slot].focus_color = 0x818CF8
+  tree[0].widgets[slot].hover_border = 0 - 1
+  tree[0].widgets[slot].text_scale = 1
+  tree[0].widgets[slot].text_bold = 0
+  tree[0].widgets[slot].font_size = 0
+  tree[0].widgets[slot].design_font_size = 0
+  tree[0].widgets[slot].font_weight = 0
+  tree[0].widgets[slot].font_family = "Segoe UI"
+  tree[0].widgets[slot].icon_id = 0
+  tree[0].widgets[slot].icon_size = 0
+  tree[0].widgets[slot].design_icon_size = 0
+  tree[0].widgets[slot].icon_color = 0x334155
+  tree[0].widgets[slot].hit_testable = 0
+  tree[0].widgets[slot].enabled = 1
+  tree[0].widgets[slot].focusable = 0
+  tree[0].widgets[slot].tab_index = tree[0].widgets[slot].order
+  if kind == tzgui.state._get_TZ_WIDGET_PANEL():
+    tree[0].widgets[slot].radius = 8
+    tree[0].widgets[slot].design_radius = 8
+    tree[0].widgets[slot].border_width = 1
+    tree[0].widgets[slot].design_border_width = 1
+  if kind == tzgui.state._get_TZ_WIDGET_BUTTON():
+    tree[0].widgets[slot].radius = 6
+    tree[0].widgets[slot].design_radius = 6
+    tree[0].widgets[slot].border_width = 1
+    tree[0].widgets[slot].design_border_width = 1
+    tree[0].widgets[slot].hit_testable = 1
+    tree[0].widgets[slot].focusable = 1
+  scale_num:int = tree[0].design_width
+  scale_den:int = tree[0].width
+  if tree[0].design_height * scale_den < scale_num * tree[0].height:
+    scale_num = tree[0].design_height
+    scale_den = tree[0].height
+  if scale_num > 0:
+    tree[0].widgets[slot].design_border_width = tree[0].widgets[slot].border_width * scale_den / scale_num
+    tree[0].widgets[slot].design_radius = tree[0].widgets[slot].radius * scale_den / scale_num
+  if tree[0].widgets[slot].fg == 0:
+    tree[0].widgets[slot].fg = 16777215
+  tree[0].widgets[slot].text = tree[0].text_storage + slot * tzgui.state._get_TZ_WIDGET_TEXT_MAX()
+  if spec[0].text != 0:
+    tree[0].widgets[slot].text = spec[0].text as *char
+  tree[0].widget_count = tree[0].widget_count + 1
+  if vis != 0:
+    tzgui.geometry._tree_widget_mark_rect(tree, slot)
+  ret wid
+
+// Add a widget with borrowed text. The string must remain valid until replaced
+// or the widget tree is deinitialized; string literals satisfy this lifetime.
+
+fn widget_add_text(tree:*TzWidgetTree, spec:*TzWidgetSpec, text:str) -> int:
+  wid:int = widget_add(tree, spec)
+  if wid <= 0:
+    ret wid
+  status:int = tzgui.widgets.widget_set_text(tree, wid, text)
+  if status != 0:
+    ret status
+  ret wid
+
+fn widget_add_icon(tree:*TzWidgetTree, spec:*TzWidgetSpec, icon_id:int, size:int, color:int) -> int:
+  wid:int = widget_add(tree, spec)
+  if wid <= 0:
+    ret wid
+  status:int = tzgui.layout.widget_set_icon(tree, wid, icon_id, size, color)
+  if status != 0:
+    ret status
+  ret wid

@@ -1,0 +1,14 @@
+import "tezzdbql"
+
+fn main() -> int:
+  unsafe:
+    value:str = 0 as str
+    ending:int = 0
+    if tezzdbql._ql_read_quoted("'unterminated", 0, &value, &ending) != 0: ret 1
+    index:int = 0
+    if tezzdbql._ql_parse_where_val("1,2", 0, 0 as *str, 0, &index, &value, &ending) != 1: ret 2
+    if ending != 1 || strcmp(value, "1") != 0: ret 3
+    free(value)
+    value = 0 as str
+    if tezzdbql._ql_parse_where_val("?", 0, 0 as *str, 1, &index, &value, &ending) != 0: ret 4
+  ret 0

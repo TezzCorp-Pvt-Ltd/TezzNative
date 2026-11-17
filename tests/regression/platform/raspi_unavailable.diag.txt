@@ -1,0 +1,1 @@
+module 'raspi' is unavailable: its legacy API is not implemented; use raspi.pi3 with --target raspi3b --freestanding

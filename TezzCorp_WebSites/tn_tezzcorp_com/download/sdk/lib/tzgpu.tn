@@ -1,6 +1,8 @@
-// lib/tzgpu.tn -- TezzNative GPU Library v2.0 (Production)
+// lib/tzgpu.tn -- TezzNative native CUDA library
 // Low-level bridge between Tezz and CUDA kernels in tzgpu.dll
-// f32 primary (4x faster on RTX 3060 sm_86), f64 kept for compatibility.
+// Separate f32/f64 device buffers; conversion is explicit.
+// Operations return 0 on submission, -1 on failure; gpu_sync checks completion.
+// GEMM and seeded RNG run native device kernels, with no CPU fallback.
 //
 // Remote tezzc rules:
 //   - Qualified access only: tzgpu.function_name
@@ -11,6 +13,8 @@
 //   import "tzgpu"
 //   dev: int = tzgpu.gpu_malloc_f32(1024)  // 1024 floats on GPU
 //   tzgpu.gpu_free(dev)
+
+import "math"
 
 // ── dtype constants ───────────────────────────────────────────────────────────
 let DTYPE_F8_G:   int = 0
@@ -64,6 +68,17 @@ extern fn tz_gpu_gelu_bwd_f32(grad_out: int, x: int, grad_in: int, n: int) -> in
 extern fn tz_gpu_softmax_f32(x: int, rows: int, cols: int) -> int
 extern fn tz_gpu_add_bias_f32(x: int, b: int, batch: int, dim: int) -> int
 
+// Checked time-major Conv1D: X[B,T,Cin], W[Cout,K,Cin], Y[B,ceil(T/stride),Cout].
+// Centered zero padding, left=floor(dilation*(K-1)/2); optional bias=0.
+// Outputs must not overlap inputs/each other. Finite inputs and gradients required.
+// Dimensions must be positive and dimensions/element counts fit signed 32-bit.
+// CUDA allocation spans are checked; finite checks synchronize device execution.
+// Arithmetic overflow returns -1 with output contents unspecified.
+// Backward ADDS into each requested gradient; zero buffers for a fresh pass.
+// dx/dw/db may be 0 individually. Returns 0 on completion, -1 on error.
+extern fn tz_gpu_conv1d_f32(x: int, w: int, bias: int, out: int, B: int, T: int, Cin: int, Cout: int, K: int, stride: int, dilation: int) -> int
+extern fn tz_gpu_conv1d_bwd_f32(dy: int, x: int, w: int, dx: int, dw: int, db: int, B: int, T: int, Cin: int, Cout: int, K: int, stride: int, dilation: int) -> int
+
 // ── normalization ─────────────────────────────────────────────────────────────
 extern fn tz_gpu_layernorm_f32(x: int, gamma: int, beta: int, rows: int, cols: int, eps: float) -> int
 extern fn tz_gpu_layernorm_bwd_f32(dx: int, dy: int, x: int, gamma: int, rows: int, cols: int, eps: float) -> int
@@ -104,7 +119,7 @@ extern fn tz_gpu_gemm_nt_f32(A: int, B: int, C: int, M: int, K: int, N: int, alp
 extern fn tz_gpu_gemm_tn_f32(A: int, B: int, C: int, M: int, K: int, N: int, alpha: float, beta: float) -> int
 extern fn tz_gpu_reduce_sum_cols_f32(X: int, out: int, rows: int, cols: int) -> int
 extern fn tz_gpu_xavier_init_f32(W: int, n: int, fan_in: int, seed: int) -> int
-// ── GEMM via cuBLAS ───────────────────────────────────────────────────────────
+// ── GEMM via native tiled device kernels ─────────────────────────────────────
 extern fn tz_gpu_gemm_f32(a: int, b: int, c: int, M: int, K: int, N: int, alpha: float, beta: float) -> int
 extern fn tz_gpu_gemm_f64(a: int, b: int, c: int, M: int, K: int, N: int, alpha: float, beta: float) -> int
 extern fn tz_gpu_matmul_tiled(a: int, b: int, c: int, M: int, K: int, N: int) -> int
@@ -128,9 +143,11 @@ extern fn tz_gpu_info() -> int
 
 fn gpu_malloc_f32(n: int) -> int:
   // Allocate n float32 elements on device (4 bytes each)
+  if n <= 0 || n > 2147483647: ret 0
   ret tz_cuda_malloc(n * 4)
 
 fn gpu_malloc_f64(n: int) -> int:
+  if n <= 0 || n > 2147483647: ret 0
   ret tz_cuda_malloc(n * 8)
 
 fn gpu_free(devptr: int) -> int:
@@ -141,108 +158,139 @@ fn gpu_sync() -> int:
 
 fn gpu_zeros_f32(n: int) -> int:
   // Allocate and zero-fill n f32 elements
-  ptr: int = tz_cuda_malloc(n * 4)
+  ptr: int = gpu_malloc_f32(n)
   if ptr != 0:
-    tz_gpu_fill_f32(ptr, n, 0.0)
+    if tz_gpu_fill_f32(ptr, n, 0.0) != 0:
+      tz_cuda_free(ptr)
+      ret 0
   ret ptr
 
 fn gpu_ones_f32(n: int) -> int:
-  ptr: int = tz_cuda_malloc(n * 4)
+  ptr: int = gpu_malloc_f32(n)
   if ptr != 0:
-    tz_gpu_fill_f32(ptr, n, 1.0)
+    if tz_gpu_fill_f32(ptr, n, 1.0) != 0:
+      tz_cuda_free(ptr)
+      ret 0
   ret ptr
 
 fn gpu_vram_free_mb() -> int:
-  ret tz_cuda_mem_free() / 1048576
+  available:int = tz_cuda_mem_free()
+  if available < 0: ret 0 - 1
+  ret available / 1048576
 
 fn gpu_vram_total_mb() -> int:
-  ret tz_cuda_mem_total() / 1048576
+  total:int = tz_cuda_mem_total()
+  if total < 0: ret 0 - 1
+  ret total / 1048576
 
 // ── Host ↔ Device transfer (f32) ─────────────────────────────────────────────
 
 fn gpu_upload_f32(host_ptr: int, n: int) -> int:
   // Upload n f32 values from host pointer to new device buffer
-  dev: int = tz_cuda_malloc(n * 4)
+  if host_ptr == 0: ret 0
+  dev: int = gpu_malloc_f32(n)
   if dev == 0:
     ret 0
-  tz_cuda_memcpy(dev, host_ptr, n * 4, GPU_H2D)
+  if tz_cuda_memcpy(dev, host_ptr, n * 4, GPU_H2D) != 0:
+    tz_cuda_free(dev)
+    ret 0
   ret dev
 
 fn gpu_download_f32(dev: int, host_ptr: int, n: int) -> int:
+  if n <= 0 || n > 2147483647: ret 0 - 1
   ret tz_cuda_memcpy(host_ptr, dev, n * 4, GPU_D2H)
 
 // ── f32 GEMM: C = alpha*(A @ B) + beta*C ─────────────────────────────────────
 
 fn gpu_matmul_f32(a: int, b: int, M: int, K: int, N: int) -> int:
   // Returns new device buffer C[M x N], caller must free
-  c: int = tz_cuda_malloc(M * N * 4)
+  if a == 0 || b == 0 || M <= 0 || K <= 0 || N <= 0: ret 0
+  if M > 2147483647 / N || M > 2147483647 / K || K > 2147483647 / N: ret 0
+  c: int = gpu_malloc_f32(M * N)
   if c == 0:
     ret 0
-  tz_gpu_gemm_f32(a, b, c, M, K, N, 1.0, 0.0)
+  if tz_gpu_gemm_f32(a, b, c, M, K, N, 1.0, 0.0) != 0:
+    tz_cuda_free(c)
+    ret 0
   ret c
 
 // ── Linear layer forward: y = x @ W^T + b  (f32) ────────────────────────────
 // x: [batch x in_dim], W: [out_dim x in_dim], b: [out_dim]
 // Returns y: [batch x out_dim] device ptr
 
-fn gpu_linear_f32(x: int, W: int, b: int, batch: int, in_dim: int, out_dim: int) -> int:
-  // y = x @ W^T  via cuBLAS: treat W as [out_dim x in_dim] stored row-major
-  // cuBLAS Sgemm(N,N, N=out_dim, M=batch, K=in_dim) with B=W, A=x
-  y: int = tz_cuda_malloc(batch * out_dim * 4)
-  if y == 0:
-    ret 0
-  tz_gpu_gemm_f32(x, W, y, batch, in_dim, out_dim, 1.0, 0.0)
+fn gpu_linear_f32(x:int, W:int, b:int, batch:int, in_dim:int, out_dim:int) -> int:
+  if x == 0 || W == 0 || batch <= 0 || in_dim <= 0 || out_dim <= 0: ret 0
+  if batch > 2147483647 / out_dim: ret 0
+  if batch > 2147483647 / in_dim || out_dim > 2147483647 / in_dim: ret 0
+  y:int = tz_cuda_malloc(batch * out_dim * 4)
+  if y == 0: ret 0
+  status:int = tz_gpu_gemm_nt_f32(x, W, y, batch, in_dim, out_dim, 1.0, 0.0)
   if b != 0:
-    tz_gpu_add_bias_f32(y, b, batch, out_dim)
+    status = status | tz_gpu_add_bias_f32(y, b, batch, out_dim)
+  if status != 0:
+    tz_cuda_free(y)
+    ret 0
   ret y
 
 // ── Attention: scores = Q @ K^T / sqrt(dim), then softmax ───────────────────
 // q,k,v: [batch*heads x seq x dim_head] (device ptrs, f32)
 // Returns out: [batch*heads x seq x dim_head]
 
-fn gpu_attn_scores_f32(q: int, k: int, batch_heads: int, seq: int, dim_head: int, causal: int) -> int:
-  // scores = Q @ K^T / sqrt(dim_head)
-  // shape: [batch_heads x seq x seq]
-  scores: int = tz_cuda_malloc(batch_heads * seq * seq * 4)
-  if scores == 0:
-    ret 0
-  // For each head: scores[h] = q[h] @ k[h]^T -- simplified: full sgemm
-  tz_gpu_gemm_f32(q, k, scores, batch_heads * seq, dim_head, seq, 1.0, 0.0)
-  // scale by 1/sqrt(dim_head) -- approximate as 1/8 for dim_head=64 etc
-  // Use axpy: scores *= scale (approximate)
+fn gpu_attn_scores_f32(q:int, k:int, batch_heads:int, seq:int, dim_head:int, causal:int) -> int:
+  if q == 0 || k == 0 || batch_heads <= 0 || seq <= 0 || dim_head <= 0: ret 0
+  if seq > 2147483647 / seq: ret 0
+  if seq > 2147483647 / dim_head: ret 0
+  if batch_heads > 2147483647 / (seq * dim_head): ret 0
+  if batch_heads > 2147483647 / (seq * seq): ret 0
+  count:int = batch_heads * seq * seq
+  scores:int = tz_cuda_malloc(count * 4)
+  if scores == 0: ret 0
+  status:int = 0
+  head:int = 0
+  while head < batch_heads:
+    input_offset:int = head * seq * dim_head * 4
+    output_offset:int = head * seq * seq * 4
+    status = status | tz_gpu_gemm_nt_f32(q + input_offset, k + input_offset, scores + output_offset, seq, dim_head, seq, 1.0, 0.0)
+    head = head + 1
+  scale:float = 1.0 / math.sqrt(dim_head as float)
+  status = status | tz_gpu_scale_f32(scores, scores, count, scale)
   if causal != 0:
-    tz_gpu_causal_mask_f32(scores, batch_heads, seq)
-  tz_gpu_softmax_f32(scores, batch_heads * seq, seq)
+    status = status | tz_gpu_causal_mask_f32(scores, batch_heads, seq)
+  status = status | tz_gpu_softmax_f32(scores, batch_heads * seq, seq)
+  if status != 0:
+    tz_cuda_free(scores)
+    ret 0
   ret scores
 
 // ── Adam step: update params in-place ────────────────────────────────────────
 // t: current step (1-indexed)
 
-fn gpu_adam_step_f32(p: int, g: int, m: int, v: int, n: int, lr: float, t: int) -> int:
-  b1: float = 0.9
-  b2: float = 0.999
-  eps: float = 0.000000001
-  // b1t = b1^t, b2t = b2^t (approximate with repeated multiply would need loop)
-  // For simplicity pass precomputed values: b1t=0.9^t, b2t=0.999^t
-  // (Caller should compute these or use defaults — here we inline defaults for t=1)
-  b1t: float = 0.9
-  b2t: float = 0.999
-  tz_gpu_adam_f32(p, g, m, v, lr, b1, b2, eps, b1t, b2t, n)
-  ret 0
+fn gpu_adam_step_f32(p:int, g:int, m:int, v:int, n:int, lr:float, t:int) -> int:
+  if p == 0 || g == 0 || m == 0 || v == 0 || n <= 0 || lr < 0.0 || t <= 0: ret 0 - 1
+  b1t:float = 1.0
+  b2t:float = 1.0
+  step:int = 0
+  while step < t:
+    b1t = b1t * 0.9
+    b2t = b2t * 0.999
+    step = step + 1
+  ret tz_gpu_adam_f32(p, g, m, v, lr, 0.9, 0.999, 0.000000001, b1t, b2t, n)
 
 // ── Legacy f64 wrappers (v1 compatibility) ────────────────────────────────────
 
 fn gpu_matmul(a: int, b: int, M: int, K: int, N: int) -> int:
-  c: int = tz_cuda_malloc(M * N * 8)
+  if a == 0 || b == 0 || M <= 0 || K <= 0 || N <= 0: ret 0
+  if M > 2147483647 / N || M > 2147483647 / K || K > 2147483647 / N: ret 0
+  c: int = gpu_malloc_f64(M * N)
   if c == 0:
     ret 0
-  tz_gpu_gemm_f64(a, b, c, M, K, N, 1.0, 0.0)
+  if tz_gpu_gemm_f64(a, b, c, M, K, N, 1.0, 0.0) != 0:
+    tz_cuda_free(c)
+    ret 0
   ret c
 
 fn gpu_softmax_inplace(x: int, rows: int, cols: int) -> int:
-  tz_gpu_softmax(x, rows, cols)
-  ret 0
+  ret tz_gpu_softmax(x, rows, cols)
 
 fn gpu_layernorm_inplace(x: int, rows: int, cols: int, eps: float) -> int:
-  tz_gpu_layer_norm(x, rows, cols, eps)
-  ret 0
+  ret tz_gpu_layer_norm(x, rows, cols, eps)

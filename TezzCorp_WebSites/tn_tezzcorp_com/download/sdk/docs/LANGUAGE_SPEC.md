@@ -8,7 +8,7 @@ TezzNative ships two CLI execution surfaces:
 - Source files are UTF-8 text; production fixtures in this repo stay ASCII by convention.
 - Significant indentation is used for blocks after `:` in the same style as existing `.tn` sources.
 - Line comments use `//` and block comments use `/* ... */`.
-- String literals use double quotes. Integer literals are parsed as signed machine integers unless cast.
+- String literals use double quotes. Integer literals accept 64-bit magnitudes through `18446744073709551615` in decimal, hexadecimal, or binary; larger magnitudes are errors. Their bits default to signed machine integers (for example `9223372036854775808` has the `int` minimum bit pattern); an explicit unsigned cast interprets the same bits as unsigned. Floating-point literals may exceed the integer magnitude range and support underscore digit separators.
 - Identifiers are case-sensitive. Module names are resolved from import paths and file basenames.
 
 ## Declarations
@@ -22,11 +22,14 @@ TezzNative ships two CLI execution surfaces:
 - Aggregate types include fixed-size arrays `[T;N]` and `struct` declarations.
 - Type checking is enforced before IR lowering. Production lanes require type errors to stop the build with stable diagnostics.
 - Extern and ABI declarations must use ABI-safe signatures; invalid ABI usage is a hard error.
+- Integer-to-float conversions interpret `u64` across its full unsigned range and round to nearest, ties to even. Conversion to `f32` rounds the integer directly, avoiding an intermediate `f64` rounding step.
+- Float-to-64-bit-integer casts truncate toward zero. Finite signed inputs must lie in `[-2^63, 2^63)` and unsigned inputs in `[0, 2^64)`; NaN, infinities and values outside those intervals produce the integer-indefinite bit pattern `0x8000000000000000`. This is a conversion sentinel and may coincide with a valid integer value.
 
 ## Control Flow
 - The supported structured control-flow forms in production are `if`, `while`, `for`, `switch`, `ret`, `break`, `continue`, and `unsafe` blocks.
 - The formatter canonicalizes spacing, keyword placement, and type spellings for AST snapshot tests.
 - IR generation must preserve source-level control flow without silently replacing user code with stubs.
+- Logical `&&` and `||` evaluate left to right, skip the right operand when the left determines the result, and return integer `0` or `1`; numeric zero (including negative floating-point zero) is false.
 
 ## Attributes
 - `@abi("c")` is only valid on `extern fn` declarations.

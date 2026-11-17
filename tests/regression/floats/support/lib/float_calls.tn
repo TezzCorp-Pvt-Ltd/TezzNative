@@ -1,0 +1,2 @@
+fn half(value:f16) -> f64:
+  ret value

@@ -2,6 +2,7 @@
 // Focus: concise, NumPy-style core operations without runtime overhead.
 import "intrin"
 import "ai_kernels"
+import "math"
 
 struct Vec:
   data:*float
@@ -337,28 +338,17 @@ fn _clamp_f(x:float, lo:float, hi:float) -> float:
   ret x
 
 fn _fast_sigmoid_f(x:float) -> float:
-  ax:float = _abs_f(x)
-  ret 0.5 * (x / (1.0 + ax)) + 0.5
+  if x >= 0.0: ret 1.0 / (1.0 + math.exp(0.0 - x))
+  e:float = math.exp(x)
+  ret e / (1.0 + e)
 
 fn _fast_exp_f(x:float) -> float:
-  xc:float = _clamp_f(x, 0.0 - 10.0, 10.0)
-  x2:float = xc * xc
-  x3:float = x2 * xc
-  x4:float = x3 * xc
-  x5:float = x4 * xc
-  ret 1.0 + xc + (0.5 * x2) + ((1.0 / 6.0) * x3) + ((1.0 / 24.0) * x4) + ((1.0 / 120.0) * x5)
+  ret math.exp(x)
 
 fn _inv_sqrt_f(x:float) -> float:
   if x <= 0.0:
     ret 0.0
-  y:float = 1.0
-  if x > 1.0:
-    y = 1.0 / x
-  i:int = 0
-  while i < 6:
-    y = y * (1.5 - (0.5 * x * y * y))
-    i = i + 1
-  ret y
+  ret 1.0 / math.sqrt(x)
 
 fn f32_matmul(out:*float, a:*float, b:*float, m:int, n:int, k:int) -> int:
   if out == 0 || a == 0 || b == 0:

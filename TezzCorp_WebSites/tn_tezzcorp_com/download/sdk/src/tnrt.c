@@ -25,6 +25,8 @@
 #include <time.h>
 #include <ctype.h>
 #include <math.h>
+#include "native_abi.h"
+#include "tls_verify.h"
 #if defined(TN_TLS_OPENSSL) && !defined(_WIN32)
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -98,6 +100,10 @@ static int tn_net_init_impl(void);
 #ifndef _WIN32
 static int tn_net_set_timeout_impl(tn_sock_t s, long long ms);
 #endif
+
+TN_NATIVE_API void tn_sys_exit(long long code){
+  exit((int)code);
+}
 
 static int tn_mul_overflow_size(long long a, long long b, size_t* out){
   if(a <= 0 || b <= 0){
@@ -381,6 +387,7 @@ typedef struct tn_tls_policy_cfg {
 } tn_tls_policy_cfg;
 
 static tn_tls_policy_cfg g_tn_tls_policy = {0, 0, 0, {0}};
+static long long g_tn_tls_last_error = 0;
 
 static int tn_tls_hex_nibble(int c){
   if(c >= '0' && c <= '9') return c - '0';
@@ -475,10 +482,7 @@ static int tn_tls_policy_build_request(long long min_version,
 #endif
 
 #if defined(TN_NPU_ONNXRUNTIME)
-#include <onnxruntime_c_api.h>
-#if defined(USE_OPENVINO)
-#include <onnxruntime_provider_factory.h>
-#endif
+#error "TN_NPU_ONNXRUNTIME did not select a dedicated NPU; no verified NPU provider is implemented"
 #endif
 
 #if defined(TN_TLS_OPENSSL) && !defined(_WIN32)
@@ -527,7 +531,7 @@ static int tn_tls_verify_pin_ossl(tn_tls_ossl* t, const tn_tls_policy_cfg* polic
   int ok = X509_digest(cert, EVP_sha256(), md, &mdlen);
   X509_free(cert);
   if(ok != 1 || mdlen != 32) return -1;
-  return (memcmp(md, pol->pin_sha256, 32) == 0) ? 0 : -1;
+  return tn_tls_pin_equal(md,pol->pin_sha256) ? 0 : -1;
 }
 
 static tn_tls_ossl* tn_tls_connect_ossl_policy(const char* host, long long port, const tn_tls_policy_cfg* policy){
@@ -538,6 +542,9 @@ static tn_tls_ossl* tn_tls_connect_ossl_policy(const char* host, long long port,
 
   SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
   if(!ctx) return NULL;
+  if(!tn_tls_verify_context(ctx)){
+    SSL_CTX_free(ctx); return NULL;
+  }
 
   if(pol->min_version == 13){
 #ifdef TLS1_3_VERSION
@@ -549,7 +556,7 @@ static tn_tls_ossl* tn_tls_connect_ossl_policy(const char* host, long long port,
     SSL_CTX_free(ctx);
     return NULL;
 #endif
-  } else if(pol->min_version == 12){
+  } else if(pol->min_version == 12 || pol->min_version == 0){
 #ifdef TLS1_2_VERSION
     if(SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION) != 1){
       SSL_CTX_free(ctx);
@@ -581,10 +588,11 @@ static tn_tls_ossl* tn_tls_connect_ossl_policy(const char* host, long long port,
     SSL_CTX_free(ctx);
     return NULL;
   }
-  SSL_set_fd(ssl, sock);
-  if(host && host[0]) SSL_set_tlsext_host_name(ssl, host);
+  if(SSL_set_fd(ssl,sock)!=1 || !tn_tls_verify_hostname(ssl,host)){
+    SSL_free(ssl); close(sock); SSL_CTX_free(ctx); return NULL;
+  }
 
-  if(SSL_connect(ssl) != 1){
+  if(SSL_connect(ssl) != 1 || SSL_get_verify_result(ssl)!=X509_V_OK){
     SSL_free(ssl);
     close(sock);
     SSL_CTX_free(ctx);
@@ -660,11 +668,11 @@ static void tn_tls_free_ossl(tn_tls_ossl* t){
 #endif
 
 #ifdef _WIN32
-  #define TN_EXPORT __declspec(dllexport)
+  #define TN_EXPORT TN_NATIVE_API
   #include <direct.h>
   #include <io.h>
 #else
-  #define TN_EXPORT
+  #define TN_EXPORT TN_NATIVE_API
   #include <dirent.h>
   #include <unistd.h>
   #include <sys/socket.h>
@@ -1981,7 +1989,7 @@ static int tn_tls_verify_pin_win(tn_tls* t, const tn_tls_policy_cfg* policy){
   BOOL ok = CertGetCertificateContextProperty(cert, CERT_SHA256_HASH_PROP_ID, hash, &hash_len);
   CertFreeCertificateContext(cert);
   if(!ok || hash_len != 32) return -1;
-  return (memcmp(hash, pol->pin_sha256, 32) == 0) ? 0 : -1;
+  return tn_tls_pin_equal(hash,pol->pin_sha256) ? 0 : -1;
 }
 
 static SOCKET tn_tcp_connect(const char* host, long long port){
@@ -2542,22 +2550,18 @@ TN_EXPORT unsigned char* tn_read_file(unsigned char* path){
 }
 
 TN_EXPORT long long tn_write_file(unsigned char* path, unsigned char* data, long long len){
+  // Validate before opening with truncation; invalid calls preserve the file.
+  if(!path || len<0 || (!data && len>0) ||
+     (unsigned long long)len>(unsigned long long)SIZE_MAX) return -1;
   const char* p = (const char*)path;
   FILE* f = fopen(p ? p : "", "wb");
   if(!f) return -1;
-  if(len < 0){
-    fclose(f);
-    return -1;
-  }
   size_t n = 0;
   if(data && len > 0){
-    if((unsigned long long)len > (unsigned long long)SIZE_MAX){
-      fclose(f);
-      return -1;
-    }
     n = fwrite(data, 1, (size_t)len, f);
   }
-  fclose(f);
+  int closed = fclose(f);
+  if(n!=(size_t)len || closed!=0) return -1;
   return (long long)n;
 }
 
@@ -2886,6 +2890,8 @@ TN_EXPORT long long tn_os_system(unsigned char* cmd){
 #endif
 
 TN_EXPORT long long tn_io_pipe_create(long long* read_fd, long long* write_fd) {
+  if(!read_fd || !write_fd || read_fd==write_fd) return -1;
+  *read_fd=-1; *write_fd=-1;
   int fds[2];
 #ifdef _WIN32
   int r = _pipe(fds, 4096, _O_BINARY);
@@ -2901,7 +2907,10 @@ TN_EXPORT long long tn_io_pipe_create(long long* read_fd, long long* write_fd) {
 }
 
 TN_EXPORT long long tn_io_fd_read(long long fd, unsigned char* buf, long long n) {
+  if(fd<0 || fd>INT_MAX || n<0 || (!buf && n>0) ||
+     (unsigned long long)n>(unsigned long long)SIZE_MAX) return -1;
 #ifdef _WIN32
+  if(n>INT_MAX) return -1;
   return _read((int)fd, buf, (unsigned int)n);
 #else
   return read((int)fd, buf, (size_t)n);
@@ -2909,7 +2918,10 @@ TN_EXPORT long long tn_io_fd_read(long long fd, unsigned char* buf, long long n)
 }
 
 TN_EXPORT long long tn_io_fd_write(long long fd, unsigned char* buf, long long n) {
+  if(fd<0 || fd>INT_MAX || n<0 || (!buf && n>0) ||
+     (unsigned long long)n>(unsigned long long)SIZE_MAX) return -1;
 #ifdef _WIN32
+  if(n>INT_MAX) return -1;
   return _write((int)fd, buf, (unsigned int)n);
 #else
   return write((int)fd, buf, (size_t)n);
@@ -2917,6 +2929,7 @@ TN_EXPORT long long tn_io_fd_write(long long fd, unsigned char* buf, long long n
 }
 
 TN_EXPORT long long tn_io_fd_close(long long fd) {
+  if(fd<0 || fd>INT_MAX) return -1;
 #ifdef _WIN32
   return _close((int)fd);
 #else
@@ -4182,285 +4195,23 @@ TN_EXPORT long long tn_gpu_launch_dxil_1d(unsigned char* path, long long grid, l
 
 #endif
 
-#if defined(TN_NPU_ONNXRUNTIME)
+#define TN_NPU_API(symbol, result_type, arity, parameters, values, pointer_result) TN_EXPORT result_type symbol parameters;
+#include "npu_api.h"
+#undef TN_NPU_API
 
-typedef struct tn_npu_model {
-  OrtSession* sess;
-} tn_npu_model;
-
-static const OrtApi* g_ort_api = NULL;
-static OrtEnv* g_ort_env = NULL;
-
-static int tn_ort_init(void){
-  if(g_ort_env) return 0;
-  g_ort_api = OrtGetApiBase()->GetApi(ORT_API_VERSION);
-  if(!g_ort_api) return -1;
-  OrtStatus* st = g_ort_api->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "tezznpu", &g_ort_env);
-  if(st){ g_ort_api->ReleaseStatus(st); g_ort_env = NULL; return -1; }
-  return 0;
-}
-
-static void tn_ort_shutdown(void){
-  if(g_ort_api && g_ort_env){
-    g_ort_api->ReleaseEnv(g_ort_env);
-    g_ort_env = NULL;
-  }
-}
-
-static int tn_npu_use_openvino(void){
-  const char* ep = getenv("TN_NPU_EP");
-  if(!ep) return 0;
-  return (strcmp(ep, "openvino")==0 || strcmp(ep, "OPENVINO")==0);
-}
-
-TN_EXPORT long long tn_npu_has_backend(void){
-  return tn_ort_init() == 0 ? 1 : 0;
-}
-TN_EXPORT long long tn_npu_init(void){
-  return tn_ort_init() == 0 ? 0 : -1;
-}
-TN_EXPORT long long tn_npu_shutdown(void){
-  tn_ort_shutdown();
-  return 0;
-}
-TN_EXPORT long long tn_npu_device_count(void){
-  return tn_ort_init() == 0 ? 1 : 0;
-}
-TN_EXPORT long long tn_npu_set_device(long long id){
-  (void)id;
-  return tn_ort_init() == 0 ? 0 : -1;
-}
-TN_EXPORT unsigned char* tn_npu_alloc(long long bytes){
-  if(bytes <= 0) return NULL;
-  return (unsigned char*)malloc((size_t)bytes);
-}
-TN_EXPORT long long tn_npu_free(unsigned char* p){
-  if(p) free(p);
-  return 0;
-}
-TN_EXPORT long long tn_npu_memcpy_to_device(unsigned char* dst, unsigned char* src, long long bytes){
-  if(!dst || !src || bytes <= 0) return -1;
-  memcpy(dst, src, (size_t)bytes);
-  return 0;
-}
-TN_EXPORT long long tn_npu_memcpy_to_host(unsigned char* dst, unsigned char* src, long long bytes){
-  if(!dst || !src || bytes <= 0) return -1;
-  memcpy(dst, src, (size_t)bytes);
-  return 0;
-}
-TN_EXPORT long long tn_npu_memset(unsigned char* dst, long long value, long long bytes){
-  if(!dst || bytes <= 0) return -1;
-  memset(dst, (int)value, (size_t)bytes);
-  return 0;
-}
-TN_EXPORT long long tn_npu_launch_1d(long long (*kernel)(unsigned char*), long long grid, long long block, unsigned char* args, long long args_size){
-  (void)kernel; (void)grid; (void)block; (void)args; (void)args_size;
-  return -2;
-}
-TN_EXPORT long long tn_npu_launch_dxil_1d(unsigned char* path, long long grid, long long block, unsigned char* args){
-  (void)path; (void)grid; (void)block; (void)args;
-  return -1;
-}
-TN_EXPORT unsigned char* tn_npu_backend_name(void){
-  if(tn_npu_use_openvino()) return tn_dup_cstr("onnxruntime-openvino");
-  return tn_dup_cstr("onnxruntime");
-}
-TN_EXPORT long long tn_npu_supports_dxil(void){ return 0; }
-
-TN_EXPORT long long tn_npu_model_load(unsigned char* path){
-  if(!path || tn_ort_init() != 0) return -1;
-  OrtSessionOptions* so = NULL;
-  OrtStatus* st = g_ort_api->CreateSessionOptions(&so);
-  if(st){ g_ort_api->ReleaseStatus(st); return -1; }
-  g_ort_api->SetSessionGraphOptimizationLevel(so, ORT_ENABLE_EXTENDED);
-#ifdef USE_OPENVINO
-  if(tn_npu_use_openvino()){
-    OrtOpenVINOProviderOptions opt;
-    memset(&opt, 0, sizeof(opt));
-    opt.device_type = "CPU_FP32";
-    OrtStatus* st2 = OrtSessionOptionsAppendExecutionProvider_OpenVINO(so, &opt);
-    if(st2){ g_ort_api->ReleaseStatus(st2); }
-  }
+#if (defined(TN_NPU_OPENVINO) + defined(TN_NPU_ORT_AMD) + defined(TN_NPU_ORT_QNN) + defined(TN_NPU_HAILORT)) > 1
+#error Select exactly one dedicated NPU provider per runtime build
 #endif
-  OrtSession* sess = NULL;
-  st = g_ort_api->CreateSession(g_ort_env, (const char*)path, so, &sess);
-  g_ort_api->ReleaseSessionOptions(so);
-  if(st){ g_ort_api->ReleaseStatus(st); return -1; }
-  tn_npu_model* m = (tn_npu_model*)malloc(sizeof(tn_npu_model));
-  if(!m){ g_ort_api->ReleaseSession(sess); return -1; }
-  m->sess = sess;
-  return (long long)(intptr_t)m;
-}
-
-TN_EXPORT long long tn_npu_model_free(long long h){
-  tn_npu_model* m = (tn_npu_model*)(intptr_t)h;
-  if(!m) return -1;
-  if(g_ort_api && m->sess) g_ort_api->ReleaseSession(m->sess);
-  free(m);
-  return 0;
-}
-
-TN_EXPORT long long tn_npu_model_run_f64_1d(long long h, double* input, long long input_len, double* output, long long output_len){
-  tn_npu_model* m = (tn_npu_model*)(intptr_t)h;
-  if(!m || !m->sess || !input || !output || input_len <= 0 || output_len <= 0) return -1;
-  if(tn_ort_init() != 0) return -1;
-  OrtAllocator* alloc = NULL;
-  OrtStatus* st = g_ort_api->GetAllocatorWithDefaultOptions(&alloc);
-  if(st){
-    g_ort_api->ReleaseStatus(st);
-    return -1;
-  }
-
-  char* in_name = NULL;
-  char* out_name = NULL;
-  st = g_ort_api->SessionGetInputName(m->sess, 0, alloc, &in_name);
-  if(st){
-    g_ort_api->ReleaseStatus(st);
-    return -1;
-  }
-  st = g_ort_api->SessionGetOutputName(m->sess, 0, alloc, &out_name);
-  if(st){
-    g_ort_api->ReleaseStatus(st);
-    alloc->Free(alloc, in_name);
-    return -1;
-  }
-
-  size_t in_bytes = 0;
-  size_t out_bytes = 0;
-  if(tn_mul_overflow_size(input_len, (long long)sizeof(double), &in_bytes)) return -1;
-  if(tn_mul_overflow_size(output_len, (long long)sizeof(double), &out_bytes)) return -1;
-
-  int64_t in_shape[1]; in_shape[0] = (int64_t)input_len;
-  int64_t out_shape[1]; out_shape[0] = (int64_t)output_len;
-
-  OrtMemoryInfo* mem = NULL;
-  st = g_ort_api->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &mem);
-  if(st){ g_ort_api->ReleaseStatus(st); alloc->Free(alloc, in_name); alloc->Free(alloc, out_name); return -1; }
-
-  OrtValue* in_val = NULL;
-  OrtValue* out_val = NULL;
-  st = g_ort_api->CreateTensorWithDataAsOrtValue(mem, input, in_bytes, in_shape, 1, ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE, &in_val);
-  if(st){
-    g_ort_api->ReleaseStatus(st);
-    g_ort_api->ReleaseMemoryInfo(mem);
-    alloc->Free(alloc, in_name);
-    alloc->Free(alloc, out_name);
-    return -1;
-  }
-  st = g_ort_api->CreateTensorWithDataAsOrtValue(mem, output, out_bytes, out_shape, 1, ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE, &out_val);
-  if(st){
-    g_ort_api->ReleaseStatus(st);
-    g_ort_api->ReleaseValue(in_val);
-    g_ort_api->ReleaseMemoryInfo(mem);
-    alloc->Free(alloc, in_name);
-    alloc->Free(alloc, out_name);
-    return -1;
-  }
-
-  const char* in_names[1] = { in_name };
-  const char* out_names[1] = { out_name };
-  OrtValue* out_vals[1] = { out_val };
-  const OrtValue* in_vals[1] = { in_val };
-
-  st = g_ort_api->Run(m->sess, NULL, in_names, in_vals, 1, out_names, 1, out_vals);
-  if(st){ g_ort_api->ReleaseStatus(st); }
-
-  g_ort_api->ReleaseValue(in_val);
-  g_ort_api->ReleaseValue(out_val);
-  g_ort_api->ReleaseMemoryInfo(mem);
-  alloc->Free(alloc, in_name);
-  alloc->Free(alloc, out_name);
-  return st ? -1 : 0;
-}
-
-#elif defined(_WIN32) && defined(TN_GPU_DIRECTML)
-
-TN_EXPORT long long tn_npu_has_backend(void){ return tn_gpu_has_backend(); }
-TN_EXPORT long long tn_npu_init(void){ return tn_gpu_init(); }
-TN_EXPORT long long tn_npu_shutdown(void){ return tn_gpu_shutdown(); }
-TN_EXPORT long long tn_npu_device_count(void){ return tn_gpu_device_count(); }
-TN_EXPORT long long tn_npu_set_device(long long id){ return tn_gpu_set_device(id); }
-TN_EXPORT unsigned char* tn_npu_alloc(long long bytes){ return tn_gpu_alloc(bytes); }
-TN_EXPORT long long tn_npu_free(unsigned char* p){ return tn_gpu_free(p); }
-TN_EXPORT long long tn_npu_memcpy_to_device(unsigned char* dst, unsigned char* src, long long bytes){
-  return tn_gpu_memcpy_to_device(dst, src, bytes);
-}
-TN_EXPORT long long tn_npu_memcpy_to_host(unsigned char* dst, unsigned char* src, long long bytes){
-  return tn_gpu_memcpy_to_host(dst, src, bytes);
-}
-TN_EXPORT long long tn_npu_memset(unsigned char* dst, long long value, long long bytes){
-  return tn_gpu_memset(dst, value, bytes);
-}
-TN_EXPORT long long tn_npu_launch_1d(long long (*kernel)(unsigned char*), long long grid, long long block, unsigned char* args, long long args_size){
-  (void)kernel; (void)grid; (void)block; (void)args; (void)args_size;
-  return -2;
-}
-TN_EXPORT long long tn_npu_launch_dxil_1d(unsigned char* path, long long grid, long long block, unsigned char* args){
-  return tn_gpu_launch_dxil_1d(path, grid, block, args);
-}
-TN_EXPORT unsigned char* tn_npu_backend_name(void){
-  return tn_dup_cstr("directml");
-}
-TN_EXPORT long long tn_npu_supports_dxil(void){
-  return 1;
-}
-TN_EXPORT long long tn_npu_model_load(unsigned char* path){
-  (void)path;
-  return -1;
-}
-TN_EXPORT long long tn_npu_model_free(long long h){
-  (void)h;
-  return -1;
-}
-TN_EXPORT long long tn_npu_model_run_f64_1d(long long h, double* input, long long input_len, double* output, long long output_len){
-  (void)h; (void)input; (void)input_len; (void)output; (void)output_len;
-  return -1;
-}
-
+#if defined(TN_NPU_OPENVINO)
+#include "../runtime/npu/openvino.h"
+#elif defined(TN_NPU_ORT_AMD) || defined(TN_NPU_ORT_QNN)
+#include "../runtime/npu/ort.h"
+#elif defined(TN_NPU_HAILORT)
+#include "../runtime/npu/hailo.h"
 #else
-
-TN_EXPORT long long tn_npu_has_backend(void){ return 0; }
-TN_EXPORT long long tn_npu_init(void){ return -1; }
-TN_EXPORT long long tn_npu_shutdown(void){ return 0; }
-TN_EXPORT long long tn_npu_device_count(void){ return 0; }
-TN_EXPORT long long tn_npu_set_device(long long id){ (void)id; return -1; }
-TN_EXPORT unsigned char* tn_npu_alloc(long long bytes){ (void)bytes; return NULL; }
-TN_EXPORT long long tn_npu_free(unsigned char* p){ (void)p; return 0; }
-TN_EXPORT long long tn_npu_memcpy_to_device(unsigned char* dst, unsigned char* src, long long bytes){
-  (void)dst; (void)src; (void)bytes;
-  return -1;
-}
-TN_EXPORT long long tn_npu_memcpy_to_host(unsigned char* dst, unsigned char* src, long long bytes){
-  (void)dst; (void)src; (void)bytes;
-  return -1;
-}
-TN_EXPORT long long tn_npu_memset(unsigned char* dst, long long value, long long bytes){
-  (void)dst; (void)value; (void)bytes;
-  return -1;
-}
-TN_EXPORT long long tn_npu_launch_1d(long long (*kernel)(unsigned char*), long long grid, long long block, unsigned char* args, long long args_size){
-  (void)kernel; (void)grid; (void)block; (void)args; (void)args_size;
-  return -1;
-}
-TN_EXPORT long long tn_npu_launch_dxil_1d(unsigned char* path, long long grid, long long block, unsigned char* args){
-  (void)path; (void)grid; (void)block; (void)args;
-  return -1;
-}
-TN_EXPORT unsigned char* tn_npu_backend_name(void){ return tn_dup_cstr("none"); }
-TN_EXPORT long long tn_npu_supports_dxil(void){ return 0; }
-TN_EXPORT long long tn_npu_model_load(unsigned char* path){
-  (void)path;
-  return -1;
-}
-TN_EXPORT long long tn_npu_model_free(long long h){
-  (void)h;
-  return -1;
-}
-TN_EXPORT long long tn_npu_model_run_f64_1d(long long h, double* input, long long input_len, double* output, long long output_len){
-  (void)h; (void)input; (void)input_len; (void)output; (void)output_len;
-  return -1;
-}
+#include "../runtime/npu/unavailable.h"
 #endif
+#include "../runtime/npu/raw_unsupported.h"
 
 TN_EXPORT long long tn_net_af_inet(void){ return (long long)AF_INET; }
 TN_EXPORT long long tn_net_af_inet6(void){ return (long long)AF_INET6; }
@@ -4616,15 +4367,19 @@ TN_EXPORT unsigned char* tn_net_resolve(unsigned char* host, long long port){
 }
 
 TN_EXPORT long long tn_tls_connect(unsigned char* host, long long port){
+  if(!host || !host[0] || port<1 || port>65535){ g_tn_tls_last_error=-1; return -1; }
 #ifdef _WIN32
   tn_tls* t = tn_tls_connect_impl((const char*)host, port);
+  g_tn_tls_last_error=t ? 0 : -1;
   return t ? (long long)(intptr_t)t : -1;
 #else
   #if defined(TN_TLS_OPENSSL)
     tn_tls_ossl* t = tn_tls_connect_ossl((const char*)host, port);
+    g_tn_tls_last_error=t ? 0 : -1;
     return t ? (long long)(intptr_t)t : -1;
   #else
     (void)host; (void)port;
+    g_tn_tls_last_error=-2;
     return -2;
   #endif
 #endif
@@ -4635,16 +4390,20 @@ TN_EXPORT long long tn_tls_connect_ex(unsigned char* host,
                                       long long min_version,
                                       long long handshake_timeout_ms,
                                       unsigned char* pin_hex){
+  if(!host || !host[0] || port<1 || port>65535){ g_tn_tls_last_error=-1; return -1; }
   tn_tls_policy_cfg req_policy;
   if(tn_tls_policy_build_request(min_version, handshake_timeout_ms, (const char*)pin_hex, &req_policy) != 0){
+    g_tn_tls_last_error=-1;
     return -1;
   }
 #ifdef _WIN32
   tn_tls* t = tn_tls_connect_impl_policy((const char*)host, port, &req_policy);
+  g_tn_tls_last_error=t ? 0 : -1;
   return t ? (long long)(intptr_t)t : -1;
 #else
   #if defined(TN_TLS_OPENSSL)
     tn_tls_ossl* t = tn_tls_connect_ossl_policy((const char*)host, port, &req_policy);
+    g_tn_tls_last_error=t ? 0 : -1;
     return t ? (long long)(intptr_t)t : -1;
   #else
     (void)host; (void)port;
@@ -4654,6 +4413,7 @@ TN_EXPORT long long tn_tls_connect_ex(unsigned char* host,
 }
 
 TN_EXPORT long long tn_tls_send(long long handle, unsigned char* buf, long long len){
+  if(handle<=0 || !buf || len<0 || len>INT_MAX){ g_tn_tls_last_error=-1; return -1; }
 #ifdef _WIN32
   tn_tls* t = (tn_tls*)(intptr_t)handle;
   return tn_tls_send_impl(t, buf, len);
@@ -4669,6 +4429,7 @@ TN_EXPORT long long tn_tls_send(long long handle, unsigned char* buf, long long 
 }
 
 TN_EXPORT long long tn_tls_recv(long long handle, unsigned char* buf, long long len){
+  if(handle<=0 || !buf || len<0 || len>INT_MAX){ g_tn_tls_last_error=-1; return -1; }
 #ifdef _WIN32
   tn_tls* t = (tn_tls*)(intptr_t)handle;
   return tn_tls_recv_impl(t, buf, len);
@@ -4684,6 +4445,7 @@ TN_EXPORT long long tn_tls_recv(long long handle, unsigned char* buf, long long 
 }
 
 TN_EXPORT long long tn_tls_close(long long handle){
+  if(handle<=0){ g_tn_tls_last_error=-1; return -1; }
 #ifdef _WIN32
   tn_tls* t = (tn_tls*)(intptr_t)handle;
   tn_tls_free(t);
@@ -4703,6 +4465,8 @@ TN_EXPORT long long tn_tls_close(long long handle){
 TN_EXPORT long long tn_tls_policy_reset(void){
   return (long long)tn_tls_policy_reset_impl();
 }
+
+TN_EXPORT long long tn_tls_last_error(void){ return g_tn_tls_last_error; }
 
 TN_EXPORT long long tn_tls_policy_set_min(long long min_version){
   return (long long)tn_tls_policy_set_min_impl(min_version);
@@ -4764,6 +4528,7 @@ typedef MCIERROR (WINAPI *mciSendStringA_t)(LPCSTR, LPSTR, UINT, HANDLE);
 #endif
 
 TN_EXPORT long long tn_tts_play_pcm(long long* pcm, long long len, long long rate) {
+  if (!pcm || rate < 8000 || rate > 192000 || len <= 0 || len > rate * 300) return -1;
 #ifdef _WIN32
   HMODULE winmm = LoadLibraryA("winmm.dll");
   if (!winmm) return -1;
@@ -4773,12 +4538,16 @@ TN_EXPORT long long tn_tts_play_pcm(long long* pcm, long long len, long long rat
     return -1;
   }
 
-  char temp_path[MAX_PATH];
-  GetTempPathA(MAX_PATH, temp_path);
-  strcat(temp_path, "tezz_tts_temp.wav");
+  char temp_dir[MAX_PATH], temp_path[MAX_PATH];
+  DWORD temp_len = GetTempPathA(MAX_PATH, temp_dir);
+  if (!temp_len || temp_len >= MAX_PATH || !GetTempFileNameA(temp_dir, "tzz", 0, temp_path)) {
+    FreeLibrary(winmm);
+    return -1;
+  }
 
   FILE* f = fopen(temp_path, "wb");
   if (!f) {
+    DeleteFileA(temp_path);
     FreeLibrary(winmm);
     return -1;
   }
@@ -4813,28 +4582,28 @@ TN_EXPORT long long tn_tts_play_pcm(long long* pcm, long long len, long long rat
   hdr[42] = (unsigned char)((data_bytes >> 16) & 0xFF);
   hdr[43] = (unsigned char)((data_bytes >> 24) & 0xFF);
 
-  fwrite(hdr, 1, 44, f);
+  int written = fwrite(hdr, 1, 44, f) == 44;
   for (long long i = 0; i < len; i++) {
     long long v = pcm[i];
     if (v > 32767) v = 32767;
-    if (v < -32767) v = -32767;
+    if (v < -32768) v = -32768;
     short s = (short)v;
-    fwrite(&s, 2, 1, f);
+    if (fwrite(&s, 2, 1, f) != 1) { written = 0; break; }
   }
-  fclose(f);
+  if (fclose(f) != 0) written = 0;
 
-  play_sound(temp_path, NULL, 0x0002 | 0x0000); // SND_FILENAME | SND_SYNC
+  BOOL played = written ? play_sound(temp_path, NULL, 0x00020000 | 0x0000) : FALSE; // SND_FILENAME | SND_SYNC
 
   DeleteFileA(temp_path);
   FreeLibrary(winmm);
-  return 0;
+  return played ? 0 : -1;
 #else
-  printf("[TTS speak] Playback of %lld samples at %lld Hz is simulated on this OS.\n", len, rate);
-  return 0;
+  return -1;
 #endif
 }
 
 TN_EXPORT long long tn_stt_capture_mic(long long* pcm, long long n_samples, long long rate) {
+  if (!pcm || rate < 8000 || rate > 192000 || n_samples <= 0 || n_samples > rate * 30) return -1;
 #ifdef _WIN32
   HMODULE winmm = LoadLibraryA("winmm.dll");
   if (!winmm) return -1;
@@ -4844,49 +4613,61 @@ TN_EXPORT long long tn_stt_capture_mic(long long* pcm, long long n_samples, long
     return -1;
   }
 
-  mci_send_string("open new type waveaudio alias recsound", NULL, 0, NULL);
-  char set_cmd[128];
-  sprintf(set_cmd, "set recsound bitspersample 16 samplespersec %lld alignment 2 bytespersec %lld", rate, rate * 2);
-  mci_send_string(set_cmd, NULL, 0, NULL);
-
-  mci_send_string("record recsound", NULL, 0, NULL);
+  static LONG capture_id = 0;
+  char alias[64], command[MAX_PATH + 128];
+  snprintf(alias, sizeof(alias), "tzzrec_%lu_%ld", (unsigned long)GetCurrentProcessId(), (long)InterlockedIncrement(&capture_id));
+  snprintf(command, sizeof(command), "open new type waveaudio alias %s", alias);
+  if (mci_send_string(command, NULL, 0, NULL) != 0) { FreeLibrary(winmm); return -1; }
+  int opened = 1;
+  long long result = -1;
+  char temp_dir[MAX_PATH], temp_path[MAX_PATH] = {0};
+  snprintf(command, sizeof(command), "set %s channels 1 bitspersample 16 samplespersec %lld alignment 2 bytespersec %lld", alias, rate, rate * 2);
+  if (mci_send_string(command, NULL, 0, NULL) != 0) goto capture_done;
+  snprintf(command, sizeof(command), "record %s", alias);
+  if (mci_send_string(command, NULL, 0, NULL) != 0) goto capture_done;
   long long duration_ms = (n_samples * 1000) / rate;
   Sleep((DWORD)duration_ms);
 
-  mci_send_string("stop recsound", NULL, 0, NULL);
-  char temp_path[MAX_PATH];
-  GetTempPathA(MAX_PATH, temp_path);
-  strcat(temp_path, "tezz_stt_temp.wav");
-  DeleteFileA(temp_path);
-
-  char save_cmd[MAX_PATH + 32];
-  sprintf(save_cmd, "save recsound \"%s\"", temp_path);
-  mci_send_string(save_cmd, NULL, 0, NULL);
-  mci_send_string("close recsound", NULL, 0, NULL);
+  snprintf(command, sizeof(command), "stop %s", alias);
+  if (mci_send_string(command, NULL, 0, NULL) != 0) goto capture_done;
+  DWORD temp_len = GetTempPathA(MAX_PATH, temp_dir);
+  if (!temp_len || temp_len >= MAX_PATH || !GetTempFileNameA(temp_dir, "tzz", 0, temp_path)) goto capture_done;
+  snprintf(command, sizeof(command), "save %s \"%s\"", alias, temp_path);
+  if (mci_send_string(command, NULL, 0, NULL) != 0) goto capture_done;
+  snprintf(command, sizeof(command), "close %s", alias);
+  if (mci_send_string(command, NULL, 0, NULL) != 0) goto capture_done;
+  opened = 0;
 
   FILE* f = fopen(temp_path, "rb");
   if (!f) {
-    FreeLibrary(winmm);
-    return -1;
+    goto capture_done;
   }
 
-  fseek(f, 44, SEEK_SET);
+  unsigned char header[44];
+  if (fread(header, 1, sizeof(header), f) != sizeof(header) || memcmp(header, "RIFF", 4) ||
+      memcmp(header + 8, "WAVEfmt ", 8) || memcmp(header + 36, "data", 4) ||
+      header[20] != 1 || header[21] || header[22] != 1 || header[23] || header[34] != 16 || header[35]) {
+    fclose(f);
+    goto capture_done;
+  }
   long long count = 0;
   short s = 0;
   while (count < n_samples && fread(&s, 2, 1, f) == 1) {
     pcm[count] = (long long)s;
     count++;
   }
-  fclose(f);
-  DeleteFileA(temp_path);
-  FreeLibrary(winmm);
-  return count;
-#else
-  printf("[STT mic] Simulated microphone recording on this OS.\n");
-  for (long long i = 0; i < n_samples; i++) {
-    pcm[i] = 0;
+  if (!ferror(f) && count > 0) result = count;
+  if (fclose(f) != 0) result = -1;
+capture_done:
+  if (opened) {
+    snprintf(command, sizeof(command), "close %s", alias);
+    mci_send_string(command, NULL, 0, NULL);
   }
-  return n_samples;
+  if (temp_path[0]) DeleteFileA(temp_path);
+  FreeLibrary(winmm);
+  return result;
+#else
+  return -1;
 #endif
 }
 

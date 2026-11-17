@@ -1,0 +1,70 @@
+// Shared types, constants, and state for tnx.
+import "io"
+
+let TNX_NULL:int = 0
+
+let TNX_BOOL:int = 1
+
+let TNX_INT:int = 2
+
+let TNX_FLOAT:int = 3
+
+let TNX_STR:int = 4
+
+let TNX_ARR:int = 4 + 1
+
+let TNX_OBJ:int = 4 + 2
+
+struct TnxValue:
+  kind:int
+  i:int
+  f:float
+  s:*char
+  head:*TnxNode
+
+struct TnxNode:
+  key:*char
+  val:*TnxValue
+  next:*TnxNode
+
+struct TnxBytes:
+  buf:*char
+  len:int
+
+struct TnxBb:
+  buf:*char
+  len:int
+  cap:int
+
+struct TnxSb:
+  buf:*char
+  len:int
+  cap:int
+
+@inline
+fn _get_TNX_NULL() -> int:
+  ret TNX_NULL
+
+@inline
+fn _get_TNX_BOOL() -> int:
+  ret TNX_BOOL
+
+@inline
+fn _get_TNX_INT() -> int:
+  ret TNX_INT
+
+@inline
+fn _get_TNX_FLOAT() -> int:
+  ret TNX_FLOAT
+
+@inline
+fn _get_TNX_STR() -> int:
+  ret TNX_STR
+
+@inline
+fn _get_TNX_ARR() -> int:
+  ret TNX_ARR
+
+@inline
+fn _get_TNX_OBJ() -> int:
+  ret TNX_OBJ

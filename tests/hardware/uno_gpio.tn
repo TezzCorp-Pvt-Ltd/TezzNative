@@ -1,0 +1,23 @@
+import "arduino.uno"
+
+fn main() -> int:
+  if arduino.uno.pin_mode(13, arduino.uno.OUTPUT()) != 0: ret 1
+  if arduino.uno.digital_write(13, 1) != 0: ret 2
+  if arduino.uno.digital_read(13) != 1: ret 3
+  arduino.uno.delay_us(100)
+  if arduino.uno.digital_toggle(13) != 0: ret 4
+  if arduino.uno.digital_read(13) != 0: ret 5
+  arduino.uno.delay_us(100)
+  if arduino.uno.pin_mode(8, arduino.uno.OUTPUT()) != 0: ret 6
+  if arduino.uno.port_write(arduino.uno.PORT_B(), 1, 1) != 0: ret 7
+  if arduino.uno.port_write(arduino.uno.PORT_B(), 32, 32) != 0: ret 8
+  if (arduino.uno.port_read(arduino.uno.PORT_B()) & 33) != 33: ret 9
+  if arduino.uno.pin_mode(7, arduino.uno.INPUT_PULLUP()) != 0: ret 10
+  if arduino.uno.pin_mode(2, arduino.uno.INPUT()) != 0: ret 11
+  if arduino.uno.digital_read(2) != 1: ret 12
+  if arduino.uno.pin_mode(-1, 1) != -1: ret 13
+  if arduino.uno.digital_write(20, 1) != -1: ret 14
+  if arduino.uno.digital_write(13, 2) != -1: ret 15
+  if arduino.uno.port_write(arduino.uno.PORT_B(), 64, 64) != -1: ret 16
+  if arduino.uno.port_read(3) != -1: ret 17
+  ret 0

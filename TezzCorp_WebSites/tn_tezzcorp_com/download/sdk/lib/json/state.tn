@@ -1,0 +1,104 @@
+// Shared declarations and the single owner of module state.
+
+let _json_err:int     = 0
+
+let _json_err_pos:int = 0
+
+let JSON_NULL:int   = 0
+
+let JSON_BOOL:int   = 1
+
+let JSON_INT:int    = 2
+
+let JSON_FLOAT:int  = 3
+
+let JSON_STRING:int = 4
+
+let JSON_ARRAY:int  = 5
+
+let JSON_OBJECT:int = 6
+
+// ---------------------------------------------------------------------------
+// Struct
+// ---------------------------------------------------------------------------
+
+struct JsonVal:
+  kind:int        // one of JSON_* constants
+  bval:int        // JSON_BOOL: 0/1
+  ival:int        // JSON_INT
+  fval:float      // JSON_FLOAT
+  sval:str        // JSON_STRING: heap-owned, null-terminated
+  count:int       // JSON_ARRAY/OBJECT: number of children
+  cap:int         // allocated capacity of children[]
+  children:*JsonVal // heap array of count JsonVal children
+  keys:str        // JSON_OBJECT: newline-separated key list (heap-owned)
+  keys_len:int    // byte length of keys buffer
+  keys_cap:int    // allocated capacity
+
+// ---------------------------------------------------------------------------
+// Internal: whitespace and character helpers
+// ---------------------------------------------------------------------------
+
+struct _JsonFrame:
+  parent:*JsonVal
+  key:str
+  is_object:int
+
+let _JSON_STACK_MAX:int = 256
+
+struct _JsonSer:
+  buf:*char
+  pos:int
+  cap:int
+
+struct _SerFrame:
+  val:*JsonVal
+  idx:int        // current child index
+  key_pos:int    // position in the key string
+  emitted_open:int
+
+let _SER_STACK_MAX:int = 128
+
+fn _state__json_err() -> *int:
+  unsafe:
+    ret &_json_err
+
+fn _state__json_err_pos() -> *int:
+  unsafe:
+    ret &_json_err_pos
+
+fn _state_JSON_NULL() -> *int:
+  unsafe:
+    ret &JSON_NULL
+
+fn _state_JSON_BOOL() -> *int:
+  unsafe:
+    ret &JSON_BOOL
+
+fn _state_JSON_INT() -> *int:
+  unsafe:
+    ret &JSON_INT
+
+fn _state_JSON_FLOAT() -> *int:
+  unsafe:
+    ret &JSON_FLOAT
+
+fn _state_JSON_STRING() -> *int:
+  unsafe:
+    ret &JSON_STRING
+
+fn _state_JSON_ARRAY() -> *int:
+  unsafe:
+    ret &JSON_ARRAY
+
+fn _state_JSON_OBJECT() -> *int:
+  unsafe:
+    ret &JSON_OBJECT
+
+fn _state__JSON_STACK_MAX() -> *int:
+  unsafe:
+    ret &_JSON_STACK_MAX
+
+fn _state__SER_STACK_MAX() -> *int:
+  unsafe:
+    ret &_SER_STACK_MAX

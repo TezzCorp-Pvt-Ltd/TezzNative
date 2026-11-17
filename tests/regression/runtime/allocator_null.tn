@@ -1,0 +1,14 @@
+fn main() -> int:
+  unsafe:
+    free(0 as *char)
+    values:*char = malloc(8)
+    if values == 0: ret 1
+    values[0] = 42 as char
+    free(values)
+    free(0 as *char)
+    reused:*char = malloc(8)
+    if reused == 0: ret 2
+    reused[0] = 17 as char
+    if reused[0] != 17 as char: ret 3
+    free(reused)
+  ret 0

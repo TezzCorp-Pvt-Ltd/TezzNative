@@ -1,0 +1,33 @@
+import "hardware"
+
+struct Pair:
+  first:int
+  second:int
+
+static let initialized:int = 17
+static let zeroed:[int;4]
+
+fn pair(a:int, b:int) -> Pair:
+  ret Pair{first:a, second:b}
+
+fn weighted(value:Pair, factor:int) -> int:
+  ret value.first + value.second * factor
+
+fn main() -> int:
+  if initialized != 17 || zeroed[3] != 0: ret 1
+  value:Pair = pair(7, 11)
+  if value.first != 7 || value.second != 11: ret 2
+  if weighted(value, 3) != 40: ret 3
+  if hardware.delay_us(-1) != -1: ret 4
+  before:int = hardware.micros()
+  if hardware.delay_us(1000) != 0: ret 5
+  if hardware.micros() - before < 1000: ret 6
+  previous:int = hardware.irq_disable()
+  if hardware.irq_state() != 0: ret 7
+  if hardware.irq_enable() != 0 || hardware.irq_state() != 1: ret 8
+  if previous == 0: hardware.irq_disable()
+  unsafe:
+    if hardware.uart_read(0 as *char, 0) != 0: ret 9
+    if hardware.uart_write(0 as *char, 1) != -1: ret 10
+  if hardware.write("TEZZ_HW_CORE_OK\n") != 16: ret 11
+  ret 0

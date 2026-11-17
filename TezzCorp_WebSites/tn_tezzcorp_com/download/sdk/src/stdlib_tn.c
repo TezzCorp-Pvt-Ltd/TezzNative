@@ -1,9 +1,12 @@
 // src/stdlib_tn.c
 #include "vm.h"
 #include "util.h"
+#include "tls_verify.h"
 #include "host_gui_backend.h"
+#include "../runtime/speech/speech.h"
 extern long long tn_tts_play_pcm(long long* pcm, long long len, long long rate);
 extern long long tn_stt_capture_mic(long long* pcm, long long n_samples, long long rate);
+extern long long tn_write_file(unsigned char* path, unsigned char* data, long long len);
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -264,7 +267,7 @@ static int tn_tls_verify_pin_ossl_vm(tn_tls_ossl_vm* t, const tn_tls_policy_cfg_
   int ok = X509_digest(cert, EVP_sha256(), md, &mdlen);
   X509_free(cert);
   if(ok != 1 || mdlen != 32) return -1;
-  return (memcmp(md, pol->pin_sha256, 32) == 0) ? 0 : -1;
+  return tn_tls_pin_equal(md,pol->pin_sha256) ? 0 : -1;
 }
 
 static tn_tls_ossl_vm* tn_tls_connect_ossl_with_policy_vm(const char* host,
@@ -281,6 +284,10 @@ static tn_tls_ossl_vm* tn_tls_connect_ossl_with_policy_vm(const char* host,
     return NULL;
   }
 
+  if(!tn_tls_verify_context(ctx)){
+    SSL_CTX_free(ctx); tls_set_last_err(-1); return NULL;
+  }
+
   if(pol->min_version == 13){
 #ifdef TLS1_3_VERSION
     if(SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION) != 1){
@@ -293,7 +300,7 @@ static tn_tls_ossl_vm* tn_tls_connect_ossl_with_policy_vm(const char* host,
     tls_set_last_err(-1);
     return NULL;
 #endif
-  } else if(pol->min_version == 12){
+  } else if(pol->min_version == 12 || pol->min_version == 0){
 #ifdef TLS1_2_VERSION
     if(SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION) != 1){
       SSL_CTX_free(ctx);
@@ -330,9 +337,10 @@ static tn_tls_ossl_vm* tn_tls_connect_ossl_with_policy_vm(const char* host,
     tls_set_last_err((long long)ERR_get_error());
     return NULL;
   }
-  SSL_set_fd(ssl, sock);
-  if(host && host[0]) SSL_set_tlsext_host_name(ssl, host);
-  if(SSL_connect(ssl) != 1){
+  if(SSL_set_fd(ssl,sock)!=1 || !tn_tls_verify_hostname(ssl,host)){
+    SSL_free(ssl); close(sock); SSL_CTX_free(ctx); tls_set_last_err(-1); return NULL;
+  }
+  if(SSL_connect(ssl) != 1 || SSL_get_verify_result(ssl)!=X509_V_OK){
     SSL_free(ssl);
     close(sock);
     SSL_CTX_free(ctx);
@@ -1763,7 +1771,7 @@ static int tn_tls_verify_pin_win_vm(tn_tls_vm* t, const tn_tls_policy_cfg_vm* po
     tls_set_last_err(-1);
     return -1;
   }
-  if(memcmp(hash, pol->pin_sha256, 32) != 0){
+  if(!tn_tls_pin_equal(hash,pol->pin_sha256)){
     tls_set_last_err(-1);
     return -1;
   }
@@ -2393,8 +2401,7 @@ int builtin_call(const char* name, int nlen, Value* args, int argc, Value* out){
   if((nlen==12 && strncmp(name,"sys.sys_exit",12)==0) ||
      (nlen==8 && strncmp(name,"sys_exit",8)==0)){
     if(argc!=1) die("sys_exit expects 1 arg");
-    out->k=V_I64; out->i=0; out->p=NULL; out->ty=NULL;
-    return 1;
+    exit((int)args[0].i);
   }
   /* say(...) : Python-like print
      - say(); prints newline
@@ -2867,30 +2874,9 @@ int builtin_call(const char* name, int nlen, Value* args, int argc, Value* out){
   /* write_file(path:*u8, data:*u8, len:i64)->i64 (bytes written or -1) */
   if(nlen==10 && strncmp(name,"write_file",10)==0){
     if(argc!=3) die("write_file expects 3 args");
-    const char* path = (const char*)args[0].p;
-    const unsigned char* data = (const unsigned char*)args[1].p;
-    long long len = args[2].i;
-    FILE* f = fopen(path?path:"", "wb");
-    if(!f){
-      out->k=V_I64; out->i=-1; out->p=NULL; out->ty=NULL;
-      return 1;
-    }
-    size_t n = 0;
-    if(len < 0){
-      fclose(f);
-      out->k=V_I64; out->i=-1; out->p=NULL; out->ty=NULL;
-      return 1;
-    }
-    if(data && len>0){
-      if((unsigned long long)len > (unsigned long long)SIZE_MAX){
-        fclose(f);
-        out->k=V_I64; out->i=-1; out->p=NULL; out->ty=NULL;
-        return 1;
-      }
-      n = fwrite(data, 1, (size_t)len, f);
-    }
-    fclose(f);
-    out->k=V_I64; out->i=(long long)n; out->p=NULL; out->ty=NULL;
+    out->k=V_I64; out->p=NULL; out->ty=NULL;
+    out->i=tn_write_file((unsigned char*)args[0].p,
+                         (unsigned char*)args[1].p,args[2].i);
     return 1;
   }
 
@@ -3180,6 +3166,44 @@ int builtin_call(const char* name, int nlen, Value* args, int argc, Value* out){
     out->k=V_I64; out->i=tn_color_enabled(); out->p=NULL; out->ty=NULL;
     return 1;
   }
+
+  /* Native speech models use integer handles and pointer output buffers. */
+  if(nlen==16 && !memcmp(name,"speech_file_open",16)){
+    if(argc!=2) die("speech_file_open has wrong arity");
+    out->k=V_PTR; out->p=tn_speech_file_open((const char*)args[0].p,args[1].i);
+    out->i=0; out->ty=NULL; return 1;
+  }
+#define SPEECH_BUILTIN(literal, arity, expression) \
+  if(nlen==(int)(sizeof(literal)-1) && !memcmp(name,literal,sizeof(literal)-1)){ \
+    if(argc!=(arity)) die(literal " has wrong arity"); \
+    out->k=V_I64; out->i=(expression); out->p=NULL; out->ty=NULL; return 1; \
+  }
+  SPEECH_BUILTIN("speech_stt_create",3,tn_speech_stt_create(args[0].i,args[1].i,args[2].i));
+  SPEECH_BUILTIN("speech_file_replace",2,tn_speech_file_replace((const char*)args[0].p,(const char*)args[1].p));
+  SPEECH_BUILTIN("speech_file_remove",1,tn_speech_file_remove((const char*)args[0].p));
+  SPEECH_BUILTIN("speech_ctc_loss_f32",7,tn_speech_ctc_loss_f32(args[0].i,args[1].i,args[2].i,(const int64_t*)args[3].p,args[4].i,args[5].i,(double*)args[6].p));
+  SPEECH_BUILTIN("speech_ctc_decode_f32",6,tn_speech_ctc_decode_f32(args[0].i,args[1].i,args[2].i,args[3].i,(int64_t*)args[4].p,args[5].i));
+  SPEECH_BUILTIN("speech_stt_free",1,tn_speech_stt_free(args[0].i));
+  SPEECH_BUILTIN("speech_stt_steps",1,tn_speech_stt_steps(args[0].i));
+  SPEECH_BUILTIN("speech_stt_text_reset",1,tn_speech_stt_text_reset(args[0].i));
+  SPEECH_BUILTIN("speech_stt_text_train",3,tn_speech_stt_text_train(args[0].i,(const int64_t*)args[1].p,args[2].i));
+  SPEECH_BUILTIN("speech_stt_decoder",4,tn_speech_stt_decoder(args[0].i,args[1].i,args[2].i,args[3].i));
+  SPEECH_BUILTIN("speech_stt_load",1,tn_speech_stt_load((const char*)args[0].p));
+  SPEECH_BUILTIN("speech_stt_save",2,tn_speech_stt_save(args[0].i,(const char*)args[1].p));
+  SPEECH_BUILTIN("speech_stt_train",7,tn_speech_stt_train(args[0].i,(const double*)args[1].p,args[2].i,(const int64_t*)args[3].p,args[4].i,args[5].i,(double*)args[6].p));
+  SPEECH_BUILTIN("speech_stt_loss",6,tn_speech_stt_loss(args[0].i,(const double*)args[1].p,args[2].i,(const int64_t*)args[3].p,args[4].i,(double*)args[5].p));
+  SPEECH_BUILTIN("speech_stt_align",7,tn_speech_stt_align(args[0].i,(const double*)args[1].p,args[2].i,(const int64_t*)args[3].p,args[4].i,(int64_t*)args[5].p,(double*)args[6].p));
+  SPEECH_BUILTIN("speech_stt_predict",5,tn_speech_stt_predict(args[0].i,(const double*)args[1].p,args[2].i,(char*)args[3].p,args[4].i));
+  SPEECH_BUILTIN("speech_tts_create",2,tn_speech_tts_create(args[0].i,args[1].i));
+  SPEECH_BUILTIN("speech_tts_free",1,tn_speech_tts_free(args[0].i));
+  SPEECH_BUILTIN("speech_tts_steps",1,tn_speech_tts_steps(args[0].i));
+  SPEECH_BUILTIN("speech_tts_load",1,tn_speech_tts_load((const char*)args[0].p));
+  SPEECH_BUILTIN("speech_tts_save",2,tn_speech_tts_save(args[0].i,(const char*)args[1].p));
+  SPEECH_BUILTIN("speech_tts_train",8,tn_speech_tts_train(args[0].i,(const double*)args[1].p,args[2].i,(const int64_t*)args[3].p,args[4].i,(const int64_t*)args[5].p,args[6].i,(double*)args[7].p));
+  SPEECH_BUILTIN("speech_tts_loss",7,tn_speech_tts_loss(args[0].i,(const double*)args[1].p,args[2].i,(const int64_t*)args[3].p,args[4].i,(const int64_t*)args[5].p,(double*)args[6].p));
+  SPEECH_BUILTIN("speech_tts_mel",6,tn_speech_tts_mel(args[0].i,(const int64_t*)args[1].p,args[2].i,(double*)args[3].p,args[4].i,args[5].i));
+  SPEECH_BUILTIN("speech_tts_pcm",8,tn_speech_tts_pcm(args[0].i,(const int64_t*)args[1].p,args[2].i,(int64_t*)args[3].p,args[4].i,args[5].i,args[6].i,args[7].i));
+#undef SPEECH_BUILTIN
 
   /* tts_play_pcm(pcm, len, rate)->i64 */
   if(nlen==12 && strncmp(name,"tts_play_pcm",12)==0){

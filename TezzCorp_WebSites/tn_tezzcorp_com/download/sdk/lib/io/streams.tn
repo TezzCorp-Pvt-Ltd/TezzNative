@@ -1,0 +1,144 @@
+// io implementation: streams.
+
+import "io.state"
+
+fn stream_writer_open(path:str) -> *StreamWriter:
+  if path == 0:
+    ret 0 as *StreamWriter
+  h:*char = fopen(path, "wb")
+  if h == 0 as *char:
+    ret 0 as *StreamWriter
+  buf:*char = malloc(io.state._get_IO_STREAM_BUF())
+  if buf == 0:
+    fclose(h)
+    ret 0 as *StreamWriter
+  sw:*StreamWriter = (*StreamWriter)malloc(sizeof(StreamWriter))
+  if sw == 0:
+    free(buf)
+    fclose(h)
+    ret 0 as *StreamWriter
+  (*sw).h = h
+  (*sw).buf = buf
+  (*sw).buf_cap = io.state._get_IO_STREAM_BUF()
+  (*sw).buf_len = 0
+  (*sw).total = 0
+  (*sw).error = 0
+  ret sw
+
+fn _sw_flush(sw:*StreamWriter) -> int:
+  if sw == 0:
+    ret 0 - 1
+  if (*sw).h == 0 as *char || (*sw).buf == 0:
+    (*sw).error = 1
+    ret 0 - 1
+  if (*sw).buf_len <= 0:
+    ret 0
+  w:int = fwrite((*sw).buf, 1, (*sw).buf_len, (*sw).h)
+  if w != (*sw).buf_len:
+    (*sw).error = 1
+    ret 0 - 1
+  (*sw).total = (*sw).total + w
+  (*sw).buf_len = 0
+  ret 0
+
+fn stream_write(sw:*StreamWriter, data:*char, n:int) -> int:
+  if sw == 0 || data == 0 || n <= 0:
+    ret 0
+  if (*sw).h == 0 as *char || (*sw).buf == 0 || (*sw).buf_cap <= 0:
+    (*sw).error = 1
+    ret 0 - 1
+  if (*sw).error != 0:
+    ret 0 - 1
+  written:int = 0
+  while written < n:
+    space:int = (*sw).buf_cap - (*sw).buf_len
+    take:int = n - written
+    if take > space:
+      take = space
+    unsafe:
+      memcpy((*sw).buf + (*sw).buf_len, data + written, take)
+    (*sw).buf_len = (*sw).buf_len + take
+    written = written + take
+    if (*sw).buf_len >= (*sw).buf_cap:
+      if _sw_flush(sw) != 0:
+        ret 0 - 1
+  ret written
+
+fn stream_write_str(sw:*StreamWriter, s:str) -> int:
+  if sw == 0 || s == 0:
+    ret 0 - 1
+  ret stream_write(sw, s as *char, len(s))
+
+fn stream_write_byte(sw:*StreamWriter, b:int) -> int:
+  if sw == 0:
+    ret 0 - 1
+  ch:char = b as char
+  ret stream_write(sw, &ch, 1)
+
+fn stream_write_i64_le(sw:*StreamWriter, v:int) -> int:
+  if sw == 0:
+    ret 0 - 1
+  buf:[char;8]
+  buf[0] = (v & 255) as char
+  buf[1] = ((v >> 8) & 255) as char
+  buf[2] = ((v >> 16) & 255) as char
+  buf[3] = ((v >> 24) & 255) as char
+  buf[4] = ((v >> 32) & 255) as char
+  buf[5] = ((v >> 40) & 255) as char
+  buf[6] = ((v >> 48) & 255) as char
+  buf[7] = ((v >> 56) & 255) as char
+  ret stream_write(sw, &buf[0], 8)
+
+fn stream_flush(sw:*StreamWriter) -> int:
+  if sw == 0:
+    ret 0 - 1
+  if (*sw).h == 0 as *char:
+    (*sw).error = 1
+    ret 0 - 1
+  r:int = _sw_flush(sw)
+  if r != 0:
+    ret r
+  ret fflush((*sw).h)
+
+fn stream_writer_error(sw:*StreamWriter) -> int:
+  if sw == 0:
+    ret 1
+  ret (*sw).error
+
+fn stream_writer_total(sw:*StreamWriter) -> int:
+  if sw == 0:
+    ret 0
+  ret (*sw).total + (*sw).buf_len
+
+fn stream_writer_close(sw:*StreamWriter) -> int:
+  if sw == 0:
+    ret 0 - 1
+  r:int = _sw_flush(sw)
+  c:int = 0
+  if (*sw).h != 0 as *char:
+    c = fclose((*sw).h)
+    (*sw).h = 0 as *char
+  if (*sw).buf != 0:
+    free((*sw).buf)
+    (*sw).buf = 0 as *char
+  free(sw)
+  if r != 0 || c != 0:
+    ret 0 - 1
+  ret 0
+
+// ─────────────────────────────────────────────────────────────
+// MmapFile — memory-mapped file view
+//
+// For files that fit in virtual address space, MmapFile
+// maps the entire file as a contiguous byte array.
+// Uses OS mmap (via runtime) when available; falls back to
+// malloc+fread for portability.
+//
+// Usage:
+//   mf:*MmapFile = mmap_open("data.bin")
+//   if mf != 0:
+//     ptr:*char = mmap_data(mf)
+//     sz:int    = mmap_size(mf)
+//     // direct pointer access to all bytes
+//     mmap_close(mf)
+// ─────────────────────────────────────────────────────────────

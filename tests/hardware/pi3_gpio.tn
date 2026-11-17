@@ -1,0 +1,38 @@
+import "raspi.pi3"
+import "hardware"
+
+
+fn main() -> int:
+  if hardware.target_id() != 2: ret 1
+  if raspi.pi3.gpio_mode(0 - 1, 1) != 0 - 1: ret 2
+  if raspi.pi3.gpio_mode(28, 1) != 0 - 1: ret 3
+  if raspi.pi3.gpio_mode(17, 2) != 0 - 1: ret 4
+  if raspi.pi3.gpio_mode(14, 1) != 0 - 1: ret 5
+  if raspi.pi3.gpio_mode(15, 1) != 0 - 1: ret 6
+  if raspi.pi3.gpio_output(17) != 0: ret 7
+  if raspi.pi3.gpio_output(18) != 0: ret 8
+  if raspi.pi3.gpio_write(18, 0) != 0: ret 9
+  if raspi.pi3.gpio_write(17, 0) != 0: ret 10
+  if raspi.pi3.gpio_read(17) != 0: ret 11
+  if raspi.pi3.gpio_write(17, 1) != 0: ret 12
+  if raspi.pi3.gpio_read(17) != 1: ret 13
+  if raspi.pi3.gpio_read(18) != 0: ret 14
+  if raspi.pi3.gpio_write(17, 0) != 0: ret 15
+  if raspi.pi3.gpio_read(17) != 0: ret 16
+  if raspi.pi3.gpio_write(17, 2) != 0 - 1: ret 17
+  if raspi.pi3.gpio_input(17) != 0: ret 18
+  if raspi.pi3.gpio_write(17, 1) != 0 - 1: ret 19
+  start:int = hardware.micros()
+  if start < 0: ret 20
+  if hardware.delay_us(1000) != 0: ret 21
+  elapsed:int = hardware.micros() - start
+  if elapsed < 1000: ret 22
+  if hardware.delay_us(0 - 1) != 0 - 1: ret 23
+  if hardware.irq_state() != 0: ret 24
+  if hardware.irq_enable() != 0: ret 25
+  if hardware.irq_state() != 1: ret 26
+  if hardware.irq_disable() != 1: ret 27
+  if hardware.irq_state() != 0: ret 28
+  marker:str = "PI3_GPIO_TIMER_IRQ_OK\n"
+  if hardware.write(marker) != 22: ret 29
+  ret 0

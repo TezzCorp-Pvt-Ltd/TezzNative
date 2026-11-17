@@ -1,0 +1,55 @@
+import "tensor_bridge"
+import "tensor"
+import "tztensor"
+
+fn check_roundtrip(source:Tensor) -> int:
+  handle:int = tensor_bridge.to_tztensor(source)
+  if handle == 0: ret 1
+  result:Tensor = tensor_bridge.to_tensor(handle)
+  if result.size == 0: ret 2
+  if result.ndim != source.ndim || result.size != source.size: ret 3
+  axis:int = 0
+  while axis < source.ndim:
+    if tensor.tensor_shape(result, axis) != tensor.tensor_shape(source, axis): ret 4
+    axis = axis + 1
+  unsafe:
+    i:int = 0
+    while i < result.size:
+      if result.data[i] != source.data[tensor._tensor_unravel_offset(source, i)]: ret 5
+      i = i + 1
+    saved:float = result.data[0]
+    source.data[source.offset] = saved + 11.0
+    if result.data[0] != saved: ret 6
+    bytes:*f32 = tztensor.tensor_data(handle) as *f32
+    if bytes[0] as float != saved: ret 7
+  if result.requires_grad != 0 || tztensor.tensor_requires_grad(handle) != 0: ret 8
+  tensor.tensor_free_tensor(result)
+  tztensor.tensor_free(handle)
+  ret 0
+
+fn main() -> int:
+  one:Tensor = tensor.tensor_ones_1d(7)
+  two:Tensor = tensor.tensor_ones_2d(3, 5)
+  three:Tensor = tensor.tensor_ones_3d(2, 3, 4)
+  four:Tensor = tensor.tensor_ones_4d(2, 3, 2, 4)
+  if check_roundtrip(one) != 0: ret 1
+  if check_roundtrip(two) != 0: ret 2
+  if check_roundtrip(three) != 0: ret 3
+  if check_roundtrip(four) != 0: ret 4
+  tensor.tensor_free_tensor(one)
+  tensor.tensor_free_tensor(two)
+  tensor.tensor_free_tensor(three)
+  tensor.tensor_free_tensor(four)
+  base:Tensor = tensor.tensor_2d(3, 5)
+  unsafe:
+    i:int = 0
+    while i < 15:
+      base.data[i] = i as float
+      i = i + 1
+  transposed:Tensor = tensor.tensor_t(base)
+  sliced:Tensor = tensor.tensor_slice(transposed, 0, 1, 5, 2)
+  if check_roundtrip(sliced) != 0: ret 5
+  tensor.tensor_free_tensor(sliced)
+  tensor.tensor_free_tensor(transposed)
+  tensor.tensor_free_tensor(base)
+  ret 0

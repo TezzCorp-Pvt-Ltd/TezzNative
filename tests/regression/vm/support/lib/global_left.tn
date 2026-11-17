@@ -1,0 +1,6 @@
+import "./global_leaf.tn"
+
+let VALUE:int = global_leaf.value() * 2
+
+fn value() -> int:
+  ret VALUE

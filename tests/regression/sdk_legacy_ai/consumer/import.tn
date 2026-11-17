@@ -1,0 +1,6 @@
+import "ml"
+import "modelio"
+import "tensor_gpu"
+
+fn main() -> int:
+  ret ml.backend_cpu()

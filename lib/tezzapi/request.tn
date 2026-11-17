@@ -1,0 +1,392 @@
+// tezzapi implementation: request.
+import "net"
+import "time"
+import "tls"
+import "tezzapi.state"
+import "tezzapi.text"
+
+fn _param_idx(names:*char, count:int, name:str) -> int:
+  if name == 0: ret 0 - 1
+  i:int = 0
+  while i < count:
+    slot:*char = names + i * tezzapi.state._get_PARAM_NAME_LEN()
+    if strcmp(slot as str, name) == 0: ret i
+    i = i + 1
+  ret 0 - 1
+
+fn _pattern_match(pattern:str, path:str, params:*RouteParams) -> int:
+  if pattern == 0 || path == 0: ret 0
+  if params != 0: (*params).count = 0
+  pi:int = 0  // pattern index
+  ui:int = 0  // url index
+  pn:int = len(pattern)
+  un:int = len(path)
+  while pi < pn && ui < un:
+    pc:int = (pattern as *char)[pi] as int
+    uc:int = (path as *char)[ui] as int
+    if pc == 42:  // '*' wildcard — match rest
+      ret 1
+    if pc == 58:  // ':' param start
+      pi = pi + 1
+      // Collect param name
+      nm_start:int = pi
+      while pi < pn && (pattern as *char)[pi] != 47 as char:  // not '/'
+        pi = pi + 1
+      nm_len:int = pi - nm_start
+      if nm_len <= 0: ret 0
+      // Collect param value from url
+      v_start:int = ui
+      while ui < un && (path as *char)[ui] != 47 as char:
+        ui = ui + 1
+      v_len:int = ui - v_start
+      // Store param
+      if params != 0 && (*params).count < tezzapi.state._get_MAX_PARAMS():
+        pidx:int = (*params).count
+        nm_slot:*char = &(*params).names[0] + pidx * tezzapi.state._get_PARAM_NAME_LEN()
+        vl_slot:*char = &(*params).values[0] + pidx * tezzapi.state._get_PARAM_VAL_LEN()
+        copy_nm:int = nm_len
+        if copy_nm >= tezzapi.state._get_PARAM_NAME_LEN(): copy_nm = tezzapi.state._get_PARAM_NAME_LEN() - 1
+        copy_vl:int = v_len
+        if copy_vl >= tezzapi.state._get_PARAM_VAL_LEN(): copy_vl = tezzapi.state._get_PARAM_VAL_LEN() - 1
+        unsafe:
+          memcpy(nm_slot, (pattern as *char) + nm_start, copy_nm)
+          nm_slot[copy_nm] = 0 as char
+          memcpy(vl_slot, (path as *char) + v_start, copy_vl)
+          vl_slot[copy_vl] = 0 as char
+        (*params).count = pidx + 1
+    else:
+      if pc != uc: ret 0
+      pi = pi + 1
+      ui = ui + 1
+  // Skip trailing slashes
+  while pi < pn && (pattern as *char)[pi] == 47 as char: pi = pi + 1
+  while ui < un && (path as *char)[ui] == 47 as char: ui = ui + 1
+  ret (pi == pn && ui == un)
+
+// ─────────────────────────────────────────────────────────────
+// Request helpers
+// ─────────────────────────────────────────────────────────────
+
+fn api_req_new(sock:int) -> *ApiRequest:
+  req:*ApiRequest = (*ApiRequest)malloc(sizeof(ApiRequest))
+  if req == 0: ret 0 as *ApiRequest
+  (*req).method = 0
+  (*req).path = 0 as str
+  (*req).pattern = 0 as str
+  (*req).query = 0 as str
+  (*req).body = 0 as str
+  (*req).body_len = 0
+  (*req).headers = 0 as *ApiHeader
+  (*req).header_count = 0
+  (*req).header_cap = 0
+  (*req).client_ip = 0 as str
+  (*req).content_type = 0 as str
+  (*req).content_len = 0
+  (*req).sock = sock
+  ret req
+
+fn api_req_free(req:*ApiRequest) -> int:
+  if req == 0: ret 0 - 1
+  if (*req).path != 0: free((*req).path)
+  if (*req).pattern != 0: free((*req).pattern)
+  if (*req).query != 0: free((*req).query)
+  if (*req).body != 0: free((*req).body)
+  if (*req).client_ip != 0: free((*req).client_ip)
+  if (*req).content_type != 0: free((*req).content_type)
+  if (*req).headers != 0:
+    i:int = 0
+    while i < (*req).header_count:
+      if (*req).headers[i].name != 0: free((*req).headers[i].name)
+      if (*req).headers[i].value != 0: free((*req).headers[i].value)
+      i = i + 1
+    free((*req).headers as *char)
+  free(req)
+  ret 0
+
+fn api_req_header(req:*ApiRequest, name:str) -> str:
+  if req == 0 || name == 0: ret 0 as str
+  i:int = 0
+  while i < (*req).header_count:
+    if tezzapi.text._api_strcasecmp((*req).headers[i].name, name) == 0:
+      ret (*req).headers[i].value
+    i = i + 1
+  ret 0 as str
+
+fn api_bearer_token(req:*ApiRequest) -> str:
+  auth:str = api_req_header(req, "Authorization")
+  if auth == 0: ret 0 as str
+  if tezzapi.text._api_starts_with(auth, "Bearer ") == 0: ret 0 as str
+  ret tezzapi.text._api_slice(auth, 7, len(auth))
+
+fn api_param(req:*ApiRequest, name:str) -> str:
+  // Path parameter extraction — needs params stored in request
+  // For now, re-match path against pattern
+  if req == 0 || name == 0: ret 0 as str
+  if (*req).path == 0 || (*req).pattern == 0: ret 0 as str
+  params:RouteParams
+  if _pattern_match((*req).pattern, (*req).path, &params) == 0:
+    ret 0 as str
+  i:int = 0
+  while i < params.count:
+    slot:*char = &params.names[0] + i * tezzapi.state._get_PARAM_NAME_LEN()
+    if strcmp(slot as str, name) == 0:
+      vl_slot:*char = &params.values[0] + i * tezzapi.state._get_PARAM_VAL_LEN()
+      ret tezzapi.text._api_strdup(vl_slot as str)
+    i = i + 1
+  ret 0 as str
+
+fn api_param_int(req:*ApiRequest, name:str) -> int:
+  s:str = api_param(req, name)
+  if s == 0: ret 0 - 1
+  n:int = 0
+  i:int = 0
+  while (s as *char)[i] != 0 as char:
+    c:int = (s as *char)[i] as int
+    if c < 48 || c > 57: break
+    n = n * 10 + (c - 48)
+    i = i + 1
+  free(s)
+  ret n
+
+fn api_query_param(req:*ApiRequest, key:str) -> str:
+  if req == 0 || key == 0 || (*req).query == 0: ret 0 as str
+  q:str = (*req).query
+  klen:int = len(key)
+  qlen:int = len(q)
+  i:int = 0
+  while i < qlen:
+    // Match key
+    j:int = 0
+    while j < klen && i + j < qlen:
+      if (q as *char)[i+j] != (key as *char)[j]: break
+      j = j + 1
+    if j == klen:
+      // Check '=' follows
+      ei:int = i + klen
+      if ei < qlen && (q as *char)[ei] == 61 as char:  // '='
+        vs:int = ei + 1
+        ve:int = vs
+        while ve < qlen && (q as *char)[ve] != 38 as char:  // not '&'
+          ve = ve + 1
+        enc:str = tezzapi.text._api_slice(q, vs, ve)
+        dec:str = tezzapi.text._api_url_decode(enc)
+        if enc != 0: free(enc)
+        ret dec
+    // Skip to next '&'
+    while i < qlen && (q as *char)[i] != 38 as char:
+      i = i + 1
+    i = i + 1  // skip '&'
+  ret 0 as str
+
+fn api_query_int(req:*ApiRequest, key:str, default_val:int) -> int:
+  s:str = api_query_param(req, key)
+  if s == 0: ret default_val
+  n:int = 0
+  i:int = 0
+  while (s as *char)[i] != 0 as char:
+    c:int = (s as *char)[i] as int
+    if c < 48 || c > 57: break
+    n = n * 10 + (c - 48)
+    i = i + 1
+  free(s)
+  ret n
+
+fn api_body_str(req:*ApiRequest) -> str:
+  if req == 0 || (*req).body == 0: ret 0 as str
+  ret (*req).body
+
+fn api_body_json_field(req:*ApiRequest, key:str) -> str:
+  body:str = api_body_str(req)
+  if body == 0 || key == 0: ret 0 as str
+  // Find "key": value in JSON body
+  klen:int = len(key)
+  bn:int = len(body)
+  i:int = 0
+  while i < bn:
+    if (body as *char)[i] == 34 as char:  // '"'
+      j:int = 0
+      while j < klen && i + 1 + j < bn:
+        if (body as *char)[i+1+j] != (key as *char)[j]: break
+        j = j + 1
+      if j == klen && i + 1 + klen < bn && (body as *char)[i+1+klen] == 34 as char:
+        // Found key, skip to ':'
+        k:int = i + 2 + klen
+        while k < bn && (body as *char)[k] != 58 as char: k = k + 1
+        if k >= bn: ret 0 as str
+        k = k + 1  // skip ':'
+        while k < bn && ((body as *char)[k] == 32 as char || (body as *char)[k] == 9 as char): k = k + 1
+        if k >= bn: ret 0 as str
+        if (body as *char)[k] == 34 as char:
+          // String value
+          vs:int = k + 1
+          ve:int = vs
+          while ve < bn:
+            c2:int = (body as *char)[ve] as int
+            if c2 == 34:
+              escaped:int = 0
+              b:int = ve - 1
+              while b >= vs && (body as *char)[b] == 92 as char:
+                escaped = escaped + 1
+                b = b - 1
+              if escaped % 2 == 0:
+                break
+            ve = ve + 1
+          ret tezzapi.text._api_slice(body, vs, ve)
+        else:
+          // Numeric/bool/null value
+          vs:int = k
+          ve:int = vs
+          while ve < bn:
+            c3:int = (body as *char)[ve] as int
+            if c3 == 44 || c3 == 125 || c3 == 93: break  // ',' '}' ']'
+            ve = ve + 1
+          ret tezzapi.text._api_slice(body, vs, ve)
+    i = i + 1
+  ret 0 as str
+
+fn api_body_json_int(req:*ApiRequest, key:str) -> int:
+  s:str = api_body_json_field(req, key)
+  if s == 0: ret 0
+  n:int = 0
+  sign:int = 1
+  i:int = 0
+  if (s as *char)[i] == 45 as char:
+    sign = 0 - 1
+    i = i + 1
+  while (s as *char)[i] != 0 as char:
+    c:int = (s as *char)[i] as int
+    if c < 48 || c > 57: break
+    n = n * 10 + (c - 48)
+    i = i + 1
+  free(s)
+  ret n * sign
+
+// ─────────────────────────────────────────────────────────────
+// Response helpers
+// ─────────────────────────────────────────────────────────────
+
+fn _parse_method(s:str) -> int:
+  if s == 0: ret 0
+  if strcmp(s, "GET") == 0: ret tezzapi.state._get_API_GET()
+  if strcmp(s, "POST") == 0: ret tezzapi.state._get_API_POST()
+  if strcmp(s, "PUT") == 0: ret tezzapi.state._get_API_PUT()
+  if strcmp(s, "DELETE") == 0: ret tezzapi.state._get_API_DELETE()
+  if strcmp(s, "PATCH") == 0: ret tezzapi.state._get_API_PATCH()
+  if strcmp(s, "HEAD") == 0: ret tezzapi.state._get_API_HEAD()
+  if strcmp(s, "OPTIONS") == 0: ret tezzapi.state._get_API_OPTIONS()
+  ret 0
+
+fn _parse_http_request(sock:int, buf:*char, buf_len:int, max_headers:int) -> *ApiRequest:
+  req:*ApiRequest = api_req_new(sock)
+  if req == 0: ret 0 as *ApiRequest
+  // Parse first line: METHOD path HTTP/1.x
+  line_end:int = 0
+  while line_end < buf_len && buf[line_end] != 13 as char && buf[line_end] != 10 as char:
+    line_end = line_end + 1
+  // Find method
+  sp1:int = 0
+  while sp1 < line_end && buf[sp1] != 32 as char: sp1 = sp1 + 1
+  method_str:[char;16]
+  copy:int = sp1
+  if copy > 15: copy = 15
+  unsafe:
+    memcpy(&method_str[0], buf, copy)
+  method_str[copy] = 0 as char
+  mptr:*char = &method_str[0]
+  (*req).method = _parse_method(mptr as str)
+  // Find path
+  sp2:int = sp1 + 1
+  sp3:int = sp2
+  while sp3 < line_end && buf[sp3] != 32 as char && buf[sp3] != 63 as char:
+    sp3 = sp3 + 1
+  path_len:int = sp3 - sp2
+  path_buf:*char = malloc(path_len + 1)
+  if path_buf != 0:
+    unsafe:
+      memcpy(path_buf, buf + sp2, path_len)
+    path_buf[path_len] = 0 as char
+    (*req).path = path_buf as str
+  // Query string
+  if sp3 < line_end && buf[sp3] == 63 as char:  // '?'
+    qs_start:int = sp3 + 1
+    qs_end:int = qs_start
+    while qs_end < line_end && buf[qs_end] != 32 as char: qs_end = qs_end + 1
+    qs_len:int = qs_end - qs_start
+    qs_buf:*char = malloc(qs_len + 1)
+    if qs_buf != 0:
+      unsafe:
+        memcpy(qs_buf, buf + qs_start, qs_len)
+      qs_buf[qs_len] = 0 as char
+      (*req).query = qs_buf as str
+  // Parse headers
+  pos:int = line_end
+  while pos < buf_len && (buf[pos] == 13 as char || buf[pos] == 10 as char):
+    pos = pos + 1
+  while pos < buf_len:
+    if buf[pos] == 13 as char || buf[pos] == 10 as char: break
+    // Find header name end ':'
+    col_pos:int = pos
+    while col_pos < buf_len && buf[col_pos] != 58 as char && buf[col_pos] != 13 as char:
+      col_pos = col_pos + 1
+    if buf[col_pos] != 58 as char: break
+    hname_len:int = col_pos - pos
+    hname:*char = malloc(hname_len + 1)
+    if hname == 0: break
+    unsafe:
+      memcpy(hname, buf + pos, hname_len)
+    hname[hname_len] = 0 as char
+    // Header value
+    vs:int = col_pos + 1
+    while vs < buf_len && (buf[vs] == 32 as char || buf[vs] == 9 as char): vs = vs + 1
+    ve:int = vs
+    while ve < buf_len && buf[ve] != 13 as char && buf[ve] != 10 as char: ve = ve + 1
+    hval_len:int = ve - vs
+    hval:*char = malloc(hval_len + 1)
+    if hval == 0:
+      free(hname)
+      break
+    unsafe:
+      memcpy(hval, buf + vs, hval_len)
+    hval[hval_len] = 0 as char
+    // Add header to request
+    limit:int = max_headers
+    if limit < 1: limit = 100
+    if (*req).header_count >= limit:
+      free(hname); free(hval)
+      break
+    if (*req).header_count >= (*req).header_cap:
+      nc:int = (*req).header_cap * 2
+      if nc < 8: nc = 8
+      nh:*ApiHeader = (*ApiHeader)malloc(sizeof(ApiHeader) * nc)
+      if nh == 0:
+        free(hname); free(hval)
+        break
+      if (*req).headers != 0:
+        unsafe:
+          memcpy(nh as *char, (*req).headers as *char, sizeof(ApiHeader) * (*req).header_count)
+        free((*req).headers as *char)
+      (*req).headers = nh
+      (*req).header_cap = nc
+    hi:int = (*req).header_count
+    (*req).headers[hi].name = hname as str
+    (*req).headers[hi].value = hval as str
+    (*req).header_count = hi + 1
+    // Check for Content-Length and Content-Type
+    if tezzapi.text._api_strcasecmp(hname as str, "Content-Length") == 0:
+      (*req).content_len = 0
+      ci:int = 0
+      while (hval as str)[ci] != 0 as char:
+        d:int = hval[ci] as int
+        if d < 48 || d > 57: break
+        (*req).content_len = (*req).content_len * 10 + (d - 48)
+        ci = ci + 1
+    if tezzapi.text._api_strcasecmp(hname as str, "Content-Type") == 0:
+      (*req).content_type = hval as str
+    // Next line
+    pos = ve
+    while pos < buf_len && (buf[pos] == 13 as char || buf[pos] == 10 as char): pos = pos + 1
+  ret req
+
+// ─────────────────────────────────────────────────────────────
+// HTTP response sending
+// ─────────────────────────────────────────────────────────────

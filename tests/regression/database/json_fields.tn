@@ -1,0 +1,18 @@
+import "tezzdb"
+
+fn main() -> int:
+  unsafe:
+    failed:int = 0
+    object:str = tezzdb.row_json2("na\"me", "a\\b\n\"c", "z", "t")
+    extracted:str = tezzdb.row_get_str(object, "na\"me")
+    if extracted == 0 || strcmp(extracted, "a\\b\n\"c") != 0: failed = 1
+    free(extracted)
+    free(object)
+    decoded:str = tezzdb.row_get_str("{\"x\":\"\\u20ac\\uD83D\\uDE00\"}", "x")
+    if decoded == 0 || strcmp(decoded, "€😀") != 0: failed = 1
+    free(decoded)
+    invalid:str = tezzdb.row_get_str("{\"x\":\"unterminated}", "x")
+    if invalid != 0: failed = 1
+    free(invalid)
+    if failed != 0: say "FAIL: database JSON strings must escape and decode safely"
+    ret failed

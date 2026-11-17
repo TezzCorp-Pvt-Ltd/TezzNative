@@ -1,0 +1,8 @@
+extern fn len(text:str) -> int
+extern fn strcmp(left:str, right:str) -> int
+
+fn measure(text:str) -> int:
+  ret len(text)
+
+fn same(left:str, right:str) -> int:
+  ret strcmp(left, right) == 0

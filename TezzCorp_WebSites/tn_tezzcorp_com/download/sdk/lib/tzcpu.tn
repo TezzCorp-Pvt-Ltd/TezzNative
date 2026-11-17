@@ -37,6 +37,17 @@ extern fn tz_cpu_gelu_f32(a: int, c: int, n: int) -> int
 extern fn tz_cpu_gelu_bwd_f32(grad_out: int, x: int, grad_in: int, n: int) -> int
 extern fn tz_cpu_softmax_f32(x: int, rows: int, cols: int) -> int
 extern fn tz_cpu_add_bias_f32(x: int, b: int, batch: int, dim: int) -> int
+
+// Checked time-major Conv1D: X[B,T,Cin], W[Cout,K,Cin], Y[B,ceil(T/stride),Cout].
+// Centered zero padding, left=floor(dilation*(K-1)/2); optional bias=0.
+// Outputs must not overlap inputs/each other. Finite inputs and gradients required.
+// Dimensions must be positive and dimensions/element counts fit signed 32-bit.
+// CPU pointers must own the declared buffer sizes.
+// Arithmetic overflow returns -1 with output contents unspecified.
+// Backward ADDS into each requested gradient; zero buffers for a fresh pass.
+// dx/dw/db may be 0 individually. Returns 0 on completion, -1 on error.
+extern fn tz_cpu_conv1d_f32(x: int, w: int, bias: int, out: int, B: int, T: int, Cin: int, Cout: int, K: int, stride: int, dilation: int) -> int
+extern fn tz_cpu_conv1d_bwd_f32(dy: int, x: int, w: int, dx: int, dw: int, db: int, B: int, T: int, Cin: int, Cout: int, K: int, stride: int, dilation: int) -> int
 extern fn tz_cpu_layernorm_f32(x: int, gamma: int, beta: int, rows: int, cols: int, eps: float) -> int
 extern fn tz_cpu_gemm_f32(A: int, B: int, C: int, M: int, K: int, N: int, alpha: float, beta: float) -> int
 extern fn tz_cpu_gemm_nt_f32(A: int, B: int, C: int, M: int, K: int, N: int, alpha: float, beta: float) -> int
@@ -102,7 +113,7 @@ extern fn tz_gguf_quantize_q8_0(src: int, dst: int, k: int) -> int
 extern fn tz_gguf_gemv_q4_0(w: int, x: int, y: int, rows: int, cols: int) -> int
 extern fn tz_gguf_close(handle: int) -> int
 
-extern fn tz_cpu_set_f32(ptr: int, idx: int, val: float) -> int
+extern fn tz_cpu_set_f32(ptr: int, idx: int, val: f32) -> i32
 extern fn tz_cpu_get_f32(ptr: int, idx: int) -> int
 extern fn tz_cpu_fill_xor_data(x_ptr: int, y_ptr: int) -> int
 extern fn tz_cpu_stdin() -> int
@@ -229,7 +240,7 @@ fn gguf_close(handle: int) -> int:
   ret tz_gguf_close(handle)
 
 fn set_f32(ptr: int, idx: int, val: float) -> int:
-  ret tz_cpu_set_f32(ptr, idx, val)
+  ret tz_cpu_set_f32(ptr, idx, val as f32) as int
 
 fn get_f32(ptr: int, idx: int) -> int:
   ret tz_cpu_get_f32(ptr, idx)

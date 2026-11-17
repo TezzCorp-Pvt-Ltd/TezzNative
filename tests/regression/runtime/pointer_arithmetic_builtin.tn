@@ -1,0 +1,23 @@
+fn main() -> int:
+  unsafe:
+    p:*char = "abcd" as *char
+    failures:int = 0
+    if strcmp(p + 1, "bcd") != 0:
+      say "FAIL: pointer plus integer"
+      failures = failures + 1
+    if len(2 + p) != 2:
+      say "FAIL: integer plus pointer"
+      failures = failures + 1
+    q:*char = p + 3
+    if strcmp(q - 1, "cd") != 0:
+      say "FAIL: pointer minus integer"
+      failures = failures + 1
+    if strcmp(&p[1], "bcd") != 0:
+      say "FAIL: address of indexed element"
+      failures = failures + 1
+    if q - p != 3 || bit_popcnt(q - p) != 2:
+      say "FAIL: pointer difference must remain an integer"
+      failures = failures + 1
+    if failures != 0: ret failures
+    say "POINTER_ARITHMETIC_BUILTIN_PASS"
+    ret 0

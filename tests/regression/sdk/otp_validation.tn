@@ -1,0 +1,46 @@
+import "otp"
+
+fn main() -> int:
+  secret:str = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+  if otp.generate_totp("") != 0: ret 1
+  if otp.generate_hotp("JBSWY3DPEHPK3PXP", 0, 6) != 0: ret 2
+  if otp.generate_hotp(secret, -1, 6) != 0: ret 3
+  if otp.generate_hotp(secret, 0, 5) != 0: ret 4
+  if otp.generate_hotp(secret, 0, 9) != 0: ret 5
+  if otp.generate_hotp("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJ!", 0, 6) != 0: ret 6
+  if otp.generate_hotp("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ=", 0, 6) != 0: ret 7
+  if otp.generate_hotp("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQB", 0, 6) != 0: ret 8
+  if otp.verify_totp_at(secret, "28x082", 59, 1) != 0: ret 9
+  if otp.verify_totp_at(secret, "287082", 59, 11) != 0: ret 10
+  if otp.generate_numeric(129) != 0: ret 11
+  if otp.generate_totp_at(secret, -1, 6) != 0: ret 12
+  unsafe:
+    uri:str = otp.provisioning_uri(secret, "a+b@example.com", "Acme & Co")
+    if uri == 0: ret 13
+    if strcmp(uri, "otpauth://totp/Acme%20%26%20Co:a%2Bb%40example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Acme%20%26%20Co&algorithm=SHA1&digits=6&period=30") != 0: ret 14
+    free(uri)
+    if otp.provisioning_uri(secret, "", "issuer") != 0: ret 15
+    first:str = otp.generate_secret()
+    second:str = otp.generate_secret()
+    if first == 0 || second == 0 || len(first) != 32 || len(second) != 32: ret 16
+    if strcmp(first, second) == 0: ret 17
+    i:int = 0
+    while i < 32:
+      if otp.base32_char_val(first[i] as int) < 0: ret 18
+      i = i + 1
+    code:str = otp.generate_hotp(first, 0, 6)
+    if code == 0: ret 19
+    free(code)
+    free(first)
+    free(second)
+    code = otp.generate_numeric(0)
+    if code == 0 || len(code) != 6: ret 20
+    free(code)
+    code = otp.generate_numeric(128)
+    if code == 0 || len(code) != 128: ret 21
+    i = 0
+    while i < 128:
+      if code[i] < '0' || code[i] > '9': ret 22
+      i = i + 1
+    free(code)
+  ret 0

@@ -1,0 +1,126 @@
+import "tznn"
+import "tzcpu"
+import "tzgpu"
+import "math"
+
+fn put(p:int, index:int, value:float) -> int:
+  unsafe:
+    values:*f32 = p as *f32
+    values[index] = value as f32
+  ret 0
+
+fn get(p:int, index:int) -> float:
+  unsafe:
+    values:*f32 = p as *f32
+    ret values[index] as float
+
+fn near(actual:float, expected:float) -> int:
+  if actual != actual || math.absf(actual - expected) > 0.00001: ret 0
+  ret 1
+
+fn training(full:int) -> int:
+  x:int = tzcpu.tz_cpu_zeros(4)
+  labels:int = tzcpu.tz_cpu_zeros(2)
+  w1:int = tzcpu.tz_cpu_zeros(6)
+  b1:int = tzcpu.tz_cpu_zeros(3)
+  w2:int = tzcpu.tz_cpu_zeros(6)
+  b2:int = tzcpu.tz_cpu_zeros(2)
+  mw1:int = tzcpu.tz_cpu_zeros(6)
+  vw1:int = tzcpu.tz_cpu_zeros(6)
+  mw2:int = tzcpu.tz_cpu_zeros(6)
+  vw2:int = tzcpu.tz_cpu_zeros(6)
+  mb1:int = tzcpu.tz_cpu_zeros(3)
+  vb1:int = tzcpu.tz_cpu_zeros(3)
+  mb2:int = tzcpu.tz_cpu_zeros(2)
+  vb2:int = tzcpu.tz_cpu_zeros(2)
+  put(x, 0, 1.0)
+  put(x, 1, 2.0)
+  put(x, 2, 3.0)
+  put(x, 3, 4.0)
+  unsafe:
+    ids:*i32 = labels as *i32
+    ids[1] = 1 as i32
+  put(w1, 0, 1.0)
+  put(w1, 3, 1.0)
+  put(w1, 4, 1.0)
+  put(w1, 5, 1.0)
+  put(w2, 0, 1.0)
+  put(w2, 4, 1.0)
+  loss:int = 0
+  if full != 0:
+    loss = tznn.nn_mlp2_train_step(x, labels, w1, b1, w2, b2, mw1, vw1, mw2, vw2, mb1, vb1, mb2, vb2, 2, 2, 3, 2, 0.1, 0.9, 0.999)
+  else:
+    loss = tznn.nn_mlp_train_step(x, labels, w1, b1, 2, 3, w2, b2, 2, mw1, vw1, mw2, vw2, 2, 0.1, 0.9, 0.999)
+  failed:int = 0
+  if loss == 0:
+    failed = 1
+  else:
+    if near(tznn.nn_sum_loss(loss, 2), 1.626523375) == 0:
+      failed = 1
+    tzcpu.tz_cpu_free(loss)
+  if near(get(w1, 0), 0.9) == 0 || near(get(w1, 1), 0.1) == 0 || get(w1, 4) != 1.0 || get(w1, 5) != 1.0:
+    failed = 1
+  if near(get(w2, 0), 0.9) == 0 || near(get(w2, 2), 0.1) == 0 || near(get(w2, 5), 0.0 - 0.1) == 0:
+    failed = 1
+  expected_bias:float = 0.023105858
+  if full != 0: expected_bias = 0.1
+  if near(get(b1, 0), expected_bias) == 0 || near(get(b2, 0), expected_bias) == 0:
+    failed = 1
+  tzcpu.tz_cpu_free(x)
+  tzcpu.tz_cpu_free(labels)
+  tzcpu.tz_cpu_free(w1)
+  tzcpu.tz_cpu_free(b1)
+  tzcpu.tz_cpu_free(w2)
+  tzcpu.tz_cpu_free(b2)
+  tzcpu.tz_cpu_free(mw1)
+  tzcpu.tz_cpu_free(vw1)
+  tzcpu.tz_cpu_free(mw2)
+  tzcpu.tz_cpu_free(vw2)
+  tzcpu.tz_cpu_free(mb1)
+  tzcpu.tz_cpu_free(vb1)
+  tzcpu.tz_cpu_free(mb2)
+  tzcpu.tz_cpu_free(vb2)
+  if failed != 0:
+    say "FAIL: SDK training gradient/update/loss oracle, full=", full
+  ret failed
+
+fn wrappers() -> int:
+  failed:int = 0
+  p:int = tzcpu.tz_cpu_zeros(1)
+  g:int = tzcpu.tz_cpu_zeros(1)
+  m:int = tzcpu.tz_cpu_zeros(1)
+  v:int = tzcpu.tz_cpu_zeros(1)
+  put(p, 0, 1.0)
+  put(g, 0, 2.0)
+  tzgpu.gpu_adam_step_f32(p, g, m, v, 1, 0.1, 1)
+  tzgpu.gpu_adam_step_f32(p, g, m, v, 1, 0.1, 2)
+  if near(get(p, 0), 0.8) == 0: failed = 1
+  tzcpu.tz_cpu_free(p)
+  tzcpu.tz_cpu_free(g)
+  tzcpu.tz_cpu_free(m)
+  tzcpu.tz_cpu_free(v)
+  q:int = tzcpu.tz_cpu_zeros(4)
+  k:int = tzcpu.tz_cpu_zeros(4)
+  put(q, 0, 1.0)
+  put(q, 3, 1.0)
+  put(k, 0, 1.0)
+  put(k, 1, 2.0)
+  put(k, 2, 3.0)
+  put(k, 3, 4.0)
+  scores:int = tzgpu.gpu_attn_scores_f32(q, k, 1, 2, 2, 0)
+  expected:float = 1.0 / (1.0 + math.exp(math.sqrt(2.0)))
+  if near(get(scores, 0), expected) == 0 || near(get(scores, 2), expected) == 0: failed = 1
+  tzgpu.gpu_free(scores)
+  tzcpu.tz_cpu_free(q)
+  tzcpu.tz_cpu_free(k)
+  weights:int = tznn.nn_dense_create(2, 3)
+  if weights == 0:
+    failed = 1
+  else:
+    if get(weights, 0) == get(weights, 1): failed = 1
+    tzgpu.gpu_free(weights)
+  if failed != 0: say "FAIL: SDK attention/Adam/init wrapper oracle"
+  ret failed
+
+fn main() -> int:
+  ret training(0) + training(1) + wrappers()

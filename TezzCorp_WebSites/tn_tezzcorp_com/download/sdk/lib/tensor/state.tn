@@ -1,0 +1,352 @@
+// Shared tensor/model declarations and one owner for mutable module state.
+
+let TENSOR_DTYPE_F64:int = 1
+
+let TENSOR_DTYPE_F32:int = 2
+
+let TENSOR_DTYPE_F16:int = 3
+
+let TENSOR_DTYPE_BF16:int = 4
+
+let TENSOR_DTYPE_I8:int = 5
+
+let TENSOR_DTYPE_U8:int = 6
+
+let TENSOR_DTYPE_Q4:int = 7
+
+let TENSOR_DEVICE_CPU:int = 0
+
+let TENSOR_DEVICE_GPU:int = 1
+
+let TENSOR_DEVICE_NPU:int = 2
+
+// Core multidimensional tensor.
+// Supports fast parallel batching and SIMD dot products.
+
+struct TensorData:
+  data:*float
+  rows:int
+  cols:int
+  size:int
+
+// N-Dimensional Strided Tensor (Rank 0 to 8)
+// Powers deep learning, zero-copy views, autograd, and fused kernels.
+
+struct Tensor:
+  data:*float
+  ndim:int
+  shape0:int
+  shape1:int
+  shape2:int
+  shape3:int
+  shape4:int
+  shape5:int
+  shape6:int
+  shape7:int
+  stride0:int
+  stride1:int
+  stride2:int
+  stride3:int
+  stride4:int
+  stride5:int
+  stride6:int
+  stride7:int
+  offset:int
+  size:int
+  dtype:int
+  is_view:int
+  requires_grad:int
+  grad:*Tensor
+  node_id:int
+
+// The value is first so the public gradient pointer remains a *Tensor.
+
+struct TensorGradient:
+  value:Tensor
+  refs:int
+
+struct TensorDesc:
+  dtype:int
+  rows:int
+  cols:int
+  stride0:int
+  stride1:int
+  device:int
+  alignment:int
+  elem_bytes:int
+  size:int
+  bytes:int
+
+static let _t_seed:int = 1337
+
+let AUTOGRAD_OP_NONE:int = 0
+
+let AUTOGRAD_OP_ADD:int = 1
+
+let AUTOGRAD_OP_SUB:int = 2
+
+let AUTOGRAD_OP_MUL:int = 3
+
+let AUTOGRAD_OP_DIV:int = 4
+
+let AUTOGRAD_OP_MATMUL:int = 5
+
+let AUTOGRAD_OP_SCALE:int = 6
+
+let AUTOGRAD_OP_NEG:int = 7
+
+let AUTOGRAD_OP_RELU:int = 8
+
+let AUTOGRAD_OP_GELU:int = 9
+
+let AUTOGRAD_OP_SILU:int = 10
+
+let AUTOGRAD_OP_SIGMOID:int = 11
+
+let AUTOGRAD_OP_TANH:int = 12
+
+let AUTOGRAD_OP_SUM_ALL:int = 13
+
+let AUTOGRAD_OP_MEAN_ALL:int = 14
+
+let AUTOGRAD_OP_SUM:int = 15
+
+let AUTOGRAD_OP_MEAN:int = 16
+
+let AUTOGRAD_OP_RMSNORM:int = 17
+
+let AUTOGRAD_OP_LAYERNORM:int = 18
+
+let AUTOGRAD_OP_SOFTMAX:int = 19
+
+let AUTOGRAD_OP_MSE_LOSS:int = 20
+
+let AUTOGRAD_OP_CROSS_ENTROPY:int = 21
+
+let AUTOGRAD_OP_VIEW:int = 22
+
+let AUTOGRAD_OP_COPY:int = 23
+
+let AUTOGRAD_OP_CLAMP:int = 24
+
+struct TapeNode:
+  op_type:int
+  out_grad:*Tensor
+  has_arg0:int
+  arg0_grad:*Tensor
+  arg0:*Tensor
+  has_arg1:int
+  arg1_grad:*Tensor
+  arg1:*Tensor
+  saved_out:*Tensor
+  scalar_val:float
+  axis:int
+  keepdim:int
+  arg2_grad:*Tensor
+  arg2:*Tensor
+  active:int
+
+let _tape_cap:int = 8192
+
+let _tape_len:int = 0
+
+let _tape_raw:*TapeNode = 0 as *TapeNode
+
+let _tape_enabled:int = 1
+
+let _tape_error:int = 0
+
+struct OptimizerParam:
+  p:*Tensor
+  m:*float
+  v:*float
+  size:int
+
+struct AdamW:
+  params_raw:*char
+  num_params:int
+  cap:int
+  lr:float
+  beta1:float
+  beta2:float
+  eps:float
+  weight_decay:float
+  step:int
+
+struct SGD:
+  params_raw:*char
+  num_params:int
+  cap:int
+  lr:float
+  momentum:float
+  weight_decay:float
+  nesterov:int
+  step:int
+
+// -------------------------------------------------------------
+// Learning Rate Schedulers
+// -------------------------------------------------------------
+
+fn _state_TENSOR_DTYPE_F64() -> *int:
+  unsafe:
+    ret &TENSOR_DTYPE_F64
+
+fn _state_TENSOR_DTYPE_F32() -> *int:
+  unsafe:
+    ret &TENSOR_DTYPE_F32
+
+fn _state_TENSOR_DTYPE_F16() -> *int:
+  unsafe:
+    ret &TENSOR_DTYPE_F16
+
+fn _state_TENSOR_DTYPE_BF16() -> *int:
+  unsafe:
+    ret &TENSOR_DTYPE_BF16
+
+fn _state_TENSOR_DTYPE_I8() -> *int:
+  unsafe:
+    ret &TENSOR_DTYPE_I8
+
+fn _state_TENSOR_DTYPE_U8() -> *int:
+  unsafe:
+    ret &TENSOR_DTYPE_U8
+
+fn _state_TENSOR_DTYPE_Q4() -> *int:
+  unsafe:
+    ret &TENSOR_DTYPE_Q4
+
+fn _state_TENSOR_DEVICE_CPU() -> *int:
+  unsafe:
+    ret &TENSOR_DEVICE_CPU
+
+fn _state_TENSOR_DEVICE_GPU() -> *int:
+  unsafe:
+    ret &TENSOR_DEVICE_GPU
+
+fn _state_TENSOR_DEVICE_NPU() -> *int:
+  unsafe:
+    ret &TENSOR_DEVICE_NPU
+
+fn _state__t_seed() -> *int:
+  unsafe:
+    ret &_t_seed
+
+fn _state_AUTOGRAD_OP_NONE() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_NONE
+
+fn _state_AUTOGRAD_OP_ADD() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_ADD
+
+fn _state_AUTOGRAD_OP_SUB() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_SUB
+
+fn _state_AUTOGRAD_OP_MUL() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_MUL
+
+fn _state_AUTOGRAD_OP_DIV() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_DIV
+
+fn _state_AUTOGRAD_OP_MATMUL() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_MATMUL
+
+fn _state_AUTOGRAD_OP_SCALE() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_SCALE
+
+fn _state_AUTOGRAD_OP_NEG() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_NEG
+
+fn _state_AUTOGRAD_OP_RELU() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_RELU
+
+fn _state_AUTOGRAD_OP_GELU() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_GELU
+
+fn _state_AUTOGRAD_OP_SILU() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_SILU
+
+fn _state_AUTOGRAD_OP_SIGMOID() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_SIGMOID
+
+fn _state_AUTOGRAD_OP_TANH() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_TANH
+
+fn _state_AUTOGRAD_OP_SUM_ALL() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_SUM_ALL
+
+fn _state_AUTOGRAD_OP_MEAN_ALL() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_MEAN_ALL
+
+fn _state_AUTOGRAD_OP_SUM() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_SUM
+
+fn _state_AUTOGRAD_OP_MEAN() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_MEAN
+
+fn _state_AUTOGRAD_OP_RMSNORM() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_RMSNORM
+
+fn _state_AUTOGRAD_OP_LAYERNORM() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_LAYERNORM
+
+fn _state_AUTOGRAD_OP_SOFTMAX() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_SOFTMAX
+
+fn _state_AUTOGRAD_OP_MSE_LOSS() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_MSE_LOSS
+
+fn _state_AUTOGRAD_OP_CROSS_ENTROPY() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_CROSS_ENTROPY
+
+fn _state_AUTOGRAD_OP_VIEW() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_VIEW
+
+fn _state_AUTOGRAD_OP_COPY() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_COPY
+
+fn _state_AUTOGRAD_OP_CLAMP() -> *int:
+  unsafe:
+    ret &AUTOGRAD_OP_CLAMP
+
+fn _state__tape_cap() -> *int:
+  unsafe:
+    ret &_tape_cap
+
+fn _state__tape_len() -> *int:
+  unsafe:
+    ret &_tape_len
+
+fn _state__tape_raw() -> **TapeNode:
+  unsafe:
+    ret &_tape_raw
+
+fn _state__tape_enabled() -> *int:
+  unsafe:
+    ret &_tape_enabled
+
+fn _state__tape_error() -> *int:
+  unsafe:
+    ret &_tape_error

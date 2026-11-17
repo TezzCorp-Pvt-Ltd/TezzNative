@@ -1,0 +1,78 @@
+import "stt_temporal"
+import "stt"
+
+fn number(value:*u8, minimum:i64, maximum:i64):
+  const let MAX_DECIMAL_DIGITS = 3
+  const let ASCII_ZERO = 48
+  const let MAX_DECIMAL_DIGIT = 9
+  const let DECIMAL_RADIX = 10
+  if value == 0 || len(value) < 1 || len(value) > MAX_DECIMAL_DIGITS:
+    ret -1
+  unsafe:
+    let result = 0
+    let i = 0
+    while i < len(value):
+      let digit = value[i] as i64 - ASCII_ZERO
+      if digit < 0 || digit > MAX_DECIMAL_DIGIT:
+        ret -1
+      result = result * DECIMAL_RADIX + digit
+      if result > maximum:
+        ret -1
+      i = i + 1
+    if result < minimum:
+      ret -1
+    ret result
+
+fn main():
+  unsafe:
+    const let ARG_MODEL = 0
+    const let ARG_WAV = 1
+    const let ARG_DEVICE = 2
+    const let ARG_BEAM = 3
+    const let EXIT_ARGUMENTS = 2
+    const let EXIT_ALLOCATION = 3
+    const let EXIT_MODEL_DEVICE = 4
+    const let DEVICE_CPU = 0
+    const let DEVICE_CUDA = 1
+    const let DEFAULT_BEAM = 16
+    const let MAX_BEAM = 128
+    const let MAX_PATH_BYTES = 4096
+    const let TRANSCRIPT_CAPACITY = 3001
+    if args_count() <= ARG_WAV || args_count() > ARG_BEAM + 1:
+      say("usage: speech_transcribe checkpoint.tntc audio.wav [device=0 beam=16]; PCM WAV at most 30 seconds")
+      ret EXIT_ARGUMENTS
+    let device = DEVICE_CPU
+    let beam = DEFAULT_BEAM
+    if args_count() > ARG_DEVICE:
+      device = number(arg(ARG_DEVICE), DEVICE_CPU, DEVICE_CUDA)
+    if args_count() > ARG_BEAM:
+      beam = number(arg(ARG_BEAM), 1, MAX_BEAM)
+    let checkpoint:*u8 = arg(ARG_MODEL)
+    let wav:*u8 = arg(ARG_WAV)
+    if device < 0 || beam < 0 || len(checkpoint) < 1 || len(checkpoint) > MAX_PATH_BYTES || len(wav) < 1 || len(wav) > MAX_PATH_BYTES:
+      ret EXIT_ARGUMENTS
+    let model:*TemporalStt = stt_temporal.load(checkpoint, device)
+    if model == 0:
+      say("MODEL_OR_DEVICE_ERROR", device)
+      ret EXIT_MODEL_DEVICE
+    let frontend:*SttEngine = stt.stt_new()
+    if frontend == 0:
+      stt_temporal.free_model(model)
+      say("AUDIO_ALLOCATION_ERROR")
+      ret EXIT_ALLOCATION
+    let status = 0
+    if stt._stt_read_wav(frontend, wav) != 0 || stt._stt_compute_mel(frontend) != 0:
+      say("AUDIO_ERROR: expected supported PCM WAV at most 30 seconds", wav)
+      status = 1
+    else:
+      let text:[u8;3001]
+      let count = stt_temporal.predict(model, (*frontend).mel_buf, (*frontend).mel_frames, &text[0], TRANSCRIPT_CAPACITY, beam)
+      if count < 0:
+        say("PREDICT_ERROR")
+        status = 1
+      else:
+        say((&text[0]) as *u8)
+    stt.stt_free(frontend)
+    stt_temporal.free_model(model)
+    ret status
+

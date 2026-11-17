@@ -1,10 +1,13 @@
 // src/bc_vm.c - bytecode VM (threaded dispatch)
 #include "bc_vm.h"
+#include "bc_native.h"
 #include "ir.h"
 #include "vm.h"
 #include "sema.h"
 #include "util.h"
 #include "lexer.h"
+#include "float_bits.h"
+#include "integer_bits.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -118,7 +121,7 @@ static inline Value v_ptr(void* p){ Value v; v.k=V_PTR; v.p=p; v.i=0; v.f=0.0; v
 
 static inline long long val_as_i64(Value v){
   if(v.k==V_I64) return v.i;
-  if(v.k==V_F64) return (long long)v.f;
+  if(v.k==V_F64) return tn_f64_to_i64(v.f);
   return (long long)(intptr_t)v.p;
 }
 static inline double val_as_f64(Value v){
@@ -129,6 +132,41 @@ static inline double val_as_f64(Value v){
 static inline void* val_as_ptr(Value v){
   if(v.k==V_PTR) return v.p;
   return (void*)(intptr_t)v.i;
+}
+
+static inline Value bc_move_value(Value v,int size,TyKind kind){
+  /* Typed moves represent pointer/integer casts and promoted typed loads.
+     Untyped register copies retain their existing value representation. */
+  if(size==8 && kind==TY_PTR) return v_ptr(val_as_ptr(v));
+  if(size==8 && (kind==TY_I64 || kind==TY_U64)) return v_i64(val_as_i64(v));
+  return v;
+}
+
+static inline double bc_float_operand(Value v, int size){
+  return size == 4 ? (double)tn_f32_from_bits((uint32_t)val_as_i64(v)) : val_as_f64(v);
+}
+
+static inline Value bc_float_value(double x, int size){
+  return size == 4 ? v_i64((long long)tn_f32_bits((float)x)) : v_f64(x);
+}
+
+static Value bc_float_convert(IROp op, Value v){
+  TyKind from = TY_F32, to = TY_F32;
+  switch(op){
+    case I_F32_TO_F64: to = TY_F64; break;
+    case I_F64_TO_F32: from = TY_F64; break;
+    case I_BF16_TO_F32: from = TY_BF16; break;
+    case I_F32_TO_BF16: to = TY_BF16; break;
+    case I_F16_TO_F32: from = TY_F16; break;
+    case I_F32_TO_F16: to = TY_F16; break;
+    case I_F8_TO_F32: from = TY_F8_E4M3; break;
+    case I_F32_TO_F8: to = TY_F8_E4M3; break;
+    case I_F8_E5M2_TO_F32: from = TY_F8_E5M2; break;
+    case I_F32_TO_F8_E5M2: to = TY_F8_E5M2; break;
+    default: die("BC-VM: unsupported float conversion");
+  }
+  double x = from == TY_F64 ? val_as_f64(v) : tn_float_bits_to_double((uint64_t)val_as_i64(v), from);
+  return to == TY_F64 ? v_f64(x) : v_i64((long long)tn_float_bits_from_double(x, to));
 }
 
 typedef enum {
@@ -143,6 +181,7 @@ typedef enum {
   BC_FCMP,
   BC_I2F,
   BC_F2I,
+  BC_FCONVERT,
   BC_CALL,
   BC_CALLPTR,
   BC_ALLOCA,
@@ -162,6 +201,7 @@ typedef struct BCIns {
   int sid;
   int size;
   int is_unsigned;
+  TyKind load_kind;
   int argc;
   int* args;
   int callee;           // >=0 func idx, <0 builtin/unknown
@@ -171,6 +211,7 @@ typedef struct BCIns {
   int builtin_id;
   void* cache_ptr;      // callptr inline cache
   int cache_idx;
+  int return_offset;    // caller-frame storage for aggregate call results
 } BCIns;
 
 typedef struct BCFunc {
@@ -181,6 +222,7 @@ typedef struct BCFunc {
   int frame_size;
   int* param_regs;
   int param_regs_n;
+  int return_size;
 } BCFunc;
 
 typedef struct BCModule {
@@ -246,6 +288,7 @@ static BCModule* bc_build(IRModule* M){
     if(nreg <= 0) nreg = 1;
     B->nreg = nreg;
     B->param_count = F->param_count;
+    B->return_size = F->ret_ty && (F->ret_ty->k==TY_STRUCT || F->ret_ty->k==TY_ARRAY) ? type_size(F->ret_ty) : 0;
     B->param_regs = NULL;
     B->param_regs_n = 0;
 
@@ -310,6 +353,7 @@ static BCModule* bc_build(IRModule* M){
       bi->sid = in->sid;
       bi->size = in->size;
       bi->is_unsigned = in->is_unsigned;
+      bi->load_kind = in->load_kind;
       bi->argc = in->argc;
       bi->args = in->args;
       bi->name = in->name;
@@ -319,6 +363,7 @@ static BCModule* bc_build(IRModule* M){
         bi->builtin_id = -1;
         bi->cache_ptr = NULL;
         bi->cache_idx = -1;
+        bi->return_offset = -1;
 
       switch(in->op){
         case I_ICONST: bi->op = BC_ICONST; break;
@@ -340,8 +385,19 @@ static BCModule* bc_build(IRModule* M){
         case I_FCMP: bi->op = BC_FCMP; bi->imm = (long long)in->cmpop; break;
         case I_I2F: bi->op = BC_I2F; break;
         case I_F2I: bi->op = BC_F2I; break;
+        case I_F32_TO_F64: case I_F64_TO_F32:
+        case I_BF16_TO_F32: case I_F32_TO_BF16:
+        case I_F16_TO_F32: case I_F32_TO_F16:
+        case I_F8_TO_F32: case I_F32_TO_F8:
+        case I_F8_E5M2_TO_F32: case I_F32_TO_F8_E5M2:
+          bi->op = BC_FCONVERT; bi->imm = in->op; break;
         case I_CALL: {
           bi->op = BC_CALL;
+          if(in->size > 0){
+            frame_size = align_up_i(frame_size, in->align);
+            bi->return_offset = frame_size;
+            frame_size += in->size;
+          }
           int callee = bc_find_func(M, in->name, in->nlen);
           if(callee >= 0 && M->fns[callee].is_extern){
             callee = -1;
@@ -350,7 +406,14 @@ static BCModule* bc_build(IRModule* M){
           bi->builtin_id = bc_builtin_id(in->name, in->nlen);
           break;
         }
-        case I_CALLPTR: bi->op = BC_CALLPTR; break;
+        case I_CALLPTR:
+          bi->op = BC_CALLPTR;
+          if(in->size > 0){
+            frame_size = align_up_i(frame_size, in->align);
+            bi->return_offset = frame_size;
+            frame_size += in->size;
+          }
+          break;
         case I_ALLOCA: {
           bi->op = BC_ALLOCA;
           int align = in->align > 0 ? in->align : in->size;
@@ -375,9 +438,7 @@ static BCModule* bc_build(IRModule* M){
           break;
         }
         default:
-          bi->op = BC_ICONST;
-          bi->imm = 0;
-          break;
+          die("BC-VM: unsupported IR operation");
       }
     }
 
@@ -554,7 +615,7 @@ static void mem_tag_copy(BCVM* vm, void* dst, void* src, size_t n){
   }
 }
 
-static Value mem_load(BCVM* vm, void* addr, int size, int is_unsigned){
+static Value mem_load(BCVM* vm, void* addr, int size, int is_unsigned, TyKind kind){
   if(!addr) return v_i64(0);
   if(size == 1){
     if(is_unsigned){
@@ -586,15 +647,16 @@ static Value mem_load(BCVM* vm, void* addr, int size, int is_unsigned){
     memcpy(&v, addr, 4);
     return v_i64((long long)v);
   }
-  int tag = mem_tag_get(vm, addr);
-  if(tag == 1){
+  // Interpret storage as the read's type, including unsafe reinterpretation
+  // and floating values supplied by fread or untyped memory copies.
+  if(kind == TY_F64){
     double d = 0.0;
     memcpy(&d, addr, 8);
     return v_f64(d);
   }
-  if(tag == 2){
+  if(kind == TY_PTR){
     void* p = NULL;
-    memcpy(&p, addr, 8);
+    memcpy(&p, addr, sizeof(p));
     return v_ptr(p);
   }
   long long v = 0;
@@ -637,15 +699,15 @@ static void mem_store(BCVM* vm, void* addr, int size, Value v){
   }
 }
 
-static Value bc_exec(BCVM* vm, int fidx, Value* args, int argc);
+static Value bc_exec(BCVM* vm, int fidx, Value* args, int argc, void* aggregate_out);
 
-  static Value bc_call_ptr(BCVM* vm, Value callee, Value* args, int argc){
+  static Value bc_call_ptr(BCVM* vm, Value callee, Value* args, int argc, void* aggregate_out){
     void* p = val_as_ptr(callee);
     if(p){
       BCFunc* fn = (BCFunc*)p;
       int idx = (int)(fn - vm->bm->fns);
       if(idx >= 0 && idx < vm->bm->fn_n){
-        return bc_exec(vm, idx, args, argc);
+        return bc_exec(vm, idx, args, argc, aggregate_out);
       }
     }
     die("BC-VM: bad function pointer");
@@ -655,7 +717,7 @@ static Value bc_exec(BCVM* vm, int fidx, Value* args, int argc);
   static int bc_builtin_fast(BCVM* vm, int id, Value* args, int argc, Value* out){
     if(id == BC_BI_ASYNC){
       if(argc!=1) return 0;
-      Value r = bc_call_ptr(vm, args[0], NULL, 0);
+      Value r = bc_call_ptr(vm, args[0], NULL, 0, NULL);
       if(g_vm_async_zero){
         out->k=V_I64; out->i=val_as_i64(r); out->p=NULL; out->ty=NULL;
         return 1;
@@ -775,6 +837,7 @@ static Value bc_exec(BCVM* vm, int fidx, Value* args, int argc);
 static int bc_builtin(BCVM* vm, const char* name, int nlen, Value* args, int argc, Value* out){
   int id = bc_builtin_id(name, nlen);
   if(id >= 0 && bc_builtin_fast(vm, id, args, argc, out)) return 1;
+  if(tn_vm_native_call(name, nlen, args, argc, out)) return 1;
   {
     int ok = builtin_call(name, nlen, args, argc, out);
     if(ok) bc_tag_ai_builtin_outputs(vm, name, nlen, args, argc, out);
@@ -782,7 +845,7 @@ static int bc_builtin(BCVM* vm, const char* name, int nlen, Value* args, int arg
   }
 }
 
-static Value bc_exec(BCVM* vm, int fidx, Value* args, int argc){
+static Value bc_exec(BCVM* vm, int fidx, Value* args, int argc, void* aggregate_out){
   BCFunc* fn = &vm->bm->fns[fidx];
   int nreg = fn->nreg;
   int reg_base = vm->reg_top;
@@ -816,7 +879,7 @@ static Value bc_exec(BCVM* vm, int fidx, Value* args, int argc){
 #if defined(__GNUC__)
   static void* dispatch[] = {
     &&op_ICONST, &&op_FCONST, &&op_ADDRSYM, &&op_SCONST, &&op_MOV,
-    &&op_BIN, &&op_CMP, &&op_FBIN, &&op_FCMP, &&op_I2F, &&op_F2I,
+    &&op_BIN, &&op_CMP, &&op_FBIN, &&op_FCMP, &&op_I2F, &&op_F2I, &&op_FCONVERT,
     &&op_CALL, &&op_CALLPTR, &&op_ALLOCA, &&op_LOAD, &&op_STORE,
     &&op_GEP, &&op_RET, &&op_JMP, &&op_JZ
   };
@@ -865,7 +928,7 @@ op_SCONST: {
   }
 op_MOV: {
     BCIns* in = &ins[ip];
-    regs[in->a] = regs[in->b];
+    regs[in->a] = bc_move_value(regs[in->b],in->size,in->load_kind);
     ip++; if(ip < ins_n) DISPATCH(); goto bc_end;
   }
 op_BIN: {
@@ -874,16 +937,17 @@ op_BIN: {
     long long b = val_as_i64(regs[in->c]);
     long long r = 0;
     switch((IRBin)in->imm){
-      case B_ADD: r = a + b; break;
-      case B_SUB: r = a - b; break;
-      case B_MUL: r = a * b; break;
-      case B_DIV: r = b ? (a / b) : 0; break;
-      case B_MOD: r = b ? (a % b) : 0; break;
+      case B_ADD: r = tn_i64_add(a,b); break;
+      case B_SUB: r = tn_i64_sub(a,b); break;
+      case B_MUL: r = tn_i64_mul(a,b); break;
+      case B_DIV: case B_MOD:
+        if(b==0 || (a==LLONG_MIN && b==-1)) die("BC-VM: invalid signed integer division");
+        r=(IRBin)in->imm==B_DIV ? a/b : a%b; break;
       case B_AND: r = a & b; break;
       case B_OR:  r = a | b; break;
       case B_XOR: r = a ^ b; break;
-      case B_SHL: r = a << (b & 63); break;
-      case B_SHR: r = a >> (b & 63); break;
+      case B_SHL: r = tn_i64_shl(a,b); break;
+      case B_SHR: r = tn_i64_shr(a,b); break;
       default: r = 0; break;
     }
     regs[in->a] = v_i64(r);
@@ -908,23 +972,23 @@ op_CMP: {
   }
 op_FBIN: {
     BCIns* in = &ins[ip];
-    double a = val_as_f64(regs[in->b]);
-    double b = val_as_f64(regs[in->c]);
+    double a = bc_float_operand(regs[in->b], in->size);
+    double b = bc_float_operand(regs[in->c], in->size);
     double r = 0.0;
     switch((IRFlt)in->imm){
       case F_ADD: r = a + b; break;
       case F_SUB: r = a - b; break;
       case F_MUL: r = a * b; break;
-      case F_DIV: r = b!=0.0 ? (a / b) : 0.0; break;
+      case F_DIV: r = a / b; break;
       default: r = 0.0; break;
     }
-    regs[in->a] = v_f64(r);
+    regs[in->a] = bc_float_value(r, in->size);
     ip++; if(ip < ins_n) DISPATCH(); goto bc_end;
   }
 op_FCMP: {
     BCIns* in = &ins[ip];
-    double a = val_as_f64(regs[in->b]);
-    double b = val_as_f64(regs[in->c]);
+    double a = bc_float_operand(regs[in->b], in->size);
+    double b = bc_float_operand(regs[in->c], in->size);
     long long r = 0;
     switch((IRCmp)in->imm){
       case C_EQ:  r = (a==b); break;
@@ -940,12 +1004,17 @@ op_FCMP: {
   }
 op_I2F: {
     BCIns* in = &ins[ip];
-    regs[in->a] = v_f64((double)val_as_i64(regs[in->b]));
+    regs[in->a] = bc_float_value((double)val_as_i64(regs[in->b]), in->size);
     ip++; if(ip < ins_n) DISPATCH(); goto bc_end;
   }
 op_F2I: {
     BCIns* in = &ins[ip];
-    regs[in->a] = v_i64((long long)val_as_f64(regs[in->b]));
+    regs[in->a] = v_i64(tn_f64_to_i64(bc_float_operand(regs[in->b], in->size)));
+    ip++; if(ip < ins_n) DISPATCH(); goto bc_end;
+  }
+op_FCONVERT: {
+    BCIns* in = &ins[ip];
+    regs[in->a] = bc_float_convert((IROp)in->imm, regs[in->b]);
     ip++; if(ip < ins_n) DISPATCH(); goto bc_end;
   }
 op_CALL: {
@@ -975,7 +1044,8 @@ op_CALL: {
     }
     Value r;
     if(in->callee >= 0){
-      r = bc_exec(vm, in->callee, av, argc2);
+      r = bc_exec(vm, in->callee, av, argc2,
+                  in->return_offset >= 0 ? (unsigned char*)frame + in->return_offset : NULL);
     } else {
       Value out;
       int ok = 0;
@@ -988,6 +1058,7 @@ op_CALL: {
       }
       r = out;
     }
+    regs = vm->reg_stack + reg_base;
     if(in->a >= 0) regs[in->a] = r;
     if(arg_base >= 0) vm->arg_top = arg_base;
     ip++; if(ip < ins_n) DISPATCH(); goto bc_end;
@@ -1020,9 +1091,11 @@ op_CALL: {
       Value r;
       void* p = val_as_ptr(regs[in->b]);
       if(p && p == in->cache_ptr && in->cache_idx >= 0){
-        r = bc_exec(vm, in->cache_idx, av, argc2);
+        r = bc_exec(vm, in->cache_idx, av, argc2,
+                    in->return_offset >= 0 ? (unsigned char*)frame + in->return_offset : NULL);
       } else {
-        r = bc_call_ptr(vm, regs[in->b], av, argc2);
+        r = bc_call_ptr(vm, regs[in->b], av, argc2,
+                        in->return_offset >= 0 ? (unsigned char*)frame + in->return_offset : NULL);
         in->cache_ptr = p;
         if(p){
           int idx = (int)(((BCFunc*)p) - vm->bm->fns);
@@ -1031,6 +1104,7 @@ op_CALL: {
           in->cache_idx = -1;
         }
       }
+      regs = vm->reg_stack + reg_base;
       if(in->a >= 0) regs[in->a] = r;
       if(arg_base >= 0) vm->arg_top = arg_base;
       ip++; if(ip < ins_n) DISPATCH(); goto bc_end;
@@ -1053,7 +1127,7 @@ op_ALLOCA: {
 op_LOAD: {
     BCIns* in = &ins[ip];
     void* p = val_as_ptr(regs[in->b]);
-    regs[in->a] = mem_load(vm, p, in->size, in->is_unsigned);
+    regs[in->a] = mem_load(vm, p, in->size, in->is_unsigned, in->load_kind);
     ip++; if(ip < ins_n) DISPATCH(); goto bc_end;
   }
 op_STORE: {
@@ -1105,16 +1179,18 @@ bc_end:
         if(in->sid>=0 && in->sid<vm->bm->irm->str_n) regs[in->a]=v_ptr(vm->bm->irm->strs[in->sid].bytes);
         else regs[in->a]=v_ptr(NULL);
         ip++; break;
-      case BC_MOV: regs[in->a]=regs[in->b]; ip++; break;
+      case BC_MOV: regs[in->a]=bc_move_value(regs[in->b],in->size,in->load_kind); ip++; break;
       case BC_BIN: {
         long long a=val_as_i64(regs[in->b]);
         long long b=val_as_i64(regs[in->c]);
         long long r=0;
         switch((IRBin)in->imm){
-          case B_ADD: r=a+b; break; case B_SUB: r=a-b; break; case B_MUL: r=a*b; break;
-          case B_DIV: r=b? a/b:0; break; case B_MOD: r=b? a%b:0; break;
+          case B_ADD: r=tn_i64_add(a,b); break; case B_SUB: r=tn_i64_sub(a,b); break; case B_MUL: r=tn_i64_mul(a,b); break;
+          case B_DIV: case B_MOD:
+            if(b==0 || (a==LLONG_MIN && b==-1)) die("BC-VM: invalid signed integer division");
+            r=(IRBin)in->imm==B_DIV ? a/b : a%b; break;
           case B_AND: r=a&b; break; case B_OR: r=a|b; break; case B_XOR: r=a^b; break;
-          case B_SHL: r=a << (b&63); break; case B_SHR: r=a >> (b&63); break;
+          case B_SHL: r=tn_i64_shl(a,b); break; case B_SHR: r=tn_i64_shr(a,b); break;
           default: r=0; break;
         }
         regs[in->a]=v_i64(r); ip++; break;
@@ -1132,18 +1208,18 @@ bc_end:
         regs[in->a]=v_i64(r); ip++; break;
       }
       case BC_FBIN: {
-        double a=val_as_f64(regs[in->b]);
-        double b=val_as_f64(regs[in->c]);
+        double a=bc_float_operand(regs[in->b], in->size);
+        double b=bc_float_operand(regs[in->c], in->size);
         double r=0.0;
         switch((IRFlt)in->imm){
           case F_ADD: r=a+b; break; case F_SUB: r=a-b; break; case F_MUL: r=a*b; break;
-          case F_DIV: r=b!=0.0? a/b:0.0; break; default: r=0.0; break;
+          case F_DIV: r=a/b; break; default: r=0.0; break;
         }
-        regs[in->a]=v_f64(r); ip++; break;
+        regs[in->a]=bc_float_value(r, in->size); ip++; break;
       }
       case BC_FCMP: {
-        double a=val_as_f64(regs[in->b]);
-        double b=val_as_f64(regs[in->c]);
+        double a=bc_float_operand(regs[in->b], in->size);
+        double b=bc_float_operand(regs[in->c], in->size);
         long long r=0;
         switch((IRCmp)in->imm){
           case C_EQ: r=(a==b); break; case C_NEQ: r=(a!=b); break;
@@ -1153,8 +1229,9 @@ bc_end:
         }
         regs[in->a]=v_i64(r); ip++; break;
       }
-      case BC_I2F: regs[in->a]=v_f64((double)val_as_i64(regs[in->b])); ip++; break;
-      case BC_F2I: regs[in->a]=v_i64((long long)val_as_f64(regs[in->b])); ip++; break;
+      case BC_I2F: regs[in->a]=bc_float_value((double)val_as_i64(regs[in->b]), in->size); ip++; break;
+      case BC_F2I: regs[in->a]=v_i64(tn_f64_to_i64(bc_float_operand(regs[in->b], in->size))); ip++; break;
+      case BC_FCONVERT: regs[in->a]=bc_float_convert((IROp)in->imm, regs[in->b]); ip++; break;
       case BC_CALL: {
         int argc2=in->argc;
         Value av_small[8];
@@ -1178,7 +1255,8 @@ bc_end:
           for(int i=0;i<argc2;i++) av[i]=regs[in->args[i]];
         }
         Value r;
-        if(in->callee>=0) r=bc_exec(vm, in->callee, av, argc2);
+        if(in->callee>=0) r=bc_exec(vm, in->callee, av, argc2,
+                                  in->return_offset >= 0 ? (unsigned char*)frame + in->return_offset : NULL);
         else {
           Value out;
           int ok = 0;
@@ -1189,6 +1267,7 @@ bc_end:
           }
           r=out;
         }
+        regs = vm->reg_stack + reg_base;
         if(in->a>=0) regs[in->a]=r;
         if(arg_base >= 0) vm->arg_top = arg_base;
         ip++; break;
@@ -1218,9 +1297,11 @@ bc_end:
           Value r;
           void* p = val_as_ptr(regs[in->b]);
           if(p && p == in->cache_ptr && in->cache_idx >= 0){
-            r = bc_exec(vm, in->cache_idx, av, argc2);
+            r = bc_exec(vm, in->cache_idx, av, argc2,
+                        in->return_offset >= 0 ? (unsigned char*)frame + in->return_offset : NULL);
           } else {
-            r = bc_call_ptr(vm, regs[in->b], av, argc2);
+            r = bc_call_ptr(vm, regs[in->b], av, argc2,
+                            in->return_offset >= 0 ? (unsigned char*)frame + in->return_offset : NULL);
             in->cache_ptr = p;
             if(p){
               int idx = (int)(((BCFunc*)p) - vm->bm->fns);
@@ -1229,6 +1310,7 @@ bc_end:
               in->cache_idx = -1;
             }
           }
+          regs = vm->reg_stack + reg_base;
           if(in->a>=0) regs[in->a]=r;
           if(arg_base >= 0) vm->arg_top = arg_base;
           ip++; break;
@@ -1247,7 +1329,7 @@ bc_end:
         }
         ip++; break;
       }
-      case BC_LOAD: { void* p=val_as_ptr(regs[in->b]); regs[in->a]=mem_load(vm,p,in->size,in->is_unsigned); ip++; break; }
+      case BC_LOAD: { void* p=val_as_ptr(regs[in->b]); regs[in->a]=mem_load(vm,p,in->size,in->is_unsigned,in->load_kind); ip++; break; }
       case BC_STORE: { void* p=val_as_ptr(regs[in->a]); mem_store(vm,p,in->size,regs[in->b]); ip++; break; }
       case BC_GEP: { void* p=val_as_ptr(regs[in->b]); regs[in->a]=v_ptr((unsigned char*)p + in->imm); ip++; break; }
       case BC_RET: if(in->a>=0) ret=regs[in->a]; ip=ins_n; break;
@@ -1258,6 +1340,13 @@ bc_end:
   }
 #endif
 
+  if(fn->return_size > 0){
+    void* src = val_as_ptr(ret);
+    if(!src || !aggregate_out) die("BC-VM: missing aggregate return storage");
+    memcpy(aggregate_out, src, (size_t)fn->return_size);
+    mem_tag_copy(vm, aggregate_out, src, (size_t)fn->return_size);
+    ret = v_ptr(aggregate_out);
+  }
   if(frame){
     mem_remove(vm, frame);
     free(frame);
@@ -1324,10 +1413,12 @@ int bc_vm_run_file(const char* path, int debug, int argc, char** argv){
       vm.globals[i] = mem;
       mem_add(&vm, mem, (size_t)g->size);
       if(g->has_init){
-        if(g->ty && type_is_float(g->ty)){
+        if(g->ty && g->ty->k == TY_F64){
           double d = 0.0;
           memcpy(&d, &g->init_fbits, sizeof(double));
           mem_store(&vm, mem, 8, v_f64(d));
+        } else if(g->ty && type_is_float(g->ty)){
+          mem_store(&vm, mem, g->size, v_i64(g->init_fbits));
         } else {
           mem_store(&vm, mem, g->size, v_i64(g->init_int));
         }
@@ -1340,7 +1431,7 @@ int bc_vm_run_file(const char* path, int debug, int argc, char** argv){
   int main_idx = bc_find_func(M, "main", 4);
   if(main_idx < 0) err_at2(path, src, 1, 1, "missing fn main()");
 
-  Value out = bc_exec(&vm, main_idx, NULL, 0);
+  Value out = bc_exec(&vm, main_idx, NULL, 0, NULL);
   int exit_code = 0;
   if(out.k == V_I64){
     exit_code = (int)out.i;

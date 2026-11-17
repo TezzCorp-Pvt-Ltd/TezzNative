@@ -1,0 +1,25 @@
+import "arduino.uno"
+
+fn main() -> int:
+  unsafe:
+    values:[u8;4] = [0, 127, 128, 255]
+    address:*u8 = &values[0]
+    if address[2] != 128 || address[3] != 255: ret 1
+    address[2] = 129 as u8
+    if values[2] != 129: ret 2
+    signed_values:[i8;2] = [-1, -128]
+    if signed_values[0] != -1 || signed_values[1] != -128: ret 3
+    signed_word:i16 = -32768 as i16
+    if *(&signed_word) != -32768: ret 4
+    pointers:[*u8;2]
+    pointers[0] = address
+    pointers[1] = address + 1
+    if pointers[0][3] != 255 || pointers[1][1] != 129: ret 5
+  // Runtime input prevents folding these wrap/shift operations at compile time.
+  parity:int = arduino.uno.micros() & 1
+  large:int = 9223372036854775807 - parity
+  wrapped:int = large + 2
+  if wrapped >= 0 || wrapped - 2 != large: ret 6
+  if (large << 65) != (large << 1): ret 7
+  if (-8 >> (64 + parity)) != (-8 >> parity): ret 8
+  ret 0

@@ -1,0 +1,44 @@
+import "tensor_bridge"
+import "tensor"
+import "tztensor"
+
+fn main() -> int:
+  unsafe:
+    input_file:*char = fopen("cases.bin", "rb")
+    if input_file == 0: ret 1
+    count:int = 0
+    if fread((&count) as *char, 1, 8, input_file) != 8: ret 2
+    if count <= 0 || count > 100000: ret 3
+    cases:*u64 = malloc(count * 32) as *u64
+    if cases == 0: ret 4
+    if fread(cases as *char, 1, count * 32, input_file) != count * 32: ret 5
+    fclose(input_file)
+    source:Tensor = tensor.tensor_1d(1)
+    if source.data == 0: ret 6
+    index:int = 0
+    while index < count:
+      (source.data as *u64)[0] = cases[index * 4]
+      handle:int = tensor_bridge.to_tztensor(source)
+      expected_status:int = cases[index * 4 + 3] as int
+      if expected_status == 0:
+        if handle != 0: ret 7
+      else:
+        if handle == 0: ret 8
+        bits:u32 = (tztensor.tensor_data(handle) as *u32)[0]
+        if expected_status == 2:
+          if (bits as int & 2139095040) != 2139095040 || (bits as int & 8388607) == 0: ret 9
+        else:
+          if bits as u64 != cases[index * 4 + 1]: ret 10
+        back:Tensor = tensor_bridge.to_tensor(handle)
+        if back.size != 1: ret 11
+        if expected_status == 2:
+          if back.data[0] == back.data[0]: ret 12
+        else:
+          if (back.data as *u64)[0] != cases[index * 4 + 2]: ret 13
+        tensor.tensor_free_tensor(back)
+        tztensor.tensor_free(handle)
+      index = index + 1
+    tensor.tensor_free_tensor(source)
+    free(cases as *char)
+    say "INTEROP_NUMERIC_CHECKS", count
+  ret 0

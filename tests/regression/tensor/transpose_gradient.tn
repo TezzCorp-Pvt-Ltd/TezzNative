@@ -1,0 +1,26 @@
+import "tensor"
+
+fn main() -> int:
+  tensor.tape_init()
+  x:Tensor = tensor.tensor_ones_2d(2, 2)
+  x = tensor.tensor_require_grad(x)
+  view:Tensor = tensor.tensor_t(x)
+  weights:Tensor = tensor.tensor_2d(2, 2)
+  tensor.tensor_set2(weights, 0, 0, 1.0)
+  tensor.tensor_set2(weights, 0, 1, 2.0)
+  tensor.tensor_set2(weights, 1, 0, 3.0)
+  tensor.tensor_set2(weights, 1, 1, 4.0)
+  weighted:Tensor = tensor.tensor_mul(view, weights)
+  loss:Tensor = tensor.tensor_sum_all_t(weighted)
+  tensor.tensor_backward(loss)
+  failed:int = 0
+  if tensor.tensor_grad_item(x, 0) != 1.0 || tensor.tensor_grad_item(x, 1) != 3.0 || tensor.tensor_grad_item(x, 2) != 2.0 || tensor.tensor_grad_item(x, 3) != 4.0:
+    failed = 1
+    say "FAIL: transpose gradient must map back to the original axes"
+  tensor.tape_reset()
+  tensor.tensor_free_tensor(loss)
+  tensor.tensor_free_tensor(weighted)
+  tensor.tensor_free_tensor(weights)
+  tensor.tensor_free_tensor(view)
+  tensor.tensor_free_tensor(x)
+  ret failed

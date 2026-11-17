@@ -1,0 +1,500 @@
+// tzgui implementation: geometry.
+import "gui"
+import "frame"
+import "io"
+import "os"
+import "tzgui.state"
+
+fn _tree_color_scale(color:int, pct:int) -> int:
+  r:int = (color / 65536) % 256
+  g:int = (color / 256) % 256
+  b:int = color % 256
+  r = r * pct / 100
+  g = g * pct / 100
+  b = b * pct / 100
+  if r > 255:
+    r = 255
+  if g > 255:
+    g = 255
+  if b > 255:
+    b = 255
+  ret r * 65536 + g * 256 + b
+
+fn _tree_clear_text(out:*char) -> int:
+  if out == 0:
+    ret 0 - 1
+  i:int = 0
+  while i < tzgui.state._get_TZ_WIDGET_TEXT_MAX():
+    out[i] = 0 as char
+    i = i + 1
+  ret 0
+
+fn _tree_text_length(text:*char) -> int:
+  if text == 0:
+    ret 0
+  n:int = 0
+  while n < tzgui.state._get_TZ_WIDGET_TEXT_MAX():
+    ch:int = 0
+    unsafe:
+      ch = text[n] as int
+    if ch == 0:
+      break
+    n = n + 1
+  ret n
+
+fn _tree_widget_slot_by_id(tree:*TzWidgetTree, widget_id:int) -> int:
+  if tree == 0 || widget_id <= 0:
+    ret 0 - 1
+  i:int = 0
+  while i < tzgui.state._get_TZ_WIDGET_MAX():
+    if tree[0].widgets[i].alive != 0 && tree[0].widgets[i].id == widget_id:
+      ret i
+    i = i + 1
+  ret 0 - 1
+
+fn _tree_add_rect(tree:*TzWidgetTree, x:int, y:int, w:int, h:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  ret frame.tz_damage_add_clipped(tree[0].damage, x, y, w, h, tree[0].width, tree[0].height)
+
+fn _tree_widget_mark_rect(tree:*TzWidgetTree, slot:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  if slot < 0 || slot >= tzgui.state._get_TZ_WIDGET_MAX():
+    ret 0 - 1
+  if tree[0].widgets[slot].alive == 0:
+    ret 0
+  shadow:int = tree[0].widgets[slot].shadow_size
+  focus_pad:int = 0
+  if tree[0].widgets[slot].focusable != 0:
+    focus_pad = 2
+  extent:int = shadow + focus_pad
+  x:int = tree[0].widgets[slot].x - extent
+  y:int = tree[0].widgets[slot].y - extent
+  w:int = tree[0].widgets[slot].w
+  h:int = tree[0].widgets[slot].h
+  if extent > 0:
+    w = w + extent * 2
+    h = h + extent * 2
+  ret _tree_add_rect(tree, x, y, w, h)
+
+fn tree_request_full_redraw(tree:*TzWidgetTree, reason:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  if reason <= tzgui.state._get_TZ_FULL_REDRAW_NONE():
+    reason = tzgui.state._get_TZ_FULL_REDRAW_TREE_RESET()
+  tree[0].full_redraw_reason = reason
+  ret frame.tz_damage_add_clipped(tree[0].damage, 0, 0, tree[0].width, tree[0].height, tree[0].width, tree[0].height)
+
+fn _tree_sort_slots_by_id(tree:*TzWidgetTree, slots:*int, n:int) -> int:
+  if tree == 0 || slots == 0 || n <= 1:
+    ret 0
+  i:int = 1
+  while i < n:
+    key:int = slots[i]
+    j:int = i - 1
+    while j >= 0 && tree[0].widgets[slots[j]].id > tree[0].widgets[key].id:
+      slots[j + 1] = slots[j]
+      j = j - 1
+    slots[j + 1] = key
+    i = i + 1
+  ret 0
+
+fn _tree_sort_slots_by_order(tree:*TzWidgetTree, slots:*int, n:int) -> int:
+  if tree == 0 || slots == 0 || n <= 1:
+    ret 0
+  i:int = 1
+  while i < n:
+    key:int = slots[i]
+    j:int = i - 1
+    while j >= 0 && tree[0].widgets[slots[j]].order > tree[0].widgets[key].order:
+      slots[j + 1] = slots[j]
+      j = j - 1
+    slots[j + 1] = key
+    i = i + 1
+  ret 0
+
+fn _tree_apply_layout_bounds(tree:*TzWidgetTree, slot:int, x:int, y:int, w:int, h:int) -> int:
+  if tree == 0 || slot < 0 || slot >= tzgui.state._get_TZ_WIDGET_MAX():
+    ret 0 - 1
+  if w < 1:
+    w = 1
+  if h < 1:
+    h = 1
+  if tree[0].widgets[slot].x == x && tree[0].widgets[slot].y == y && tree[0].widgets[slot].w == w && tree[0].widgets[slot].h == h:
+    ret 0
+  if tree[0].widgets[slot].visible != 0:
+    _tree_widget_mark_rect(tree, slot)
+  tree[0].widgets[slot].x = x
+  tree[0].widgets[slot].y = y
+  tree[0].widgets[slot].w = w
+  tree[0].widgets[slot].h = h
+  tree[0].widgets[slot].dirty = 1
+  if tree[0].widgets[slot].visible != 0:
+    _tree_widget_mark_rect(tree, slot)
+  ret 1
+
+fn _tree_effective_visible(tree:*TzWidgetTree, slot:int) -> int:
+  if tree == 0 || slot < 0 || slot >= tzgui.state._get_TZ_WIDGET_MAX():
+    ret 0
+  current:int = slot
+  depth:int = 0
+  while current >= 0 && depth < tzgui.state._get_TZ_WIDGET_MAX():
+    if tree[0].widgets[current].alive == 0 || tree[0].widgets[current].visible == 0:
+      ret 0
+    parent_id:int = tree[0].widgets[current].parent
+    if parent_id <= 0:
+      ret 1
+    current = _tree_widget_slot_by_id(tree, parent_id)
+    if current < 0:
+      ret 0
+    depth = depth + 1
+  ret 0
+
+fn _tree_effective_enabled(tree:*TzWidgetTree, slot:int) -> int:
+  if tree == 0 || slot < 0 || slot >= tzgui.state._get_TZ_WIDGET_MAX():
+    ret 0
+  current:int = slot
+  depth:int = 0
+  while current >= 0 && depth < tzgui.state._get_TZ_WIDGET_MAX():
+    if tree[0].widgets[current].alive == 0 || tree[0].widgets[current].enabled == 0:
+      ret 0
+    parent_id:int = tree[0].widgets[current].parent
+    if parent_id <= 0:
+      ret 1
+    current = _tree_widget_slot_by_id(tree, parent_id)
+    if current < 0:
+      ret 0
+    depth = depth + 1
+  ret 0
+
+fn _tree_mark_interaction(tree:*TzWidgetTree, widget_id:int) -> int:
+  if tree == 0 || widget_id <= 0:
+    ret 0
+  slot:int = _tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0
+  tree[0].widgets[slot].dirty = 1
+  ret _tree_widget_mark_rect(tree, slot)
+
+fn _tree_sort_widgets(tree:*TzWidgetTree, idxs:*int, n:int) -> int:
+  if tree == 0 || idxs == 0 || n <= 1:
+    ret 0
+  i:int = 1
+  while i < n:
+    key:int = idxs[i]
+    j:int = i - 1
+    while j >= 0:
+      a:int = idxs[j]
+      az:int = tree[0].widgets[a].z
+      kz:int = tree[0].widgets[key].z
+      ao:int = tree[0].widgets[a].order
+      ko:int = tree[0].widgets[key].order
+      if az < kz:
+        break
+      if az == kz && ao < ko:
+        break
+      idxs[j + 1] = idxs[j]
+      j = j - 1
+    idxs[j + 1] = key
+    i = i + 1
+  ret 0
+
+fn _tree_font_size(tree:*TzWidgetTree, slot:int) -> int:
+  size:int = tree[0].widgets[slot].font_size
+  if size <= 0:
+    scale:int = tree[0].widgets[slot].text_scale
+    if scale < 1:
+      scale = 1
+    size = 15 * scale
+  if size < 6:
+    size = 6
+  if size > 192:
+    size = 192
+  ret size
+
+fn _tree_font_weight(tree:*TzWidgetTree, slot:int) -> int:
+  weight:int = tree[0].widgets[slot].font_weight
+  if weight <= 0:
+    weight = 400
+    if tree[0].widgets[slot].text_bold != 0:
+      weight = 700
+  if weight < 100:
+    weight = 100
+  if weight > 900:
+    weight = 900
+  ret weight
+
+fn _tree_font_family(tree:*TzWidgetTree, slot:int) -> str:
+  family:*char = tree[0].widgets[slot].font_family
+  if family == 0:
+    ret "Segoe UI"
+  ret family as str
+
+fn _tree_draw_icon(surface:*GuiSurface, x:int, y:int, w:int, h:int, icon_id:int, requested_size:int, color:int) -> int:
+  if surface == 0 || icon_id <= 0:
+    ret 0
+  size:int = requested_size
+  if size <= 0:
+    size = w
+    if h < size:
+      size = h
+    size = size - 16
+  if size < 8:
+    size = 8
+  limit:int = w
+  if h < limit:
+    limit = h
+  if size > limit:
+    size = limit
+  if size < 6:
+    ret 0
+  left:int = x + (w - size) / 2
+  top:int = y + (h - size) / 2
+  right:int = left + size - 1
+  bottom:int = top + size - 1
+  cx:int = left + size / 2
+  cy:int = top + size / 2
+  t:int = size / 12
+  if t < 1:
+    t = 1
+
+  if icon_id == tzgui.state._get_TZ_UI_ICON_MENU():
+    gui.gui_line(surface, left + size/5, top + size/4, right - size/5, top + size/4, color, t)
+    gui.gui_line(surface, left + size/5, cy, right - size/5, cy, color, t)
+    gui.gui_line(surface, left + size/5, bottom - size/4, right - size/5, bottom - size/4, color, t)
+    ret 0
+
+  if icon_id == tzgui.state._get_TZ_UI_ICON_HISTORY():
+    // Eight connected segments create a compact, pixel-stable clock ring.
+    gui.gui_line(surface, cx, top + size/8, left + size*3/4, top + size/4, color, t)
+    gui.gui_line(surface, left + size*3/4, top + size/4, right - size/8, cy, color, t)
+    gui.gui_line(surface, right - size/8, cy, left + size*3/4, bottom - size/4, color, t)
+    gui.gui_line(surface, left + size*3/4, bottom - size/4, cx, bottom - size/8, color, t)
+    gui.gui_line(surface, cx, bottom - size/8, left + size/4, bottom - size/4, color, t)
+    gui.gui_line(surface, left + size/4, bottom - size/4, left + size/8, cy, color, t)
+    gui.gui_line(surface, left + size/8, cy, left + size/4, top + size/4, color, t)
+    gui.gui_line(surface, left + size/4, top + size/4, cx, top + size/8, color, t)
+    gui.gui_line(surface, cx, cy, cx, top + size/3, color, t)
+    gui.gui_line(surface, cx, cy, right - size/3, cy, color, t)
+    gui.gui_line(surface, left + size/8, top + size/8, left + size/3, top + size/8, color, t)
+    gui.gui_line(surface, left + size/8, top + size/8, left + size/8, top + size/3, color, t)
+    ret 0
+
+  if icon_id == tzgui.state._get_TZ_UI_ICON_MODE():
+    gui.gui_line(surface, left + size/6, top + size/6, cx - t/2, top + size/6, color, t)
+    gui.gui_line(surface, left + size/6, top + size/6, left + size/6, cy - t/2, color, t)
+    gui.gui_line(surface, cx + t/2, top + size/6, right - size/6, top + size/6, color, t)
+    gui.gui_line(surface, right - size/6, top + size/6, right - size/6, cy - t/2, color, t)
+    gui.gui_line(surface, left + size/6, cy + t/2, left + size/6, bottom - size/6, color, t)
+    gui.gui_line(surface, left + size/6, bottom - size/6, cx - t/2, bottom - size/6, color, t)
+    gui.gui_line(surface, cx + t/2, cy + t/2, right - size/6, cy + t/2, color, t)
+    gui.gui_line(surface, right - size/6, cy + t/2, right - size/6, bottom - size/6, color, t)
+    gui.gui_line(surface, left + size/3, cy, cx - t, cy - size/6, color, t)
+    gui.gui_line(surface, cx - t, cy - size/6, cx - t, cy + size/6, color, t)
+    ret 0
+
+  if icon_id == tzgui.state._get_TZ_UI_ICON_BACKSPACE():
+    gui.gui_line(surface, left + size/3, top + size/6, right - size/8, top + size/6, color, t)
+    gui.gui_line(surface, right - size/8, top + size/6, right - size/8, bottom - size/6, color, t)
+    gui.gui_line(surface, right - size/8, bottom - size/6, left + size/3, bottom - size/6, color, t)
+    gui.gui_line(surface, left + size/3, bottom - size/6, left + size/8, cy, color, t)
+    gui.gui_line(surface, left + size/8, cy, left + size/3, top + size/6, color, t)
+    gui.gui_line(surface, left + size/2, cy - size/6, right - size/4, cy + size/6, color, t)
+    gui.gui_line(surface, right - size/4, cy - size/6, left + size/2, cy + size/6, color, t)
+    ret 0
+
+  if icon_id == tzgui.state._get_TZ_UI_ICON_CALCULATOR():
+    gui.gui_outline(surface, left + size/6, top + size/10, size*2/3, size*4/5, color, t)
+    gui.gui_line(surface, left + size/5, top + size/3, right - size/5, top + size/3, color, t)
+    gui.gui_line(surface, left + size/3, top + size/2, left + size/3, bottom - size/6, color, t)
+    gui.gui_line(surface, left + size/2, top + size/2, left + size/2, bottom - size/6, color, t)
+    gui.gui_line(surface, left + size*2/3, top + size/2, left + size*2/3, bottom - size/6, color, t)
+    gui.gui_line(surface, left + size/5, top + size*2/3, right - size/5, top + size*2/3, color, t)
+    ret 0
+
+  if icon_id == tzgui.state._get_TZ_UI_ICON_CLOSE():
+    gui.gui_line(surface, left + size/4, top + size/4, right - size/4, bottom - size/4, color, t)
+    gui.gui_line(surface, right - size/4, top + size/4, left + size/4, bottom - size/4, color, t)
+    ret 0
+
+  if icon_id == tzgui.state._get_TZ_UI_ICON_SETTINGS():
+    gui.gui_outline(surface, left + size/3, top + size/3, size/3, size/3, color, t)
+    gui.gui_line(surface, cx, top + size/10, cx, top + size/3, color, t)
+    gui.gui_line(surface, cx, bottom - size/3, cx, bottom - size/10, color, t)
+    gui.gui_line(surface, left + size/10, cy, left + size/3, cy, color, t)
+    gui.gui_line(surface, right - size/3, cy, right - size/10, cy, color, t)
+    gui.gui_line(surface, left + size/5, top + size/5, left + size/3, top + size/3, color, t)
+    gui.gui_line(surface, right - size/5, bottom - size/5, right - size/3, bottom - size/3, color, t)
+    gui.gui_line(surface, right - size/5, top + size/5, right - size/3, top + size/3, color, t)
+    gui.gui_line(surface, left + size/5, bottom - size/5, left + size/3, bottom - size/3, color, t)
+    ret 0
+  ret 0
+
+fn _tree_draw_widget(tree:*TzWidgetTree, surface:*GuiSurface, slot:int, draw_text:int) -> int:
+  if tree == 0 || surface == 0:
+    ret 0 - 1
+  if slot < 0 || slot >= tzgui.state._get_TZ_WIDGET_MAX():
+    ret 0 - 1
+  if tree[0].widgets[slot].alive == 0 || tree[0].widgets[slot].visible == 0 || _tree_effective_visible(tree, slot) == 0:
+    ret 0
+  x:int = tree[0].widgets[slot].x
+  y:int = tree[0].widgets[slot].y
+  w:int = tree[0].widgets[slot].w
+  h:int = tree[0].widgets[slot].h
+  if w <= 0 || h <= 0:
+    ret 0
+  bg:int = tree[0].widgets[slot].bg
+  fg:int = tree[0].widgets[slot].fg
+  if fg == 0:
+    fg = 16777215
+  if _tree_effective_enabled(tree, slot) == 0:
+    bg = tree[0].widgets[slot].disabled_bg
+    fg = _tree_color_scale(fg, 70)
+  else:
+    if tree[0].pressed_id == tree[0].widgets[slot].id && tree[0].hovered_id == tree[0].widgets[slot].id:
+      bg = tree[0].widgets[slot].pressed_bg
+    else:
+      if tree[0].hovered_id == tree[0].widgets[slot].id:
+        bg = tree[0].widgets[slot].hover_bg
+  kind:int = tree[0].widgets[slot].kind
+  if kind == tzgui.state._get_TZ_WIDGET_LABEL():
+    if draw_text == 0:
+      ret 0
+    if tree[0].widgets[slot].icon_id > 0:
+      _tree_draw_icon(surface, x, y, w, h, tree[0].widgets[slot].icon_id, tree[0].widgets[slot].icon_size, tree[0].widgets[slot].icon_color)
+    if tree[0].widgets[slot].text[0] == 0 as char:
+      ret 0
+    tx:int = x + tree[0].widgets[slot].pad_left
+    ty:int = y + tree[0].widgets[slot].pad_top
+    font_size:int = _tree_font_size(tree, slot)
+    font_weight:int = _tree_font_weight(tree, slot)
+    font_family:str = _tree_font_family(tree, slot)
+    text_width:int = gui.gui_text_measure(&tree[0].widgets[slot].text[0], font_size, font_weight, font_family)
+    content_width:int = w - tree[0].widgets[slot].pad_left - tree[0].widgets[slot].pad_right
+    if tree[0].widgets[slot].text_align == 1:
+      tx = tx + (content_width - text_width) / 2
+    if tree[0].widgets[slot].text_align == 2:
+      tx = tx + content_width - text_width
+    if tree[0].widgets[slot].pad_top == 0 && tree[0].widgets[slot].pad_bottom == 0:
+      ty = y + (h - font_size) / 2
+    gui.gui_text_style(surface, tx, ty, &tree[0].widgets[slot].text[0], fg, font_size, font_weight, font_family)
+    ret 0
+
+  shadow:int = tree[0].widgets[slot].shadow_size
+  radius:int = tree[0].widgets[slot].radius
+  border:int = tree[0].widgets[slot].border_width
+  border_color:int = tree[0].widgets[slot].border_color
+  if tree[0].hovered_id == tree[0].widgets[slot].id && tree[0].widgets[slot].hover_border >= 0:
+    border_color = tree[0].widgets[slot].hover_border
+  if tree[0].focus_id == tree[0].widgets[slot].id && tree[0].widgets[slot].focus_color >= 0:
+    border_color = tree[0].widgets[slot].focus_color
+  if border > w / 2:
+    border = w / 2
+  if border > h / 2:
+    border = h / 2
+  if shadow > 0:
+    gui.gui_round_rect(surface, x + shadow / 3, y + shadow / 2, w + shadow / 2, h + shadow / 2, tree[0].widgets[slot].shadow_color, radius + shadow / 2)
+  if border > 0:
+    gui.gui_round_rect(surface, x, y, w, h, border_color, radius)
+  bx:int = x + border
+  by:int = y + border
+  bw:int = w - border * 2
+  bh:int = h - border * 2
+  br:int = radius - border
+  if br < 0:
+    br = 0
+  if bw < 1:
+    bw = 1
+  if bh < 1:
+    bh = 1
+  if tree[0].widgets[slot].gradient_axis == tzgui.state._get_TZ_GRADIENT_VERTICAL():
+    gui.gui_round_gradient_v(surface, bx, by, bw, bh, bg, tree[0].widgets[slot].gradient_color, br)
+  else:
+    if tree[0].widgets[slot].gradient_axis == tzgui.state._get_TZ_GRADIENT_HORIZONTAL():
+      gui.gui_round_gradient_h(surface, bx, by, bw, bh, bg, tree[0].widgets[slot].gradient_color, br)
+    else:
+      gui.gui_round_rect(surface, bx, by, bw, bh, bg, br)
+  if tree[0].focus_id == tree[0].widgets[slot].id && tree[0].widgets[slot].focus_color >= 0:
+    gui.gui_outline(surface, x - 2, y - 2, w + 4, h + 4, tree[0].widgets[slot].focus_color, 1)
+  if tree[0].widgets[slot].icon_id > 0:
+    icon_color:int = tree[0].widgets[slot].icon_color
+    if _tree_effective_enabled(tree, slot) == 0:
+      icon_color = _tree_color_scale(icon_color, 65)
+    _tree_draw_icon(surface, x, y, w, h, tree[0].widgets[slot].icon_id, tree[0].widgets[slot].icon_size, icon_color)
+  if draw_text != 0 && tree[0].widgets[slot].text[0] != 0 as char:
+    tx2:int = x + tree[0].widgets[slot].pad_left
+    ty2:int = y + tree[0].widgets[slot].pad_top
+    font_size2:int = _tree_font_size(tree, slot)
+    font_weight2:int = _tree_font_weight(tree, slot)
+    font_family2:str = _tree_font_family(tree, slot)
+    text_width2:int = gui.gui_text_measure(&tree[0].widgets[slot].text[0], font_size2, font_weight2, font_family2)
+    content_width2:int = w - tree[0].widgets[slot].pad_left - tree[0].widgets[slot].pad_right
+    if tree[0].widgets[slot].text_align == 1:
+      tx2 = tx2 + (content_width2 - text_width2) / 2
+    if tree[0].widgets[slot].text_align == 2:
+      tx2 = tx2 + content_width2 - text_width2
+    text_height:int = font_size2 + 4
+    if text_height > h:
+      text_height = h
+    if tree[0].widgets[slot].pad_top == 0 && tree[0].widgets[slot].pad_bottom == 0:
+      ty2 = y + (h - text_height) / 2
+    gui.gui_text_style(surface, tx2, ty2, &tree[0].widgets[slot].text[0], fg, font_size2, font_weight2, font_family2)
+  ret 0
+
+fn _tree_widget_text_bounds(tree:*TzWidgetTree, slot:int, out:*TzRect) -> int:
+  if tree == 0 || out == 0 || slot < 0 || slot >= tzgui.state._get_TZ_WIDGET_MAX():
+    ret 0 - 1
+  if tree[0].widgets[slot].alive == 0:
+    ret 0
+  if tree[0].widgets[slot].text[0] == 0 as char:
+    out[0].x = 0
+    out[0].y = 0
+    out[0].w = 0
+    out[0].h = 0
+    ret 0
+  tx:int = tree[0].widgets[slot].x + tree[0].widgets[slot].pad_left
+  ty:int = tree[0].widgets[slot].y + tree[0].widgets[slot].pad_top
+  font_size:int = _tree_font_size(tree, slot)
+  font_weight:int = _tree_font_weight(tree, slot)
+  font_family:str = _tree_font_family(tree, slot)
+  text_w:int = gui.gui_text_measure(&tree[0].widgets[slot].text[0], font_size, font_weight, font_family)
+  content_w:int = tree[0].widgets[slot].w - tree[0].widgets[slot].pad_left - tree[0].widgets[slot].pad_right
+  if tree[0].widgets[slot].text_align == 1:
+    tx = tx + (content_w - text_w) / 2
+  if tree[0].widgets[slot].text_align == 2:
+    tx = tx + content_w - text_w
+  if tree[0].widgets[slot].pad_top == 0 && tree[0].widgets[slot].pad_bottom == 0:
+    ty = tree[0].widgets[slot].y + (tree[0].widgets[slot].h - font_size - 4) / 2
+  if tree[0].widgets[slot].kind != tzgui.state._get_TZ_WIDGET_LABEL() && tree[0].widgets[slot].pad_top == 0 && tree[0].widgets[slot].pad_bottom == 0:
+    text_h:int = font_size + 4
+    if text_h > tree[0].widgets[slot].h:
+      text_h = tree[0].widgets[slot].h
+    ty = tree[0].widgets[slot].y + (tree[0].widgets[slot].h - text_h) / 2
+  out[0].x = tx
+  out[0].y = ty
+  out[0].w = text_w
+  out[0].h = font_size + 6
+  ret 1
+
+fn _tree_widget_render_bounds(tree:*TzWidgetTree, slot:int, out:*TzRect) -> int:
+  if tree == 0 || out == 0 || slot < 0 || slot >= tzgui.state._get_TZ_WIDGET_MAX():
+    ret 0 - 1
+  if tree[0].widgets[slot].alive == 0:
+    ret 0
+  extent:int = tree[0].widgets[slot].shadow_size
+  if tree[0].widgets[slot].focusable != 0:
+    extent = extent + 2
+  out[0].x = tree[0].widgets[slot].x - extent
+  out[0].y = tree[0].widgets[slot].y - extent
+  out[0].w = tree[0].widgets[slot].w + extent * 2
+  out[0].h = tree[0].widgets[slot].h + extent * 2
+  text_rect:TzRect
+  if _tree_widget_text_bounds(tree, slot, &text_rect) > 0:
+    combined:TzRect
+    frame.tz_rect_union(&combined, out, &text_rect)
+    out[0].x = combined.x
+    out[0].y = combined.y
+    out[0].w = combined.w
+    out[0].h = combined.h
+  ret 1

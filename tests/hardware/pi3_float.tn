@@ -1,0 +1,18 @@
+import "hardware"
+
+fn square(value:float) -> float:
+  ret value * value
+
+fn main() -> int:
+  value:float = (hardware.target_id() as float) + 0.5
+  if value != 2.5: ret 1
+  result:float = square(value)
+  if result != 6.25: ret 2
+  small:float = (value / 2.5) * 1.0e-308
+  if small <= 0.0 || small * 1.0e308 < 0.99 || small * 1.0e308 > 1.01: ret 3
+  infinity:float = value / 0.0
+  unordered:float = infinity - infinity
+  if unordered == unordered: ret 4
+  if unordered < value || unordered <= value || unordered > value || unordered >= value: ret 5
+  if hardware.write("PI3_FLOAT_OK\n") != 13: ret 6
+  ret 0

@@ -1,0 +1,22 @@
+import "tztensor"
+import "./support/lib/values.tn"
+
+fn main() -> int:
+  a:int = tztensor.tensor_new_1d(1, 1)
+  b:int = tztensor.tensor_new_1d(1, 1)
+  values.write(a, 0, 2.0)
+  values.write(b, 0, 3.0)
+  added:int = tztensor.tensor_add_infix(a, b)
+  subtracted:int = tztensor.tensor_sub_infix(added, b)
+  out:int = tztensor.tensor_mul_infix(subtracted, b)
+  tztensor.tensor_backward(out)
+  failed:int = 0
+  if values.read(out, 0) != 6.0 || values.gradient(a, 0) != 3.0 || values.gradient(b, 0) != 2.0:
+    failed = 1
+  tztensor.tensor_free(out)
+  tztensor.tensor_free(subtracted)
+  tztensor.tensor_free(added)
+  tztensor.tensor_free(b)
+  tztensor.tensor_free(a)
+  if failed != 0: say "FAIL: SDK add/subtract/multiply chain rule"
+  ret failed

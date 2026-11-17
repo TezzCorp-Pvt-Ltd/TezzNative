@@ -1,0 +1,24 @@
+import "tensor_bridge"
+import "tensor"
+import "tztensor"
+
+fn main() -> int:
+  owner:Tensor = tensor.tensor_ones_1d(1)
+  broadcast:Tensor = owner
+  broadcast.shape0 = 6
+  broadcast.stride0 = 0
+  broadcast.size = 6
+  broadcast.is_view = 1
+  handle:int = tensor_bridge.to_tztensor(broadcast)
+  if handle == 0 || tztensor.tensor_numel(handle) != 6: ret 1
+  result:Tensor = tensor_bridge.to_tensor(handle)
+  tensor.tensor_free_tensor(owner)
+  if result.size != 6: ret 2
+  unsafe:
+    i:int = 0
+    while i < 6:
+      if result.data[i] != 1.0: ret 3
+      i = i + 1
+  tensor.tensor_free_tensor(result)
+  tztensor.tensor_free(handle)
+  ret 0

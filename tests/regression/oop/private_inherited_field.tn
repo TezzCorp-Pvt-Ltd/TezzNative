@@ -1,0 +1,5 @@
+import "./support/lib/inheritance_owner.tn"
+
+fn main() -> int:
+  child:PublicChild = inheritance_owner.make_public()
+  ret child.secret

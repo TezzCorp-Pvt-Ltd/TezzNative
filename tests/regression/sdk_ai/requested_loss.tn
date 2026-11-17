@@ -1,0 +1,29 @@
+import "tztensor"
+import "tzautodiff"
+import "./support/lib/values.tn"
+
+fn main() -> int:
+  x:int = tztensor.tensor_new_1d(1, 1)
+  a:int = tztensor.tensor_new_1d(1, 0)
+  b:int = tztensor.tensor_new_1d(1, 0)
+  values.write(x, 0, 2.0)
+  values.write(a, 0, 3.0)
+  values.write(b, 0, 7.0)
+  selected:int = tztensor.tensor_mul_infix(x, a)
+  unrelated:int = tztensor.tensor_mul_infix(x, b)
+  // A stale gradient on an unrelated output must not contribute.
+  unsafe:
+    g:*f32 = tztensor.tensor_grad(unrelated) as *f32
+    g[0] = 1.0 as f32
+  status:int = tztensor.tensor_backward(selected)
+  failed:int = 0
+  if status != 0 || values.gradient(x, 0) != 3.0:
+    failed = 1
+  tzautodiff.autodiff_reset()
+  tztensor.tensor_free(unrelated)
+  tztensor.tensor_free(selected)
+  tztensor.tensor_free(b)
+  tztensor.tensor_free(a)
+  tztensor.tensor_free(x)
+  if failed != 0: say "FAIL: SDK backward must traverse only the requested graph"
+  ret failed

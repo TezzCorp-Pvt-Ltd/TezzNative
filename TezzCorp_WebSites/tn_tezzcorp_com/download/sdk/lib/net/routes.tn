@@ -1,0 +1,690 @@
+// net implementation: routes.
+
+import "net.state"
+import "net.http"
+import "net.urls"
+import "net.transport"
+
+fn http_route_path(path_or_req:str) -> str:
+  if path_or_req == 0:
+    ret 0 as str
+  raw:str = 0 as str
+  if path_or_req[0] == 47 as char || path_or_req[0] == 42 as char: // '/' or '*'
+    raw = net.http._substr_dup(path_or_req, 0, len(path_or_req))
+  else if net.urls._url_scheme_end(path_or_req) >= 0:
+    raw = net.http._substr_dup(path_or_req, 0, len(path_or_req))
+  else:
+    raw = net.http.http_path(path_or_req)
+  if raw == 0:
+    ret 0 as str
+  if net.urls._url_scheme_end(raw) >= 0:
+    abs_pq:str = net.urls.url_path_query(raw)
+    free(raw)
+    raw = abs_pq
+    if raw == 0:
+      ret 0 as str
+  if raw[0] == 0 as char:
+    free(raw)
+    ret net.http._substr_dup("/", 0, 1)
+  q:int = net.urls._find_char_from(raw, 63, 0) // '?'
+  h:int = net.urls._find_char_from(raw, 35, 0) // '#'
+  end:int = len(raw)
+  if q >= 0 && q < end:
+    end = q
+  if h >= 0 && h < end:
+    end = h
+  out:str = net.http._substr_dup(raw, 0, end)
+  free(raw)
+  if out == 0:
+    ret 0 as str
+  if out[0] == 0 as char:
+    free(out)
+    ret net.http._substr_dup("/", 0, 1)
+  ret out
+
+// Route matching:
+// - exact: "/health"
+// - wildcard prefix: "/api/*" or "/api*"
+// - all: "*"
+
+fn http_route_match(path_or_req:str, pattern:str) -> int:
+  if path_or_req == 0 || pattern == 0 || pattern[0] == 0 as char:
+    ret 0
+  if pattern[0] == 42 as char && pattern[1] == 0 as char: // "*"
+    ret 1
+  path:str = http_route_path(path_or_req)
+  if path == 0:
+    ret 0
+  pn:int = len(pattern)
+  if pn > 0 && pattern[pn - 1] == 42 as char: // '*'
+    pref_raw:str = net.http._substr_dup(pattern, 0, pn - 1)
+    pref:str = http_route_path(pref_raw)
+    free(pref_raw)
+    ok:int = 0
+    if pref != 0:
+      if net.transport._starts_with(path, pref) != 0:
+        ok = 1
+      else:
+        pl:int = len(pref)
+        if pl > 1 && pref[pl - 1] == 47 as char:
+          pref2:str = net.http._substr_dup(pref, 0, pl - 1)
+          if pref2 != 0 && net.transport._streq(path, pref2) != 0:
+            ok = 1
+          if pref2 != 0:
+            free(pref2)
+      free(pref)
+    free(path)
+    ret ok
+  pat:str = http_route_path(pattern)
+  ok2:int = 0
+  if pat != 0 && net.transport._streq(path, pat) != 0:
+    ok2 = 1
+  if pat != 0:
+    free(pat)
+  free(path)
+  ret ok2
+
+// Match request by method + route pattern.
+// method can be "*" for any.
+
+fn http_route_request_match(req:str, method:str, pattern:str) -> int:
+  if req == 0 || pattern == 0:
+    ret 0
+  if method != 0 && method[0] != 0 as char:
+    any_method:int = 0
+    if method[0] == 42 as char && method[1] == 0 as char:
+      any_method = 1
+    if any_method == 0:
+      rm:str = net.http.http_method(req)
+      if rm == 0:
+        ret 0
+      mk:int = net.transport._streq_nocase(rm, method)
+      free(rm)
+      if mk == 0:
+        ret 0
+  rp:str = net.http.http_path(req)
+  if rp == 0:
+    ret 0
+  ok:int = http_route_match(rp, pattern)
+  free(rp)
+  ret ok
+
+fn _http_method_dup_norm(method:str) -> str:
+  if method == 0 || method[0] == 0 as char:
+    ret net.http._substr_dup("*", 0, 1)
+  if method[0] == 42 as char && method[1] == 0 as char:
+    ret net.http._substr_dup("*", 0, 1)
+  n:int = len(method)
+  out:*char = malloc(n + 1)
+  if out == 0:
+    ret 0 as str
+  i:int = 0
+  while i < n:
+    c:int = (method[i] as int) & 255
+    if c >= 97 && c <= 122:
+      out[i] = (c - 32) as char
+    else:
+      out[i] = method[i]
+    i = i + 1
+  out[n] = 0 as char
+  ret out as str
+
+fn _http_route_method_match(route_method:str, req_method:str) -> int:
+  if route_method == 0 || route_method[0] == 0 as char:
+    ret 1
+  if route_method[0] == 42 as char && route_method[1] == 0 as char:
+    ret 1
+  if req_method == 0 || req_method[0] == 0 as char:
+    ret 0
+  ret net.transport._streq_nocase(route_method, req_method)
+
+fn _http_route_pattern_score(path:str, pattern:str) -> int:
+  if path == 0 || pattern == 0 || pattern[0] == 0 as char:
+    ret 0 - 1
+  if http_route_match(path, pattern) == 0:
+    ret 0 - 1
+  if pattern[0] == 42 as char && pattern[1] == 0 as char:
+    ret 1
+  pn:int = len(pattern)
+  if pn > 0 && pattern[pn - 1] == 42 as char:
+    ret 100000 + pn
+  ret 200000 + pn
+
+// Conditional route response helpers.
+// Returns:
+// - 1 when matched and response written
+// - 0 when route did not match
+// - NET_ERR on write error
+
+fn http_route_respond_ex_if(req:str, sock:int, method:str, pattern:str, status:int, content_type:str, body:str, extra_headers:str) -> int:
+  if http_route_request_match(req, method, pattern) == 0:
+    ret 0
+  if net.http.http_write_response_ex(sock, status, content_type, body, extra_headers) != 0:
+    ret net.state._get_NET_ERR()
+  ret 1
+
+fn http_route_respond_text_if(req:str, sock:int, method:str, pattern:str, status:int, text:str) -> int:
+  if http_route_request_match(req, method, pattern) == 0:
+    ret 0
+  if net.http.http_respond_text(sock, status, text) != 0:
+    ret net.state._get_NET_ERR()
+  ret 1
+
+fn http_route_respond_json_if(req:str, sock:int, method:str, pattern:str, status:int, json:str) -> int:
+  if http_route_request_match(req, method, pattern) == 0:
+    ret 0
+  if net.http.http_respond_json(sock, status, json) != 0:
+    ret net.state._get_NET_ERR()
+  ret 1
+
+fn _http_route_table_dup_str(s:str) -> str:
+  if s == 0:
+    ret 0 as str
+  ret net.http._substr_dup(s, 0, len(s))
+
+fn _http_route_table_entry_release(e:*HttpRouteEntry) -> int:
+  if e == 0:
+    ret net.state._get_NET_ERR()
+  if (*e).method != 0:
+    free((*e).method)
+    (*e).method = 0 as str
+  if (*e).pattern != 0:
+    free((*e).pattern)
+    (*e).pattern = 0 as str
+  (*e).handler = 0 as *char
+  ret net.state._get_NET_OK()
+
+fn _http_route_table_grow(tab:*HttpRouteTable, min_cap:int) -> int:
+  if tab == 0:
+    ret net.state._get_NET_ERR()
+  old_cap:int = (*tab).cap
+  new_cap:int = old_cap * 2
+  if new_cap < min_cap:
+    new_cap = min_cap
+  if new_cap <= 0:
+    new_cap = net.state._get_HTTP_ROUTE_TABLE_DEFAULT_CAP()
+  new_entries:*HttpRouteEntry = (*HttpRouteEntry)malloc(sizeof(HttpRouteEntry) * new_cap)
+  if new_entries == 0:
+    ret net.state._get_NET_ERR()
+  i:int = 0
+  while i < (*tab).count:
+    new_entries[i].method = (*tab).entries[i].method
+    new_entries[i].pattern = (*tab).entries[i].pattern
+    new_entries[i].handler = (*tab).entries[i].handler
+    i = i + 1
+  while i < new_cap:
+    new_entries[i].method = 0 as str
+    new_entries[i].pattern = 0 as str
+    new_entries[i].handler = 0 as *char
+    i = i + 1
+  if (*tab).entries != 0:
+    free((*tab).entries as *char)
+  (*tab).entries = new_entries
+  (*tab).cap = new_cap
+  ret net.state._get_NET_OK()
+
+fn http_route_table_new(capacity:int) -> *HttpRouteTable:
+  cap:int = capacity
+  if cap <= 0:
+    cap = net.state._get_HTTP_ROUTE_TABLE_DEFAULT_CAP()
+  tab:*HttpRouteTable = (*HttpRouteTable)malloc(sizeof(HttpRouteTable))
+  if tab == 0:
+    ret 0 as *HttpRouteTable
+  (*tab).entries = (*HttpRouteEntry)malloc(sizeof(HttpRouteEntry) * cap)
+  if (*tab).entries == 0:
+    free(tab as *char)
+    ret 0 as *HttpRouteTable
+  (*tab).count = 0
+  (*tab).cap = cap
+  i:int = 0
+  while i < cap:
+    (*tab).entries[i].method = 0 as str
+    (*tab).entries[i].pattern = 0 as str
+    (*tab).entries[i].handler = 0 as *char
+    i = i + 1
+  ret tab
+
+fn http_route_table_free(tab:*HttpRouteTable) -> int:
+  if tab == 0:
+    ret net.state._get_NET_ERR()
+  http_route_table_clear(tab)
+  if (*tab).entries != 0:
+    free((*tab).entries as *char)
+    (*tab).entries = 0 as *HttpRouteEntry
+  (*tab).count = 0
+  (*tab).cap = 0
+  free(tab as *char)
+  ret net.state._get_NET_OK()
+
+fn http_route_table_count(tab:*HttpRouteTable) -> int:
+  if tab == 0:
+    ret 0
+  ret (*tab).count
+
+fn http_route_table_capacity(tab:*HttpRouteTable) -> int:
+  if tab == 0:
+    ret 0
+  ret (*tab).cap
+
+fn http_route_table_clear(tab:*HttpRouteTable) -> int:
+  if tab == 0:
+    ret net.state._get_NET_ERR()
+  i:int = 0
+  while i < (*tab).count:
+    _http_route_table_entry_release(&((*tab).entries[i]))
+    i = i + 1
+  (*tab).count = 0
+  ret net.state._get_NET_OK()
+
+fn http_route_table_add(tab:*HttpRouteTable, method:str, pattern:str, handler:*char) -> int:
+  if tab == 0 || pattern == 0 || pattern[0] == 0 as char || handler == 0:
+    ret net.state._get_NET_ERR()
+  mdup:str = _http_method_dup_norm(method)
+  pdup:str = 0 as str
+  if pattern[0] == 42 as char && pattern[1] == 0 as char:
+    pdup = net.http._substr_dup("*", 0, 1)
+  else:
+    pdup = http_route_path(pattern)
+  if mdup == 0 || pdup == 0:
+    if mdup != 0:
+      free(mdup)
+    if pdup != 0:
+      free(pdup)
+    ret net.state._get_NET_ERR()
+  i:int = 0
+  while i < (*tab).count:
+    if net.transport._streq((*tab).entries[i].method, mdup) != 0 && net.transport._streq((*tab).entries[i].pattern, pdup) != 0:
+      (*tab).entries[i].handler = handler
+      free(mdup)
+      free(pdup)
+      ret net.state._get_NET_OK()
+    i = i + 1
+  if (*tab).count >= (*tab).cap:
+    if _http_route_table_grow(tab, (*tab).count + 1) != 0:
+      free(mdup)
+      free(pdup)
+      ret net.state._get_NET_ERR()
+  i = (*tab).count
+  (*tab).entries[i].method = mdup
+  (*tab).entries[i].pattern = pdup
+  (*tab).entries[i].handler = handler
+  (*tab).count = (*tab).count + 1
+  ret net.state._get_NET_OK()
+
+fn http_route_table_remove_at(tab:*HttpRouteTable, index:int) -> int:
+  if tab == 0:
+    ret net.state._get_NET_ERR()
+  if index < 0 || index >= (*tab).count:
+    ret net.state._get_NET_ERR()
+  _http_route_table_entry_release(&((*tab).entries[index]))
+  i:int = index
+  while i + 1 < (*tab).count:
+    (*tab).entries[i].method = (*tab).entries[i + 1].method
+    (*tab).entries[i].pattern = (*tab).entries[i + 1].pattern
+    (*tab).entries[i].handler = (*tab).entries[i + 1].handler
+    i = i + 1
+  if (*tab).count > 0:
+    tail:int = (*tab).count - 1
+    (*tab).entries[tail].method = 0 as str
+    (*tab).entries[tail].pattern = 0 as str
+    (*tab).entries[tail].handler = 0 as *char
+    (*tab).count = tail
+  ret net.state._get_NET_OK()
+
+// Returns first matching route index or -1 when no route matches.
+
+fn http_route_table_find(tab:*HttpRouteTable, req:str) -> int:
+  if tab == 0 || req == 0:
+    ret net.state._get_NET_ERR()
+  rm:str = net.http.http_method(req)
+  rp:str = net.http.http_path(req)
+  if rp == 0:
+    if rm != 0:
+      free(rm)
+    ret net.state._get_NET_ERR()
+  best_idx:int = 0 - 1
+  best_score:int = 0 - 1
+  i:int = 0
+  while i < (*tab).count:
+    if _http_route_method_match((*tab).entries[i].method, rm) != 0:
+      sc:int = _http_route_pattern_score(rp, (*tab).entries[i].pattern)
+      if sc > best_score:
+        best_score = sc
+        best_idx = i
+    i = i + 1
+  if rm != 0:
+    free(rm)
+  free(rp)
+  ret best_idx
+
+// Route-table request match class:
+// - HTTP_ROUTE_MATCH_OK
+// - HTTP_ROUTE_MATCH_METHOD_MISMATCH
+// - HTTP_ROUTE_MATCH_NONE
+
+fn http_route_table_match_kind(tab:*HttpRouteTable, req:str) -> int:
+  if tab == 0 || req == 0:
+    ret net.state._get_HTTP_ROUTE_MATCH_NONE()
+  if http_route_table_find(tab, req) >= 0:
+    ret net.state._get_HTTP_ROUTE_MATCH_OK()
+  rp:str = net.http.http_path(req)
+  if rp == 0:
+    ret net.state._get_HTTP_ROUTE_MATCH_NONE()
+  i:int = 0
+  while i < (*tab).count:
+    if _http_route_pattern_score(rp, (*tab).entries[i].pattern) >= 0:
+      free(rp)
+      ret net.state._get_HTTP_ROUTE_MATCH_METHOD_MISMATCH()
+    i = i + 1
+  free(rp)
+  ret net.state._get_HTTP_ROUTE_MATCH_NONE()
+
+// Dispatch to first matching route handler.
+// Handler signature:
+//   fn handler(sock:int, req:str) -> int
+// Returns:
+// - 1 when a route matched and handler returned success
+// - 0 when no route matched
+// - NET_ERR on handler failure or invalid inputs
+
+fn http_route_table_dispatch(tab:*HttpRouteTable, sock:int, req:str) -> int:
+  if tab == 0 || req == 0:
+    ret net.state._get_NET_ERR()
+  idx:int = http_route_table_find(tab, req)
+  if idx < 0:
+    ret 0
+  fnptr:*char = (*tab).entries[idx].handler
+  if fnptr == 0:
+    ret net.state._get_NET_ERR()
+  handler:fn(int,str)->int = fnptr as fn(int,str)->int
+  rc:int = handler(sock, req)
+  if rc < 0:
+    ret net.state._get_NET_ERR()
+  ret 1
+
+fn http_route_table_serve_or_404(tab:*HttpRouteTable, sock:int, req:str) -> int:
+  kind:int = http_route_table_match_kind(tab, req)
+  if kind == net.state._get_HTTP_ROUTE_MATCH_OK():
+    hit2:int = http_route_table_dispatch(tab, sock, req)
+    if hit2 < 0:
+      ret net.state._get_NET_ERR()
+    ret hit2
+  if kind == net.state._get_HTTP_ROUTE_MATCH_METHOD_MISMATCH():
+    if net.http.http_respond_text(sock, 405, "Method Not Allowed") != 0:
+      ret net.state._get_NET_ERR()
+    ret 0
+  if kind == net.state._get_HTTP_ROUTE_MATCH_NONE():
+    if net.http.http_respond_not_found(sock) != 0:
+      ret net.state._get_NET_ERR()
+    ret 0
+  ret net.state._get_NET_ERR()
+
+fn http_request_start_line_valid(req:str) -> int:
+  if req == 0:
+    ret 0
+  m:str = net.http.http_method(req)
+  p:str = net.http.http_path(req)
+  if p != 0 && p[0] != 47 as char && p[0] != 42 as char:
+    if net.urls._url_scheme_end(p) >= 0:
+      p2:str = net.urls.url_path_query(p)
+      free(p)
+      p = p2
+  v:str = net.http.http_version(req)
+  ok:int = 1
+  if m == 0 || m[0] == 0 as char:
+    ok = 0
+  if p == 0 || p[0] == 0 as char:
+    ok = 0
+  if p != 0:
+    if p[0] != 47 as char:
+      if p[0] != 42 as char || p[1] != 0 as char:
+        ok = 0
+  if v == 0 || net.transport._starts_with(v, "HTTP/1.") == 0:
+    ok = 0
+  if m != 0:
+    free(m)
+  if p != 0:
+    free(p)
+  if v != 0:
+    free(v)
+  ret ok
+
+fn http_server_session_new(listener:int, routes:*HttpRouteTable, timeout_ms:int, max_req_bytes:int) -> *HttpServerSession:
+  if routes == 0:
+    ret 0 as *HttpServerSession
+  ses:*HttpServerSession = (*HttpServerSession)malloc(sizeof(HttpServerSession))
+  if ses == 0:
+    ret 0 as *HttpServerSession
+  (*ses).listener = listener
+  (*ses).routes = routes
+  (*ses).timeout_ms = timeout_ms
+  if (*ses).timeout_ms < 0:
+    (*ses).timeout_ms = 0
+  (*ses).max_req_bytes = max_req_bytes
+  if (*ses).max_req_bytes <= 0:
+    (*ses).max_req_bytes = 65536
+  (*ses).max_clients = 0
+  (*ses).max_errors = net.state._get_HTTP_SERVER_SESSION_DEFAULT_MAX_ERRORS()
+  (*ses).served = 0
+  (*ses).errors = 0
+  ret ses
+
+fn http_server_session_free(ses:*HttpServerSession) -> int:
+  if ses == 0:
+    ret net.state._get_NET_ERR()
+  free(ses as *char)
+  ret net.state._get_NET_OK()
+
+fn http_server_session_set_limits(ses:*HttpServerSession, max_clients:int, max_errors:int) -> int:
+  if ses == 0:
+    ret net.state._get_NET_ERR()
+  (*ses).max_clients = max_clients
+  if (*ses).max_clients < 0:
+    (*ses).max_clients = 0
+  (*ses).max_errors = max_errors
+  if (*ses).max_errors < 0:
+    (*ses).max_errors = 0
+  ret net.state._get_NET_OK()
+
+fn http_server_session_served(ses:*HttpServerSession) -> int:
+  if ses == 0:
+    ret 0
+  ret (*ses).served
+
+fn http_server_session_errors(ses:*HttpServerSession) -> int:
+  if ses == 0:
+    ret 0
+  ret (*ses).errors
+
+fn http_server_session_reset_stats(ses:*HttpServerSession) -> int:
+  if ses == 0:
+    ret net.state._get_NET_ERR()
+  (*ses).served = 0
+  (*ses).errors = 0
+  ret net.state._get_NET_OK()
+
+fn http_server_session_serve_once(ses:*HttpServerSession) -> int:
+  if ses == 0 || (*ses).routes == 0:
+    ret net.state._get_NET_ERR()
+  if (*ses).listener < 0:
+    (*ses).errors = (*ses).errors + 1
+    ret net.state._get_NET_ERR()
+  cli:int = net.http.http_server_accept((*ses).listener, (*ses).timeout_ms)
+  if cli < 0:
+    (*ses).errors = (*ses).errors + 1
+    ret net.state._get_NET_ERR()
+  req:str = net.http.http_read_request(cli, (*ses).max_req_bytes)
+  if req == 0:
+    net.transport.close(cli)
+    (*ses).errors = (*ses).errors + 1
+    ret net.state._get_NET_ERR()
+  if http_request_start_line_valid(req) == 0:
+    net.http.http_respond_bad_request(cli)
+    net.transport.close(cli)
+    free(req)
+    (*ses).served = (*ses).served + 1
+    ret 0
+  matched:int = http_route_table_serve_or_404((*ses).routes, cli, req)
+  net.transport.close(cli)
+  free(req)
+  if matched < 0:
+    (*ses).errors = (*ses).errors + 1
+    ret net.state._get_NET_ERR()
+  (*ses).served = (*ses).served + 1
+  ret matched
+
+// Loop accept+dispatch path.
+// Returns processed client count, or NET_ERR when setup is invalid.
+
+fn http_server_session_serve_loop(ses:*HttpServerSession, max_clients:int) -> int:
+  if ses == 0 || (*ses).routes == 0:
+    ret net.state._get_NET_ERR()
+  lim:int = max_clients
+  if lim <= 0:
+    lim = (*ses).max_clients
+  if lim <= 0:
+    lim = 2147483647
+  n:int = 0
+  while n < lim:
+    if (*ses).max_errors > 0 && (*ses).errors >= (*ses).max_errors:
+      break
+    rc:int = http_server_session_serve_once(ses)
+    if rc < 0 && (*ses).max_errors <= 0:
+      break
+    n = n + 1
+  ret n
+
+// Register CRUD resource routes:
+// - POST   /resource
+// - GET    /resource
+// - GET    /resource/*
+// - PUT    /resource/*
+// - PATCH  /resource/*
+// - DELETE /resource/*
+// Any handler can be 0 to skip that CRUD operation.
+// Returns number of routes added, or NET_ERR on failure.
+
+fn http_route_table_add_crud(tab:*HttpRouteTable, resource_path:str, create_handler:*char, read_handler:*char, update_handler:*char, delete_handler:*char) -> int:
+  if tab == 0 || resource_path == 0 || resource_path[0] == 0 as char:
+    ret net.state._get_NET_ERR()
+  added:int = 0
+  start_count:int = (*tab).count
+  base:str = http_route_path(resource_path)
+  if base == 0:
+    ret net.state._get_NET_ERR()
+  if base[0] == 0 as char:
+    free(base)
+    ret net.state._get_NET_ERR()
+  item:str = net.transport._join2(base, "/*")
+  if item == 0:
+    free(base)
+    ret net.state._get_NET_ERR()
+
+  if create_handler != 0:
+    if http_route_table_add(tab, "POST", base, create_handler) != 0:
+      while (*tab).count > start_count:
+        http_route_table_remove_at(tab, (*tab).count - 1)
+      free(base)
+      free(item)
+      ret net.state._get_NET_ERR()
+    added = added + 1
+
+  if read_handler != 0:
+    if http_route_table_add(tab, "GET", base, read_handler) != 0:
+      while (*tab).count > start_count:
+        http_route_table_remove_at(tab, (*tab).count - 1)
+      free(base)
+      free(item)
+      ret net.state._get_NET_ERR()
+    added = added + 1
+    if http_route_table_add(tab, "GET", item, read_handler) != 0:
+      while (*tab).count > start_count:
+        http_route_table_remove_at(tab, (*tab).count - 1)
+      free(base)
+      free(item)
+      ret net.state._get_NET_ERR()
+    added = added + 1
+
+  if update_handler != 0:
+    if http_route_table_add(tab, "PUT", item, update_handler) != 0:
+      while (*tab).count > start_count:
+        http_route_table_remove_at(tab, (*tab).count - 1)
+      free(base)
+      free(item)
+      ret net.state._get_NET_ERR()
+    added = added + 1
+    if http_route_table_add(tab, "PATCH", item, update_handler) != 0:
+      while (*tab).count > start_count:
+        http_route_table_remove_at(tab, (*tab).count - 1)
+      free(base)
+      free(item)
+      ret net.state._get_NET_ERR()
+    added = added + 1
+
+  if delete_handler != 0:
+    if http_route_table_add(tab, "DELETE", item, delete_handler) != 0:
+      while (*tab).count > start_count:
+        http_route_table_remove_at(tab, (*tab).count - 1)
+      free(base)
+      free(item)
+      ret net.state._get_NET_ERR()
+    added = added + 1
+
+  free(base)
+  free(item)
+  ret added
+
+// Serve exactly one client using one route rule + 404 fallback.
+// Returns 1 when route matched, 0 for 404 fallback, NET_ERR on I/O failure.
+
+fn http_server_serve_route_once(listener:int, timeout_ms:int, max_req_bytes:int, method:str, pattern:str, status:int, content_type:str, body:str) -> int:
+  if listener < 0:
+    ret net.state._get_NET_ERR()
+  route_method:str = method
+  route_pattern:str = pattern
+  route_status:int = status
+  route_content_type:str = content_type
+  route_body:str = body
+  cli:int = net.http.http_server_accept(listener, timeout_ms)
+  if cli < 0:
+    ret net.state._get_NET_ERR()
+  req:str = net.http.http_read_request(cli, max_req_bytes)
+  if req == 0:
+    net.transport.close(cli)
+    ret net.state._get_NET_ERR()
+  matched:int = 0
+  if http_route_request_match(req, route_method, route_pattern) != 0:
+    if net.http.http_write_response_ex(cli, route_status, route_content_type, route_body, "") != 0:
+      matched = net.state._get_NET_ERR()
+    else:
+      matched = 1
+  else:
+    if net.http.http_respond_not_found(cli) != 0:
+      matched = net.state._get_NET_ERR()
+  net.transport.close(cli)
+  free(req)
+  if matched < 0:
+    ret net.state._get_NET_ERR()
+  ret matched
+
+// Serve exactly one client using a route table + 404 fallback.
+// Returns 1 when a route matched, 0 for 404 fallback, NET_ERR on I/O failure.
+
+fn http_server_serve_table_once(listener:int, timeout_ms:int, max_req_bytes:int, tab:*HttpRouteTable) -> int:
+  if listener < 0 || tab == 0:
+    ret net.state._get_NET_ERR()
+  cli:int = net.http.http_server_accept(listener, timeout_ms)
+  if cli < 0:
+    ret net.state._get_NET_ERR()
+  req:str = net.http.http_read_request(cli, max_req_bytes)
+  if req == 0:
+    net.transport.close(cli)
+    ret net.state._get_NET_ERR()
+  matched:int = http_route_table_serve_or_404(tab, cli, req)
+  net.transport.close(cli)
+  free(req)
+  if matched < 0:
+    ret net.state._get_NET_ERR()
+  ret matched
+
+// WebSocket helpers.

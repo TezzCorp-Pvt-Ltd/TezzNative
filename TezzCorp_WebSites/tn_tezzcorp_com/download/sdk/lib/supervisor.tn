@@ -6,7 +6,6 @@
 import "otp_sys"
 import "str"
 import "io"
-import "sys"
 
 fn ensure_log_dir() -> int:
   if io.dir_exists(".log") == 0:

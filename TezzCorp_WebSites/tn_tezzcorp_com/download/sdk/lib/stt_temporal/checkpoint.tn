@@ -1,0 +1,202 @@
+import "stt_temporal.state"
+import "tzcpu"
+import "math"
+
+extern fn speech_file_open(path:*u8, exclusive:i64) -> *u8
+extern fn speech_file_replace(source:*u8, target:*u8)
+extern fn speech_file_remove(path:*u8)
+fn crc_bytes(crc:i64, data:*u8, count:i64):
+  unsafe:
+    let i = 0
+    while i < count:
+      crc = crc ^ data[i] as i64 & 255
+      let bit = 0
+      while bit < 8:
+        if (crc & 1) != 0:
+          crc = crc >> 1 ^ 3988292384
+        else:
+          crc = crc >> 1
+        bit = bit + 1
+      i = i + 1
+    ret crc & 4294967295
+
+fn payload_valid(data:i64, count:i64):
+  if data == 0 || count < 1 || count > 1000000:
+    ret 0
+  if tzcpu.tz_cpu_check_finite_f32(data, count * 3) != 1:
+    ret 0
+  unsafe:
+    let values:*f32 = data as *f32
+    let i = 0
+    while i < count:
+      let p:f64 = values[i] as f64
+      let m:f64 = values[count + i] as f64
+      let v:f64 = values[count * 2 + i] as f64
+      if p < -1000000 || p > 1000000 || m < -1000000 || m > 1000000 || v < 0 || v > 1000000000000:
+        ret 0
+      i = i + 1
+  ret 1
+
+fn powers_valid(step:i64, one:f64, two:f64):
+  if step < 0 || step > 1000000000 || stt_temporal.state.finite(one) == 0 || stt_temporal.state.finite(two) == 0:
+    ret 0
+  if one < 0 || one > 1 || two < 0 || two > 1:
+    ret 0
+  let a:f64 = one - math.pow(0.90000000000000002, step as f64)
+  let b:f64 = two - math.pow(0.999, step as f64)
+  if a < -9.9999999999999998e-13 || a > 9.9999999999999998e-13 || b < -9.9999999999999998e-13 || b > 9.9999999999999998e-13:
+    ret 0
+  ret 1
+
+fn save(model:*TemporalStt, path:*u8):
+  if stt_temporal.state.valid(model) == 0 || path == 0 || len(path) < 1 || len(path) > 4096:
+    ret -1
+  unsafe:
+    let count = (*model).count
+    if powers_valid((*model).step, (*model).beta1_power, (*model).beta2_power) == 0:
+      ret -1
+    let payload = tzcpu.tz_cpu_zeros(count * 3)
+    if payload == 0:
+      ret -1
+    let status = stt_temporal.state.to_host(payload, (*model).params, count, (*model).device)
+    if status == 0:
+      status = stt_temporal.state.to_host(stt_temporal.state.offset(payload, count), (*model).moment, count, (*model).device)
+    if status == 0:
+      status = stt_temporal.state.to_host(stt_temporal.state.offset(payload, count * 2), (*model).variance, count, (*model).device)
+    if status != 0 || payload_valid(payload, count) == 0:
+      tzcpu.tz_cpu_free(payload)
+      ret -1
+    let header:[i64;24]
+    let i = 0
+    while i < 24:
+      header[i] = 0
+      i = i + 1
+    header[0] = 13845257704984148
+    header[1] = 1
+    header[2] = 16909060
+    header[3] = (*model).hidden
+    header[4] = (*model).step
+    header[5] = count
+    header[6] = (*model).seed
+    header[7] = 3
+    header[8] = 5
+    header[9] = 1
+    header[10] = 4
+    header[11] = 16
+    header[12] = 80
+    header[13] = 29
+    header[14] = 16000
+    header[15] = 400
+    header[16] = 512
+    header[17] = 160
+    header[18] = 1
+    let powers:[f64;2]
+    powers[0] = (*model).beta1_power
+    powers[1] = (*model).beta2_power
+    let crc = crc_bytes(4294967295, (&header[0]) as *u8, 192)
+    crc = crc_bytes(crc, (&powers[0]) as *u8, 16)
+    crc = crc_bytes(crc, payload as *u8, count * 12) ^ 4294967295
+    let temporary:[u8;4101]
+    let path_bytes:*u8 = path as *u8
+    i = 0
+    while i < len(path):
+      temporary[i] = path_bytes[i]
+      i = i + 1
+    temporary[i] = 46 as u8
+    temporary[i + 1] = 116 as u8
+    temporary[i + 2] = 109 as u8
+    temporary[i + 3] = 112 as u8
+    temporary[i + 4] = 0 as u8
+    let temporary_path:*u8 = (&temporary[0]) as *u8
+    let file:*u8 = speech_file_open(temporary_path, 1)
+    if file == 0:
+      tzcpu.tz_cpu_free(payload)
+      ret -1
+    status = 0
+    if fwrite(&header[0], 1, 192, file) != 192:
+      status = -1
+    if status == 0 && fwrite(&powers[0], 1, 16, file) != 16:
+      status = -1
+    if status == 0 && fwrite(payload as *u8, 1, count * 12, file) != count * 12:
+      status = -1
+    if status == 0 && fwrite(&crc, 1, 8, file) != 8:
+      status = -1
+    if fclose(file) != 0:
+      status = -1
+    tzcpu.tz_cpu_free(payload)
+    if status == 0:
+      status = speech_file_replace(temporary_path, path)
+    if status != 0:
+      speech_file_remove(temporary_path)
+    ret status
+
+fn load(path:*u8, device:i64) -> *TemporalStt:
+  if path == 0 || len(path) < 1 || len(path) > 4096 || device < 0 || device > 1:
+    ret 0 as *TemporalStt
+  unsafe:
+    let file:*u8 = speech_file_open(path, 0)
+    if file == 0:
+      ret 0 as *TemporalStt
+    let header:[i64;24]
+    if fread(&header[0], 1, 192, file) != 192:
+      fclose(file)
+      ret 0 as *TemporalStt
+    let hidden = header[3]
+    let count = stt_temporal.state.parameter_count(hidden)
+    let status = 0
+    if header[0] != 13845257704984148 || header[1] != 1 || header[2] != 16909060 || count == 0 || header[5] != count || header[6] < 0 || header[6] > 4294967295:
+      status = -1
+    if header[7] != 3 || header[8] != 5 || header[9] != 1 || header[10] != 4 || header[11] != 16 || header[12] != 80 || header[13] != 29 || header[14] != 16000 || header[15] != 400 || header[16] != 512 || header[17] != 160 || header[18] != 1:
+      status = -1
+    let i = 19
+    while i < 24:
+      if header[i] != 0:
+        status = -1
+      i = i + 1
+    if status != 0:
+      fclose(file)
+      ret 0 as *TemporalStt
+    let powers:[f64;2]
+    if fread(&powers[0], 1, 16, file) != 16:
+      fclose(file)
+      ret 0 as *TemporalStt
+    if powers_valid(header[4], powers[0], powers[1]) == 0:
+      fclose(file)
+      ret 0 as *TemporalStt
+    let payload = tzcpu.tz_cpu_zeros(count * 3)
+    if payload == 0:
+      fclose(file)
+      ret 0 as *TemporalStt
+    let stored = 0
+    if fread(payload as *u8, 1, count * 12, file) != count * 12:
+      status = -1
+    if status == 0 && fread(&stored, 1, 8, file) != 8:
+      status = -1
+    let trailing:u8 = 0 as u8
+    if status == 0 && fread(&trailing, 1, 1, file) != 0:
+      status = -1
+    if fclose(file) != 0:
+      status = -1
+    let crc = crc_bytes(4294967295, (&header[0]) as *u8, 192)
+    crc = crc_bytes(crc, (&powers[0]) as *u8, 16)
+    crc = crc_bytes(crc, payload as *u8, count * 12) ^ 4294967295
+    if stored != crc || payload_valid(payload, count) == 0:
+      status = -1
+    let model:*TemporalStt = 0 as *TemporalStt
+    if status == 0:
+      model = stt_temporal.state.create(hidden, device, header[6])
+      if model != 0:
+        status = stt_temporal.state.from_host((*model).params, payload, count, device)
+        if status == 0:
+          status = stt_temporal.state.from_host((*model).moment, stt_temporal.state.offset(payload, count), count, device)
+        if status == 0:
+          status = stt_temporal.state.from_host((*model).variance, stt_temporal.state.offset(payload, count * 2), count, device)
+        (*model).step = header[4]
+        (*model).beta1_power = powers[0]
+        (*model).beta2_power = powers[1]
+    tzcpu.tz_cpu_free(payload)
+    if status != 0 && model != 0:
+      stt_temporal.state.destroy(model)
+      model = 0 as *TemporalStt
+    ret model
+

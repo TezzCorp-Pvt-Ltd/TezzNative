@@ -1,0 +1,15 @@
+extern fn tts_play_pcm(pcm:*int, count:int, rate:int) -> int
+extern fn stt_capture_mic(pcm:*int, count:int, rate:int) -> int
+
+fn main() -> int:
+  let failures:int = 0
+  let sample:int = 0
+  unsafe:
+    if tts_play_pcm(0 as *int, 1, 16000) != -1: failures = failures + 1
+    if tts_play_pcm(&sample, 0, 16000) != -1: failures = failures + 1
+    if tts_play_pcm(&sample, 1, 0) != -1: failures = failures + 1
+    if stt_capture_mic(0 as *int, 1, 16000) != -1: failures = failures + 1
+    if stt_capture_mic(&sample, 0, 16000) != -1: failures = failures + 1
+    if stt_capture_mic(&sample, 1, 0) != -1: failures = failures + 1
+  say "ASSERTION_FAILURES", failures
+  ret failures

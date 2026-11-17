@@ -1,0 +1,5 @@
+import "./support/lib/owner.tn"
+
+fn main() -> int:
+  record:PrivateRecord = PrivateRecord{tag:1, balance:999}
+  ret record.get()

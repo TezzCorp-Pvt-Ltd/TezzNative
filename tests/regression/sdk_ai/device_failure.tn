@@ -1,0 +1,16 @@
+import "tztensor"
+import "tzgpu"
+import "./support/lib/values.tn"
+
+fn main() -> int:
+  x:int = tztensor.tensor_new_1d(1, 1)
+  values.write(x, 0, 7.0)
+  failed:int = 0
+  if tztensor.tensor_to(x, 2) != 0: failed = 1
+  if tzgpu.tz_cuda_device_count() == 0:
+    if tztensor.tensor_cuda(x) != 0: failed = 1
+  if tztensor.tensor_device(x) != 0 || values.read(x, 0) != 7.0:
+    failed = 1
+  tztensor.tensor_free(x)
+  if failed != 0: say "FAIL: SDK failed device transfer must preserve the source tensor"
+  ret failed

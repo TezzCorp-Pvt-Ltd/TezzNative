@@ -1,0 +1,357 @@
+// tnx implementation: binary.
+import "io"
+import "tnx.state"
+import "tnx.buffers"
+import "tnx.core"
+import "tnx.text"
+
+fn tnx_node_count(n:*TnxNode) -> int:
+  c:int = 0
+  cur:*TnxNode = n
+  while cur != 0:
+    c = c + 1
+    cur = (*cur).next
+  ret c
+
+fn tnx_b_write_value(bb:*TnxBb, v:*TnxValue) -> int:
+  if v == 0:
+    tnx.buffers.bb_put_u8(bb, tnx.state._get_TNX_NULL())
+    ret 0
+  tnx.buffers.bb_put_u8(bb, (*v).kind)
+  if (*v).kind == tnx.state._get_TNX_NULL():
+    ret 0
+  if (*v).kind == tnx.state._get_TNX_BOOL():
+    tnx.buffers.bb_put_u8(bb, (*v).i != 0)
+    ret 0
+  if (*v).kind == tnx.state._get_TNX_INT():
+    tnx.buffers.bb_put_i64(bb, (*v).i)
+    ret 0
+  if (*v).kind == tnx.state._get_TNX_FLOAT():
+    tnx.buffers.bb_put_f64(bb, (*v).f)
+    ret 0
+  if (*v).kind == tnx.state._get_TNX_STR():
+    if (*v).s == 0:
+      tnx.buffers.bb_put_uvarint(bb, 0)
+    else:
+      n:int = len((*v).s)
+      tnx.buffers.bb_put_uvarint(bb, n)
+      tnx.buffers.bb_put_bytes(bb, (*v).s, n)
+    ret 0
+  if (*v).kind == 5:
+    cnt:int = tnx_node_count((*v).head)
+    tnx.buffers.bb_put_uvarint(bb, cnt)
+    cur:*TnxNode = (*v).head
+    while cur != 0:
+      tnx_b_write_value(bb, (*cur).val)
+      cur = (*cur).next
+    ret 0
+  if (*v).kind == 6:
+    cnt2:int = tnx_node_count((*v).head)
+    tnx.buffers.bb_put_uvarint(bb, cnt2)
+    cur2:*TnxNode = (*v).head
+    while cur2 != 0:
+      key:str = (*cur2).key
+      if key == 0:
+        tnx.buffers.bb_put_uvarint(bb, 0)
+      else:
+        kn:int = len(key)
+        tnx.buffers.bb_put_uvarint(bb, kn)
+        tnx.buffers.bb_put_bytes(bb, key, kn)
+      tnx_b_write_value(bb, (*cur2).val)
+      cur2 = (*cur2).next
+    ret 0
+  ret 0
+
+fn tnx_encode_b(v:*TnxValue) -> *TnxBytes:
+  bb:TnxBb
+  tnx.buffers.bb_init(&bb)
+  // header: "TNXB" + version 1
+  tnx.buffers.bb_put_u8(&bb, 84)
+  tnx.buffers.bb_put_u8(&bb, 78)
+  tnx.buffers.bb_put_u8(&bb, 88)
+  tnx.buffers.bb_put_u8(&bb, 66)
+  tnx.buffers.bb_put_u8(&bb, 1)
+  tnx_b_write_value(&bb, v)
+  ret tnx.buffers.bb_take(&bb)
+
+fn tnx_free_bytes(b:*TnxBytes) -> int:
+  if b == 0:
+    ret 0
+  if (*b).buf != 0:
+    free((*b).buf)
+  free(b)
+  ret 0
+
+fn tnx_b_read_uvarint(buf:*char, len:int, idx:*int) -> int:
+  if buf == 0 || idx == 0:
+    ret 0
+  i:int = 0
+  unsafe:
+    i = *idx
+  shift:int = 0
+  v:int = 0
+  ok:int = 0
+  while i < len:
+    b:int = buf[i] as int
+    v = v | ((b & 127) << shift)
+    i = i + 1
+    if (b & 128) == 0:
+      ok = 1
+      break
+    shift = shift + 7
+  if ok == 0:
+    unsafe:
+      *idx = len + 1
+    ret 0
+  unsafe:
+    *idx = i
+  ret v
+
+fn tnx_b_read_i64(buf:*char, len:int, idx:*int) -> int:
+  if buf == 0 || idx == 0:
+    ret 0
+  i:int = 0
+  unsafe:
+    i = *idx
+  if i >= len:
+    unsafe:
+      *idx = len + 1
+    ret 0
+  sign:int = buf[i] as int
+  i = i + 1
+  unsafe:
+    *idx = i
+  v:int = tnx_b_read_uvarint(buf, len, idx)
+  if sign != 0:
+    ret 0 - v
+  ret v
+
+fn tnx_b_read_f64(buf:*char, len:int, idx:*int) -> float:
+  f:float = 0.0
+  if buf == 0 || idx == 0:
+    ret f
+  i:int = 0
+  unsafe:
+    i = *idx
+  if (i + 8) > len:
+    unsafe:
+      *idx = len + 1
+    ret f
+  unsafe:
+    memcpy(&f, buf + i, 8)
+  i = i + 8
+  unsafe:
+    *idx = i
+  ret f
+
+fn tnx_b_read_bytes(buf:*char, len:int, idx:*int, n:int) -> str:
+  if buf == 0 || idx == 0:
+    ret 0 as str
+  i:int = 0
+  unsafe:
+    i = *idx
+  if n <= 0:
+    ret tnx.core.tnx_strdup("")
+  if (i + n) > len:
+    ret 0 as str
+  out:*char = (*char)malloc(n + 1)
+  unsafe:
+    memcpy(out, buf + i, n)
+  out[n] = 0 as char
+  i = i + n
+  unsafe:
+    *idx = i
+  ret out
+
+fn tnx_b_read_value(buf:*char, len:int, idx:*int) -> *TnxValue:
+  if buf == 0 || idx == 0:
+    ret 0 as *TnxValue
+  i:int = 0
+  unsafe:
+    i = *idx
+  if i >= len:
+    ret 0 as *TnxValue
+  kind:int = buf[i] as int
+  i = i + 1
+  unsafe:
+    *idx = i
+  if kind == tnx.state._get_TNX_NULL():
+    ret tnx.core.tnx_null()
+  if kind == tnx.state._get_TNX_BOOL():
+    if i >= len:
+      ret 0 as *TnxValue
+    b:int = buf[i] as int
+    i = i + 1
+    unsafe:
+      *idx = i
+    ret tnx.core.tnx_bool(b != 0)
+  if kind == tnx.state._get_TNX_INT():
+    v:int = tnx_b_read_i64(buf, len, idx)
+    curi:int = 0
+    unsafe:
+      curi = *idx
+    if curi > len:
+      ret 0 as *TnxValue
+    ret tnx.core.tnx_int(v)
+  if kind == tnx.state._get_TNX_FLOAT():
+    f:float = tnx_b_read_f64(buf, len, idx)
+    curf:int = 0
+    unsafe:
+      curf = *idx
+    if curf > len:
+      ret 0 as *TnxValue
+    ret tnx.core.tnx_float(f)
+  if kind == tnx.state._get_TNX_STR():
+    slen:int = tnx_b_read_uvarint(buf, len, idx)
+    curs:int = 0
+    unsafe:
+      curs = *idx
+    if curs > len:
+      ret 0 as *TnxValue
+    s:str = tnx_b_read_bytes(buf, len, idx, slen)
+    if slen > 0 && s == 0:
+      ret 0 as *TnxValue
+    vstr:*TnxValue = tnx.core.tnx_new(tnx.state._get_TNX_STR())
+    (*vstr).s = s
+    ret vstr
+  if kind == 5:
+    cnt:int = tnx_b_read_uvarint(buf, len, idx)
+    cura:int = 0
+    unsafe:
+      cura = *idx
+    if cura > len:
+      ret 0 as *TnxValue
+    arr:*TnxValue = tnx.core.tnx_arr()
+    j:int = 0
+    while j < cnt:
+      vv:*TnxValue = tnx_b_read_value(buf, len, idx)
+      if vv == 0:
+        tnx.core.tnx_free(arr)
+        ret 0 as *TnxValue
+      if tnx.core.tnx_arr_push_take(arr, vv) != 0:
+        tnx.core.tnx_free(vv)
+        tnx.core.tnx_free(arr)
+        ret 0 as *TnxValue
+      j = j + 1
+    ret arr
+  if kind == 6:
+    cnt2:int = tnx_b_read_uvarint(buf, len, idx)
+    curo:int = 0
+    unsafe:
+      curo = *idx
+    if curo > len:
+      ret 0 as *TnxValue
+    obj:*TnxValue = tnx.core.tnx_obj()
+    j2:int = 0
+    while j2 < cnt2:
+      klen:int = tnx_b_read_uvarint(buf, len, idx)
+      curk:int = 0
+      unsafe:
+        curk = *idx
+      if curk > len:
+        tnx.core.tnx_free(obj)
+        ret 0 as *TnxValue
+      key:str = tnx_b_read_bytes(buf, len, idx, klen)
+      if klen > 0 && key == 0:
+        tnx.core.tnx_free(obj)
+        ret 0 as *TnxValue
+      vv2:*TnxValue = tnx_b_read_value(buf, len, idx)
+      if vv2 == 0:
+        tnx.core.tnx_free(obj)
+        ret 0 as *TnxValue
+      if tnx.core.tnx_obj_set_take(obj, key, vv2) != 0:
+        if key != 0:
+          free(key)
+        tnx.core.tnx_free(vv2)
+        tnx.core.tnx_free(obj)
+        ret 0 as *TnxValue
+      if key != 0:
+        free(key)
+      j2 = j2 + 1
+    ret obj
+  ret 0 as *TnxValue
+
+fn tnx_parse_b(buf:*char, len:int) -> *TnxValue:
+  if buf == 0 || len < 5:
+    ret 0 as *TnxValue
+  // header check
+  if buf[0] != 84 as char || buf[1] != 78 as char || buf[2] != 88 as char || buf[3] != 66 as char:
+    ret 0 as *TnxValue
+  if buf[4] != 1 as char:
+    ret 0 as *TnxValue
+  idx:int = 5
+  v:*TnxValue = tnx_b_read_value(buf, len, &idx)
+  if v == 0:
+    ret 0 as *TnxValue
+  if idx != len:
+    tnx.core.tnx_free(v)
+    ret 0 as *TnxValue
+  ret v
+
+fn tnx_validate_b(buf:*char, len:int) -> int:
+  v:*TnxValue = tnx_parse_b(buf, len)
+  if v == 0:
+    ret 0
+  tnx.core.tnx_free(v)
+  ret 1
+
+fn tnx_write_file_b(path:str, v:*TnxValue) -> int:
+  if path == 0:
+    ret 0 - 1
+  b:*TnxBytes = tnx_encode_b(v)
+  if b == 0:
+    ret 0 - 1
+  n:int = (*b).len
+  f:*File = io.file_open(path, "wb")
+  wrote:int = 0 - 1
+  rc_close:int = 0 - 1
+  if f != 0 && (*f).h != 0:
+    if n > 0:
+      wrote = io.file_write(f, (*b).buf, n)
+    else:
+      wrote = 0
+    rc_close = io.file_close(f)
+  else:
+    if f != 0:
+      unsafe:
+        free(f)
+  tnx_free_bytes(b)
+  if wrote == n && rc_close == 0 && path_exists(path) != 0:
+    ret 0
+  // Fallback to text TNX write path if binary write backend is unavailable.
+  ret tnx.text.tnx_write_file(path, v)
+
+fn tnx_read_file_b(path:str) -> *TnxValue:
+  if path == 0:
+    ret 0 as *TnxValue
+  f:*File = io.file_open(path, "rb")
+  if f == 0 || (*f).h == 0:
+    if f != 0:
+      unsafe:
+        free(f)
+    ret 0 as *TnxValue
+  io.file_seek(f, 0, io.seek_end())
+  sz:int = io.file_tell(f)
+  io.file_seek(f, 0, io.seek_set())
+  err:int = 0
+  buf:*char = 0 as *char
+  if sz <= 0:
+    err = 1
+  else:
+    buf = (*char)malloc(sz)
+    if buf == 0:
+      err = 1
+    else:
+      got:int = io.file_read(f, buf, sz)
+      if got != sz:
+        err = 1
+  io.file_close(f)
+  if err != 0:
+    if buf != 0:
+      free(buf)
+    ret 0 as *TnxValue
+  v:*TnxValue = tnx_parse_b(buf, sz)
+  free(buf)
+  ret v
+
+// --- Friendly module API (tnx.*) ---

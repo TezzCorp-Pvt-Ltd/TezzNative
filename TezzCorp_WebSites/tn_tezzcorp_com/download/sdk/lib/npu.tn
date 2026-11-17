@@ -1,18 +1,14 @@
 // npu module: experimental neural accelerator abstraction for TezzNative.
 //
-// This module exposes runtime hooks for ONNX/DirectML/CoreML/OpenVINO-style
-// acceleration paths where the runtime was built with those backends.
-// Callers must expect CPU/GPU fallback or "backend unavailable" results on
-// platforms without a configured NPU runtime.
+// Operations require a dedicated, implemented NPU provider. Unavailable or
+// unsupported operations fail explicitly; they never run on CPU or GPU.
 
 import "io"
-import "gpu"
-import "simd"
 import "tensor"
 
 // ─────────────────────────────────────────────
 // Runtime extern hooks (implemented in tnrt.c)
-// These are the low-level bridges to ONNX RT / DirectML / CoreML.
+// Dedicated model providers require an explicitly enabled vendor runtime.
 // ─────────────────────────────────────────────
 
 extern fn tn_npu_has_backend() -> int
@@ -34,18 +30,18 @@ extern fn tn_npu_model_free(handle:int) -> int
 extern fn tn_npu_model_run_f64_1d(handle:int, input:*float, in_n:int, output:*float, out_n:int) -> int
 
 // ─────────────────────────────────────────────
-// Constants — Execution Providers
+// Reserved and legacy provider identifiers; these do not enable a backend.
 // ─────────────────────────────────────────────
 
-let NPU_EP_NONE:int        = 0   // No NPU — CPU fallback
-let NPU_EP_ONNX:int        = 1   // ONNX Runtime (universal, auto-selects device)
-let NPU_EP_DIRECTML:int    = 2   // Microsoft DirectML (Windows ML)
-let NPU_EP_OPENVINO:int    = 3   // Intel OpenVINO (Intel NPU / iGPU / CPU)
-let NPU_EP_COREML:int      = 4   // Apple CoreML + ANE (macOS / iOS)
-let NPU_EP_QNN:int         = 5   // Qualcomm QNN / Hexagon HTP (Snapdragon)
-let NPU_EP_XDNA:int        = 6   // AMD XDNA / Ryzen AI NPU
-let NPU_EP_CUDA:int        = 7   // CUDA EP (NVIDIA GPU via ONNX RT)
-let NPU_EP_SIMD:int        = 8   // Software SIMD fallback
+let NPU_EP_NONE:int        = 0   // No dedicated NPU provider
+let NPU_EP_ONNX:int        = 1   // Reserved provider identifier
+let NPU_EP_DIRECTML:int    = 2   // Legacy GPU identifier; not a dedicated NPU
+let NPU_EP_OPENVINO:int    = 3   // Optional Intel OpenVINO NPU model provider
+let NPU_EP_COREML:int      = 4   // Reserved for Apple ANE
+let NPU_EP_QNN:int         = 5   // Optional Qualcomm HTP plugin model provider
+let NPU_EP_XDNA:int        = 6   // Optional AMD VitisAI plugin model provider
+let NPU_EP_CUDA:int        = 7   // Legacy GPU identifier; not a dedicated NPU
+let NPU_EP_SIMD:int        = 8   // Legacy identifier; never selected as an NPU
 
 // Quantization formats
 let NPU_DTYPE_F32:int      = 0
@@ -71,8 +67,7 @@ let NPU_KERNEL_ROPE:int    = 7   // Rotary Position Embedding (LLaMA/Mistral)
 fn available() -> int:
   ret tn_npu_has_backend()
 
-// Returns the name of the active backend e.g.
-//   "ONNX Runtime 1.18 / QNN HTP", "DirectML 1.14", "CPU SIMD"
+// Returns the active dedicated provider name, or "none".
 fn backend_name() -> str:
   ret tn_npu_backend_name()
 
@@ -80,7 +75,7 @@ fn backend_name() -> str:
 fn device_count() -> int:
   ret tn_npu_device_count()
 
-// Returns 1 if the backend supports DXIL compute shaders (DirectML path).
+// Current dedicated model providers do not expose DXIL shaders.
 fn supports_dxil() -> int:
   ret tn_npu_supports_dxil()
 
@@ -88,7 +83,7 @@ fn supports_dxil() -> int:
 fn device_info() -> int:
   if tn_npu_has_backend() == 0:
     say "[NPU] No dedicated NPU found."
-    say "[NPU] Fallback chain: GPU -> SIMD CPU"
+    say "[NPU] Operations are unavailable on this runtime."
     ret 0
   say "[NPU] Backend     : ", tn_npu_backend_name()
   say "[NPU] Device Count: ", tn_npu_device_count()
@@ -136,7 +131,7 @@ fn free_buf(p:*char) -> int:
 // Zero-fill an NPU buffer.
 fn memset(dst:*char, value:int, bytes:int) -> int:
   if dst == 0 || bytes <= 0:
-    ret 0
+    ret 0 - 1
   ret tn_npu_memset(dst, value, bytes)
 
 // ─────────────────────────────────────────────
@@ -167,22 +162,8 @@ fn download(src:*char, dst:*char, bytes:int) -> int:
 fn launch_kernel(kernel_id:int, buf:*char, n:int) -> int:
   if buf == 0 || n <= 0:
     ret 0 - 1
-  if tn_npu_has_backend() != 0:
-    ret tn_npu_launch_1d(kernel_id, buf, n)
-  // Fallback to SIMD for common kernels
-  if kernel_id == NPU_KERNEL_RELU:
-    simd.map_relu(buf as *float, buf as *float, n)
-    ret 0
-  if kernel_id == NPU_KERNEL_GELU:
-    simd.map_gelu(buf as *float, buf as *float, n)
-    ret 0
-  if kernel_id == NPU_KERNEL_SIGMOID:
-    simd.map_sigmoid(buf as *float, buf as *float, n)
-    ret 0
-  if kernel_id == NPU_KERNEL_TANH:
-    simd.map_tanh(buf as *float, buf as *float, n)
-    ret 0
-  ret 0 - 1
+  if tn_npu_has_backend() == 0: ret 0 - 1
+  ret tn_npu_launch_1d(kernel_id, buf, n)
 
 // Launch a custom DXIL compute shader on DirectML NPU.
 // dxil     = pointer to compiled DXIL bytecode blob.
@@ -198,9 +179,11 @@ fn launch_dxil(dxil:*char, dxil_len:int, buf:*char, n:int) -> int:
 // ─────────────────────────────────────────────
 // ONNX Model Inference
 // ─────────────────────────────────────────────
-// ONNX is the universal AI model format supported by all NPU vendors.
-// You can export PyTorch / TensorFlow / JAX models to .onnx and run
-// them at full NPU speed here.
+// Model format and operator support depend on the dedicated provider.
+// Default builds are unavailable. Optional dedicated providers require their
+// vendor SDK, driver and physical NPU; see docs/NPU_PROVIDERS.md.
+// Model inference accepts one static f32 input/output, flattened here. Public
+// f64 buffers are explicitly narrowed/widened; this is not f64 NPU arithmetic.
 
 // Load an .onnx model file. Returns a handle (>= 0) or -1 on failure.
 fn model_load(path:str) -> int:
@@ -263,31 +246,7 @@ fn model_run_tensor(handle:int, input:TensorData, out_cols:int) -> TensorData:
     i = i + 1
   ret out_t
 
-// Smart dispatch: run matrix operation on best available hardware.
-// Priority: NPU -> GPU -> SIMD CPU
+// Compatibility entry point. No dedicated NPU matmul kernel is implemented.
+// Return an empty tensor rather than silently selecting another device.
 fn smart_matmul(a:TensorData, b:TensorData) -> TensorData:
-  if tn_npu_has_backend() != 0:
-    // NPU path: upload, run SGEMM kernel, download
-    // For now routes through tensor.tensor_dot with NPU init hint
-    ret tensor.tensor_dot(a, b)
-  if gpu.available() != 0:
-    // GPU path
-    M:int = a.rows
-    N:int = b.cols
-    K:int = a.cols
-    c:TensorData = tensor.tensor_new(M, N)
-    a_gpu:*char = gpu.alloc(M * K * 8)
-    b_gpu:*char = gpu.alloc(K * N * 8)
-    c_gpu:*char = gpu.alloc(M * N * 8)
-    if a_gpu != 0 && b_gpu != 0 && c_gpu != 0:
-      gpu.upload(a.data as *char, a_gpu, M * K * 8)
-      gpu.upload(b.data as *char, b_gpu, K * N * 8)
-      gpu.sgemm(a_gpu, b_gpu, c_gpu, M, N, K)
-      gpu.sync()
-      gpu.download(c_gpu, c.data as *char, M * N * 8)
-    gpu.free_buf(a_gpu)
-    gpu.free_buf(b_gpu)
-    gpu.free_buf(c_gpu)
-    ret c
-  // SIMD CPU fallback
-  ret tensor.tensor_dot(a, b)
+  ret tensor.tensor_new(0, 0)

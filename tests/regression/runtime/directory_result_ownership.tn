@@ -1,0 +1,49 @@
+import "io"
+
+fn contains(text:str, needle:str) -> int:
+  if text == 0 || needle == 0: ret 0
+  size:int = len(text)
+  wanted:int = len(needle)
+  i:int = 0
+  while i + wanted <= size:
+    j:int = 0
+    unsafe:
+      while j < wanted && text[i + j] == needle[j]: j = j + 1
+    if j == wanted: ret 1
+    i = i + 1
+  ret 0
+
+fn main() -> int:
+  unsafe:
+    root:str = "directory_result_ownership"
+    child:str = "directory_result_ownership/child"
+    empty:str = "directory_result_ownership/empty"
+    first:str = "directory_result_ownership/alpha.tn"
+    nested:str = "directory_result_ownership/child/gamma.tn"
+    skipped:str = "directory_result_ownership/beta.txt"
+    if io.dir_make(root) != 0: ret 99
+    if io.dir_make(child) != 0 || io.dir_make(empty) != 0: ret 98
+    if io.write_all(first, "alpha") < 0 || io.write_all(nested, "gamma") < 0 || io.write_all(skipped, "beta") < 0: ret 97
+    failures:int = 0
+    iteration:int = 0
+    while iteration < 16:
+      recursive:str = list_dir_recursive(root)
+      matches:str = glob("directory_result_ownership/*.tn")
+      if recursive == 0 || matches == 0: ret 96
+      if contains(recursive, "alpha.tn") == 0 || contains(recursive, "gamma.tn") == 0: failures = failures + 1
+      if contains(matches, "alpha.tn") == 0 || contains(matches, "beta.txt") != 0 || contains(matches, "gamma.tn") != 0: failures = failures + 1
+      free(recursive)
+      free(matches)
+      no_entries:str = list_dir_recursive(empty)
+      no_recursive:str = list_dir_recursive("directory_result_ownership/missing")
+      no_matches:str = glob("directory_result_ownership/*.absent")
+      if no_entries == 0 || no_recursive == 0 || no_matches == 0: ret 95
+      if len(no_entries) != 0 || len(no_recursive) != 0 || len(no_matches) != 0: failures = failures + 1
+      free(no_entries)
+      free(no_recursive)
+      free(no_matches)
+      iteration = iteration + 1
+    if io.file_delete(first) != 0 || io.file_delete(nested) != 0 || io.file_delete(skipped) != 0: failures = failures + 1
+    if io.dir_remove(child) != 0 || io.dir_remove(empty) != 0 || io.dir_remove(root) != 0: failures = failures + 1
+    say "DIRECTORY_RESULT_OWNERSHIP", failures
+    ret failures

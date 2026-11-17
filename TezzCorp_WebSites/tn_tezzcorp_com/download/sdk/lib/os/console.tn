@@ -1,0 +1,423 @@
+// os implementation: console.
+import "sys"
+import "os.state"
+
+fn console_set_backend(mode:int) -> int:
+  (*os.state._get_g_console_backend()) = mode
+  ret (*os.state._get_g_console_backend())
+
+fn console_get_backend() -> int:
+  ret (*os.state._get_g_console_backend())
+
+fn console_mirror_serial(on:int) -> int:
+  if on != 0:
+    (*os.state._get_g_console_mirror_serial()) = 1
+  else:
+    (*os.state._get_g_console_mirror_serial()) = 0
+  ret (*os.state._get_g_console_mirror_serial())
+
+fn console_serial_input(on:int) -> int:
+  if on != 0:
+    (*os.state._get_g_console_serial_in()) = 1
+  else:
+    (*os.state._get_g_console_serial_in()) = 0
+  ret (*os.state._get_g_console_serial_in())
+
+fn console_set_scale(scale:int) -> int:
+  ret os.state.fb_set_scale(scale)
+
+fn console_get_scale() -> int:
+  ret os.state.fb_get_scale()
+
+fn console_set_color(color:int) -> int:
+  if (*os.state._get_g_console_backend()) == os.state._get_CONSOLE_VGA():
+    // Map 24-bit color to VGA 4-bit attribute (FG only).
+    if color >= 0 && color <= 255:
+      (*os.state._get_g_vga_attr()) = ((*os.state._get_g_vga_attr()) & 240) + (color % 16)
+      ret (*os.state._get_g_vga_attr())
+    r:int = (color / 65536) % 256
+    g:int = (color / 256) % 256
+    b:int = color % 256
+    attr:int = 0
+    if r >= 128:
+      attr = attr + 4
+    if g >= 128:
+      attr = attr + 2
+    if b >= 128:
+      attr = attr + 1
+    if (r + g + b) >= 384:
+      attr = attr + 8
+    (*os.state._get_g_vga_attr()) = ((*os.state._get_g_vga_attr()) & 240) + (attr % 16)
+    ret (*os.state._get_g_vga_attr())
+  ret os.state.fb_set_color(color)
+
+fn console_set_cursor(x:int, y:int) -> int:
+  ret os.state.fb_set_cursor(x, y)
+
+fn console_cursor_mode(mode:int) -> int:
+  ret os.state.fb_cursor_mode(mode)
+
+fn console_cursor(on:int, color:int) -> int:
+  ret os.state.fb_cursor(on, color)
+
+fn vga_clear() -> int:
+  base:*char = 753664 as *char
+  i:int = 0
+  total:int = 80 * 25 * 2
+  while i < total:
+    unsafe:
+      base[i] = 0 as char
+      base[i + 1] = (*os.state._get_g_vga_attr()) as char
+    i = i + 2
+  (*os.state._get_g_vga_row()) = 0
+  (*os.state._get_g_vga_col()) = 0
+  // Move hardware cursor to top-left only if enabled.
+  if (*os.state._get_g_vga_cursor_enabled()) != 0:
+    vga_cursor_set_pos()
+  ret 0
+
+fn vga_cursor_set_pos() -> int:
+  pos:int = ((*os.state._get_g_vga_row()) * 80) + (*os.state._get_g_vga_col())
+  // VGA CRT controller cursor position (low/high).
+  sys.sys_outb(980, 15) // 0x3D4, index 0x0F
+  sys.sys_outb(981, pos % 256) // 0x3D5
+  sys.sys_outb(980, 14) // 0x3D4, index 0x0E
+  sys.sys_outb(981, (pos / 256) % 256)
+  ret 0
+
+fn vga_cursor_block() -> int:
+  // Full block cursor: start=0, end=15.
+  sys.sys_outb(980, 10) // 0x3D4, cursor start
+  sys.sys_outb(981, 0)
+  sys.sys_outb(980, 11) // 0x3D4, cursor end
+  sys.sys_outb(981, 15)
+  ret 0
+
+fn vga_cursor_enable(on:int) -> int:
+  (*os.state._get_g_vga_cursor_enabled()) = on
+  if on != 0:
+    vga_cursor_block()
+  else:
+    // Disable cursor by setting bit 5 of cursor start.
+    sys.sys_outb(980, 10)
+    sys.sys_outb(981, 32)
+  ret 0
+
+fn vga_putc(ch:int) -> int:
+  if ch == 13:
+    (*os.state._get_g_vga_col()) = 0
+    vga_cursor_set_pos()
+    ret 0
+  if ch == 10:
+    (*os.state._get_g_vga_col()) = 0
+    (*os.state._get_g_vga_row()) = (*os.state._get_g_vga_row()) + 1
+  else:
+    if ch == 8:
+      if (*os.state._get_g_vga_col()) > 0:
+        (*os.state._get_g_vga_col()) = (*os.state._get_g_vga_col()) - 1
+        idxb:int = ((*os.state._get_g_vga_row()) * 80 + (*os.state._get_g_vga_col())) * 2
+        baseb:*char = 753664 as *char
+        unsafe:
+          baseb[idxb] = 0 as char
+          baseb[idxb + 1] = (*os.state._get_g_vga_attr()) as char
+        vga_cursor_set_pos()
+      ret 0
+    idx:int = ((*os.state._get_g_vga_row()) * 80 + (*os.state._get_g_vga_col())) * 2
+    base:*char = 753664 as *char
+    unsafe:
+      base[idx] = ch as char
+      base[idx + 1] = (*os.state._get_g_vga_attr()) as char
+    (*os.state._get_g_vga_col()) = (*os.state._get_g_vga_col()) + 1
+    if (*os.state._get_g_vga_col()) >= 80:
+      (*os.state._get_g_vga_col()) = 0
+      (*os.state._get_g_vga_row()) = (*os.state._get_g_vga_row()) + 1
+  if (*os.state._get_g_vga_row()) >= 25:
+    // scroll up by one row
+    base2:*char = 753664 as *char
+    row_bytes:int = 80 * 2
+    i:int = 0
+    total:int = (25 - 1) * row_bytes
+    while i < total:
+      unsafe:
+        base2[i] = base2[i + row_bytes]
+      i = i + 1
+    // clear last row
+    j:int = (25 - 1) * row_bytes
+    while j < 25 * row_bytes:
+      unsafe:
+        base2[j] = 0 as char
+        base2[j + 1] = (*os.state._get_g_vga_attr()) as char
+      j = j + 2
+    (*os.state._get_g_vga_row()) = 24
+    (*os.state._get_g_vga_col()) = 0
+  if (*os.state._get_g_vga_cursor_enabled()) != 0:
+    vga_cursor_set_pos()
+  ret 0
+
+fn vga_write(s:str) -> int:
+  if s == 0:
+    ret 0
+  i:int = 0
+  while 1:
+    c:int = 0
+    unsafe:
+      c = s[i] as int
+    if c == 0:
+      break
+    vga_putc(c)
+    i = i + 1
+  ret 0
+
+fn serial_init(base:int) -> int:
+  if base <= 0:
+    base = 1016
+  (*os.state._get_g_serial_base()) = base
+  // Disable interrupts
+  sys.sys_outb(base + 1, 0)
+  // Enable DLAB
+  sys.sys_outb(base + 3, 128)
+  // Set divisor to 3 (38400 baud) assuming 115200 base
+  sys.sys_outb(base + 0, 3)
+  sys.sys_outb(base + 1, 0)
+  // 8 bits, no parity, one stop
+  sys.sys_outb(base + 3, 3)
+  // Enable FIFO, clear, 14-byte threshold
+  sys.sys_outb(base + 2, 199)
+  // IRQs enabled, RTS/DSR set
+  sys.sys_outb(base + 4, 11)
+  (*os.state._get_g_serial_inited()) = 1
+  ret 0
+
+fn serial_loopback_enable(on:int) -> int:
+  if (*os.state._get_g_serial_inited()) == 0:
+    serial_init((*os.state._get_g_serial_base()))
+  base:int = (*os.state._get_g_serial_base())
+  if on != 0:
+    // Set loopback mode (bit 4)
+    sys.sys_outb(base + 4, 30)
+  else:
+    sys.sys_outb(base + 4, 11)
+  ret 0
+
+fn serial_loopback_test() -> int:
+  if (*os.state._get_g_serial_inited()) == 0:
+    serial_init((*os.state._get_g_serial_base()))
+  serial_loopback_enable(1)
+  base:int = (*os.state._get_g_serial_base())
+  val:int = 174
+  sys.sys_outb(base, val)
+  got:int = sys.sys_inb(base)
+  serial_loopback_enable(0)
+  if got == val:
+    ret 1
+  ret 0
+
+fn serial_ready() -> int:
+  base:int = (*os.state._get_g_serial_base())
+  ls:int = sys.sys_inb(base + 5)
+  // bit 5: THR empty
+  if ((ls / 32) % 2) != 0:
+    ret 1
+  ret 0
+
+fn serial_putc(ch:int) -> int:
+  if (*os.state._get_g_serial_inited()) == 0:
+    serial_init((*os.state._get_g_serial_base()))
+  base:int = (*os.state._get_g_serial_base())
+  // spin until ready
+  tries:int = 0
+  while serial_ready() == 0:
+    tries = tries + 1
+    if tries > 1000000:
+      break
+  sys.sys_outb(base, ch)
+  ret 0
+
+fn serial_poll_char() -> int:
+  if (*os.state._get_g_serial_inited()) == 0:
+    serial_init((*os.state._get_g_serial_base()))
+  base:int = (*os.state._get_g_serial_base())
+  ls:int = sys.sys_inb(base + 5)
+  // If UART is absent, many emulators return 0xFF; treat as no input.
+  if ls == 255:
+    ret 0
+  // bit 0: data ready
+  if (ls % 2) != 0:
+    v:int = sys.sys_inb(base)
+    if v == 255:
+      ret 0
+    ret v
+  ret 0
+
+fn console_write(s:str) -> int:
+  if s == 0:
+    ret 0
+  if (*os.state._get_g_console_backend()) == os.state._get_CONSOLE_VGA():
+    // optional mirror to serial for debug/CLI visibility
+    if (*os.state._get_g_console_mirror_serial()) != 0:
+      serial_write(0, s)
+    ret vga_write(s)
+  if (*os.state._get_g_console_backend()) == os.state._get_CONSOLE_SERIAL():
+    ret serial_write(0, s)
+  if (*os.state._get_g_console_backend()) == os.state._get_CONSOLE_DEBUGCON():
+    ret debugcon_write(s)
+  // Framebuffer/sys_write path: optionally mirror to serial too.
+  if (*os.state._get_g_console_mirror_serial()) != 0:
+    serial_write(0, s)
+  unsafe:
+    ret sys.sys_write(1, s as *char, len(s))
+
+fn console_write_int(v:int) -> int:
+  buf:[char;32]
+  i:int = 0
+  if v == 0:
+    buf[0] = 48 as char
+    buf[1] = 0 as char
+    unsafe:
+      ret console_write(&buf[0])
+  neg:int = 0
+  if v < 0:
+    neg = 1
+    v = 0 - v
+  while v > 0 && i < 30:
+    d:int = v % 10
+    buf[i] = (d + 48) as char
+    i = i + 1
+    v = v / 10
+  if neg != 0 && i < 30:
+    buf[i] = 45 as char
+    i = i + 1
+  // reverse in-place
+  j:int = 0
+  while j < i / 2:
+    t:char = buf[j]
+    buf[j] = buf[i - 1 - j]
+    buf[i - 1 - j] = t
+    j = j + 1
+  buf[i] = 0 as char
+  unsafe:
+    ret console_write(&buf[0])
+
+fn serial_write(port:int, s:str) -> int:
+  if port > 0:
+    (*os.state._get_g_serial_base()) = port
+  if s == 0:
+    ret 0
+  i:int = 0
+  while 1:
+    c:int = 0
+    unsafe:
+      c = s[i] as int
+    if c == 0:
+      break
+    serial_putc(c)
+    i = i + 1
+  ret 0
+
+fn kbd_poll_has_event() -> int:
+  ret os.state.kbd_has_event()
+
+fn kbd_poll_scancode() -> int:
+  ret os.state.kbd_read_scancode()
+
+fn kbd_poll_scancode_raw() -> int:
+  ret os.state.kbd_read_scancode_raw()
+
+fn kbd_poll_char() -> int:
+  ret os.state.kbd_read_char()
+
+fn kbd_poll_modifiers() -> int:
+  ret os.state.kbd_modifiers()
+
+fn kbd_poll_ime_active() -> int:
+  ret os.state.kbd_ime_active()
+
+fn kbd_poll_ime_cursor() -> int:
+  ret os.state.kbd_ime_cursor()
+
+fn kbd_poll_ime_length() -> int:
+  ret os.state.kbd_ime_length()
+
+fn kbd_debug(on:int) -> int:
+  ret os.state.kbd_set_debug(on)
+
+fn kbd_last() -> int:
+  ret os.state.kbd_last_scancode()
+
+fn mouse_poll_has_packet() -> int:
+  ret os.state.mouse_has_packet()
+
+fn mouse_poll_packet() -> int:
+  ret os.state.mouse_read_packet()
+
+fn mouse_poll_dx() -> int:
+  ret os.state.mouse_dx()
+
+fn mouse_poll_dy() -> int:
+  ret os.state.mouse_dy()
+
+fn mouse_poll_buttons() -> int:
+  ret os.state.mouse_buttons()
+
+fn mouse_poll_packet_x() -> int:
+  ret os.state.mouse_packet_x()
+
+fn mouse_poll_packet_y() -> int:
+  ret os.state.mouse_packet_y()
+
+fn mouse_poll_wheel_x() -> int:
+  ret os.state.mouse_wheel_x()
+
+fn mouse_poll_wheel_y() -> int:
+  ret os.state.mouse_wheel_y()
+
+fn touch_poll_has_event() -> int:
+  ret os.state.touch_has_event()
+
+fn touch_poll_event() -> int:
+  ret os.state.touch_read_event()
+
+fn touch_poll_id() -> int:
+  ret os.state.touch_id()
+
+fn touch_poll_phase() -> int:
+  ret os.state.touch_phase()
+
+fn touch_poll_x() -> int:
+  ret os.state.touch_x()
+
+fn touch_poll_y() -> int:
+  ret os.state.touch_y()
+
+fn touch_poll_pressure() -> int:
+  ret os.state.touch_pressure()
+
+fn console_read_char() -> int:
+  // Prefer keyboard to avoid serial noise blocking input.
+  c:int = kbd_poll_char()
+  if c > 0:
+    ret c
+  if (*os.state._get_g_console_serial_in()) != 0 || (*os.state._get_g_console_backend()) == os.state._get_CONSOLE_SERIAL():
+    c = serial_poll_char()
+    if c > 0:
+      ret c
+  ret 0
+
+fn debugcon_putc(ch:int) -> int:
+  // QEMU debug console (port 0xE9).
+  sys.sys_outb(233, ch)
+  ret 0
+
+fn debugcon_write(s:str) -> int:
+  if s == 0:
+    ret 0
+  i:int = 0
+  while 1:
+    c:int = 0
+    unsafe:
+      c = s[i] as int
+    if c == 0:
+      break
+    debugcon_putc(c)
+    i = i + 1
+  ret 0

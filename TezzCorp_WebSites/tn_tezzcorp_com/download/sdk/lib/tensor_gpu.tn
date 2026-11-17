@@ -1,30 +1,49 @@
-import "gpu"
 import "tensor"
-
-struct TensorGpuArgs:
-  out:*float
-  a:*float
-  b:*float
-  n:int
-
-kernel fn tensor_add_kernel(p:*char) -> int:
-  unsafe:
-    args:*TensorGpuArgs = p as *TensorGpuArgs
-    i:int = gpu_tid()
-    if i < (*args).n:
-      (*args).out[i] = (*args).a[i] + (*args).b[i]
-  ret 0
-
-kernel fn tensor_mul_kernel(p:*char) -> int:
-  unsafe:
-    args:*TensorGpuArgs = p as *TensorGpuArgs
-    i:int = gpu_tid()
-    if i < (*args).n:
-      (*args).out[i] = (*args).a[i] * (*args).b[i]
-  ret 0
+import "tensor_ptr"
+import "tzgpu"
 
 fn add(a:*Tensor, b:*Tensor) -> *Tensor:
-  ret tensor.tensor_add_gpu(a, b, tensor_add_kernel)
+  ret _binary(a, b, 1)
 
 fn mul(a:*Tensor, b:*Tensor) -> *Tensor:
-  ret tensor.tensor_mul_gpu(a, b, tensor_mul_kernel)
+  ret _binary(a, b, 3)
+
+// Upload f64 operands to a real CUDA backend. No CPU fallback is selected.
+// The returned tensor owns CPU storage; its reverse rule uses the public tape.
+fn _binary(a:*Tensor, b:*Tensor, op:int) -> *Tensor:
+  if a == 0 as *Tensor || b == 0 as *Tensor: ret 0 as *Tensor
+  if a.dtype != tensor.tensor_dtype_f64() || b.dtype != tensor.tensor_dtype_f64(): ret 0 as *Tensor
+  if a.ndim != b.ndim || a.size != b.size || a.size <= 0 || a.size > 2147483647: ret 0 as *Tensor
+  axis:int = 0
+  while axis < a.ndim:
+    if tensor.tensor_shape(*a, axis) != tensor.tensor_shape(*b, axis): ret 0 as *Tensor
+    axis = axis + 1
+  if tzgpu.tz_cuda_device_count() <= 0: ret 0 as *Tensor
+  av:Tensor = tensor._tensor_clone_raw(*a)
+  bv:Tensor = tensor._tensor_clone_raw(*b)
+  out:Tensor = tensor._tensor_zeros_like(*a)
+  bytes:int = a.size * 8
+  da:int = tzgpu.tz_cuda_malloc(bytes)
+  db:int = tzgpu.tz_cuda_malloc(bytes)
+  dc:int = tzgpu.tz_cuda_malloc(bytes)
+  status:int = 0 - 1
+  if av.data != 0 as *float && bv.data != 0 as *float && out.data != 0 as *float && da != 0 && db != 0 && dc != 0:
+    status = tzgpu.tz_cuda_memcpy(da, av.data as int, bytes, 1)
+    if status == 0: status = tzgpu.tz_cuda_memcpy(db, bv.data as int, bytes, 1)
+    if status == 0:
+      if op == 1: status = tzgpu.tz_gpu_add(da, db, dc, a.size)
+      else: status = tzgpu.tz_gpu_mul(da, db, dc, a.size)
+    if status == 0: status = tzgpu.tz_cuda_sync()
+    if status == 0: status = tzgpu.tz_cuda_memcpy(out.data as int, dc, bytes, 2)
+  if da != 0: tzgpu.tz_cuda_free(da)
+  if db != 0: tzgpu.tz_cuda_free(db)
+  if dc != 0: tzgpu.tz_cuda_free(dc)
+  tensor.tensor_free_tensor(av)
+  tensor.tensor_free_tensor(bv)
+  if status != 0:
+    tensor.tensor_free_tensor(out)
+    ret 0 as *Tensor
+  if tensor.tape_is_enabled() != 0 && (a.requires_grad != 0 || b.requires_grad != 0):
+    out = tensor.tensor_require_grad(out)
+    tensor.tape_record_binary(op, out, *a, *b, 0.0, 0, 0)
+  ret tensor_ptr.wrap(out)

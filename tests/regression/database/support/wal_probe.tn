@@ -1,0 +1,20 @@
+import "tezzdb"
+
+fn main() -> int:
+  unsafe:
+    if args_count() != 1: ret 1
+    mode:str = arg(0)
+    db:*TezzDb = tezzdb.open("data.tdb")
+    if strcmp(mode, "reject") == 0:
+      if db == 0: ret 0
+      tezzdb.close(db)
+      ret 2
+    if db == 0: ret 3
+    if strcmp(mode, "seed") == 0:
+      if tezzdb.table_create(db, "items") != 0: ret 4
+      if tezzdb.insert(db, "items", "old") != 1: ret 5
+    else:
+      value:str = tezzdb.get(db, "items", 1)
+      if value == 0 || strcmp(value, mode) != 0: ret 6
+      free(value)
+    ret tezzdb.close(db)

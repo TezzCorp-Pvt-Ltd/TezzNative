@@ -1,0 +1,5 @@
+import "./support/lib/owner.tn"
+
+fn main() -> int:
+  record:PrivateRecord
+  ret record.balance

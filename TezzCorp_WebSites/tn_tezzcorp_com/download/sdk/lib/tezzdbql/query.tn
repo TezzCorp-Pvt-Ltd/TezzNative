@@ -1,0 +1,171 @@
+// Query facade and arity wrappers for the validated SQL subset.
+import "tezzdb"
+import "tezzdbql.state"
+import "tezzdbql.parser"
+import "tezzdbql.statements"
+import "tezzdbql.execution"
+
+fn db_query(h:*char, query:str, params:*str, param_count:int) -> *TzQueryResult:
+  result:*TzQueryResult = tezzdbql.parser._ql_result_new()
+  if result == 0: ret 0 as *TzQueryResult
+  if h == 0 || query == 0 || param_count < 0 || (param_count > 0 && params == 0):
+    result[0].error = -1
+    ret result
+  statement:*TzQlStatement = tezzdbql.statements.statement_new()
+  if statement == 0:
+    result[0].error = -1
+    ret result
+  if tezzdbql.statements.parse(statement, query, params, param_count) == 0:
+    result[0].error = -1
+  else:
+    result[0].error = tezzdbql.execution.execute(h as *TezzDb, statement, result)
+  tezzdbql.statements.statement_free(statement)
+  ret result
+
+fn db_query_scalar_str(h:*char, query:str, params:*str, param_count:int, col:str) -> str:
+  r:*TzQueryResult = db_query(h, query, params, param_count)
+  if r == 0: ret 0 as str
+  val:str = 0 as str
+  if tezzdbql.parser.db_result_next(r) != 0:
+    val = tezzdbql.parser.cursor_field_str(r, col)
+  tezzdbql.parser.db_result_free(r)
+  ret val
+
+// Execute query and return first row's field as int.
+
+fn db_query_scalar_int(h:*char, query:str, params:*str, param_count:int, col:str) -> int:
+  r:*TzQueryResult = db_query(h, query, params, param_count)
+  if r == 0: ret 0
+  val:int = 0
+  if tezzdbql.parser.db_result_next(r) != 0:
+    val = tezzdbql.parser.cursor_field_int(r, col)
+  tezzdbql.parser.db_result_free(r)
+  ret val
+
+// Return affected row count from INSERT/UPDATE/DELETE
+
+fn db_exec(h:*char, query:str, params:*str, param_count:int) -> int:
+  r:*TzQueryResult = db_query(h, query, params, param_count)
+  if r == 0: ret (0 - 1)
+  err:int = (*r).error
+  aff:int = (*r).affected_rows
+  tezzdbql.parser.db_result_free(r)
+  if err != 0: ret err
+  ret aff
+
+// ─────────────────────────────────────────────────────────────
+// Safe arity wrappers — avoid *str array pointer arithmetic
+// Use these in TezzNative code to avoid unsafe blocks.
+// ─────────────────────────────────────────────────────────────
+
+// db_query0: query with no parameters (SELECT *, CREATE TABLE, DROP TABLE, etc.)
+
+fn db_query0(h:*char, query:str) -> *TzQueryResult:
+  dummy:[str;1]
+  dummy[0] = ""
+  unsafe:
+    ret db_query(h, query, &dummy[0], 0)
+
+// db_query1: query with 1 parameter
+
+fn db_query1(h:*char, query:str, p0:str) -> *TzQueryResult:
+  ps:[str;1]
+  ps[0] = p0
+  unsafe:
+    ret db_query(h, query, &ps[0], 1)
+
+// db_query2: query with 2 parameters
+
+fn db_query2(h:*char, query:str, p0:str, p1:str) -> *TzQueryResult:
+  ps:[str;2]
+  ps[0] = p0
+  ps[1] = p1
+  unsafe:
+    ret db_query(h, query, &ps[0], 2)
+
+// db_query3: query with 3 parameters
+
+fn db_query3(h:*char, query:str, p0:str, p1:str, p2:str) -> *TzQueryResult:
+  ps:[str;3]
+  ps[0] = p0
+  ps[1] = p1
+  ps[2] = p2
+  unsafe:
+    ret db_query(h, query, &ps[0], 3)
+
+// db_exec0: execute with no parameters; returns affected count or error
+
+fn db_exec0(h:*char, query:str) -> int:
+  r:*TzQueryResult = db_query0(h, query)
+  if r == 0: ret (0 - 1)
+  err:int = (*r).error
+  aff:int = (*r).affected_rows
+  tezzdbql.parser.db_result_free(r)
+  if err != 0: ret err
+  ret aff
+
+// db_exec1: execute with 1 parameter; returns affected count or error
+
+fn db_exec1(h:*char, query:str, p0:str) -> int:
+  r:*TzQueryResult = db_query1(h, query, p0)
+  if r == 0: ret (0 - 1)
+  err:int = (*r).error
+  aff:int = (*r).affected_rows
+  tezzdbql.parser.db_result_free(r)
+  if err != 0: ret err
+  ret aff
+
+// db_exec2: execute with 2 parameters; returns affected count or error
+
+fn db_exec2(h:*char, query:str, p0:str, p1:str) -> int:
+  r:*TzQueryResult = db_query2(h, query, p0, p1)
+  if r == 0: ret (0 - 1)
+  err:int = (*r).error
+  aff:int = (*r).affected_rows
+  tezzdbql.parser.db_result_free(r)
+  if err != 0: ret err
+  ret aff
+
+// db_scalar0: return first row's string field, no params
+
+fn db_scalar0(h:*char, query:str, col:str) -> str:
+  r:*TzQueryResult = db_query0(h, query)
+  if r == 0: ret 0 as str
+  val:str = 0 as str
+  if tezzdbql.parser.db_result_next(r) != 0:
+    val = tezzdbql.parser.cursor_field_str(r, col)
+  tezzdbql.parser.db_result_free(r)
+  ret val
+
+// db_scalar1: return first row's string field, 1 param
+
+fn db_scalar1(h:*char, query:str, p0:str, col:str) -> str:
+  r:*TzQueryResult = db_query1(h, query, p0)
+  if r == 0: ret 0 as str
+  val:str = 0 as str
+  if tezzdbql.parser.db_result_next(r) != 0:
+    val = tezzdbql.parser.cursor_field_str(r, col)
+  tezzdbql.parser.db_result_free(r)
+  ret val
+
+// db_int0: return first row's int field, no params
+
+fn db_int0(h:*char, query:str, col:str) -> int:
+  r:*TzQueryResult = db_query0(h, query)
+  if r == 0: ret 0
+  val:int = 0
+  if tezzdbql.parser.db_result_next(r) != 0:
+    val = tezzdbql.parser.cursor_field_int(r, col)
+  tezzdbql.parser.db_result_free(r)
+  ret val
+
+// db_int1: return first row's int field, 1 param
+
+fn db_int1(h:*char, query:str, p0:str, col:str) -> int:
+  r:*TzQueryResult = db_query1(h, query, p0)
+  if r == 0: ret 0
+  val:int = 0
+  if tezzdbql.parser.db_result_next(r) != 0:
+    val = tezzdbql.parser.cursor_field_int(r, col)
+  tezzdbql.parser.db_result_free(r)
+  ret val

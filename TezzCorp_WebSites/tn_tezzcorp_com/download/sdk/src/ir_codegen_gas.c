@@ -1,6 +1,7 @@
 // src/ir_codegen_gas.c
 #include "ir.h"
 #include "ir_codegen_gas.h"
+#include "hardware_target.h"
 #include "util.h"
 #include <stdio.h>
 #include <string.h>
@@ -830,14 +831,15 @@ static void emit_globals(FILE* f, IRModule* m){
       fprintf(f, ".data\n");
       if(!g->is_static) fprintf(f, ".globl %s\n", sym);
       fprintf(f, "%s:\n", sym);
+      long long bits = type_is_float(g->ty) ? g->init_fbits : g->init_int;
       if(g->size==8){
-        if(g->init_fbits){
-          fprintf(f, "  .quad %lld\n", g->init_fbits);
-        } else {
-          fprintf(f, "  .quad %lld\n", g->init_int);
-        }
+        fprintf(f, "  .quad %lld\n", bits);
+      } else if(g->size==4){
+        fprintf(f, "  .long %llu\n", (unsigned long long)bits & 0xFFFFFFFFULL);
+      } else if(g->size==2){
+        fprintf(f, "  .short %lld\n", bits & 0xFFFF);
       } else if(g->size==1){
-        fprintf(f, "  .byte %lld\n", g->init_int & 0xFF);
+        fprintf(f, "  .byte %lld\n", bits & 0xFF);
       } else {
         fprintf(f, "  .zero %d\n", g->size);
       }
@@ -1051,23 +1053,26 @@ void ir_compile_to_gas(IRModule* m, const char* out_s){
     // ---- prologue ----
     fprintf(f, "  pushq %%rbp\n");
     fprintf(f, "  movq %%rsp, %%rbp\n");
-    if(frame>0){
-      fprintf(f, "  subq $%d, %%rsp\n", frame);
+    for(int remaining=frame; remaining>0;){
+      int step = remaining > 4096 ? 4096 : remaining;
+      fprintf(f, "  subq $%d, %%rsp\n", step);
+      fprintf(f, "  testb $0, (%%rsp)\n");
+      remaining -= step;
     }
 
-    // ---- params: move Win64 ABI args into virtual regs r0,r2,r4,... ----
+    // ---- params: move Win64 ABI args into their declared virtual regs ----
     {
       int pcount = fn->param_count;
-      int r0 = 0;
-      int r1 = 2;
-      int r2 = 4;
-      int r3 = 6;
+      int r0 = fn->param_regs_n > 0 ? fn->param_regs[0] : 0;
+      int r1 = fn->param_regs_n > 1 ? fn->param_regs[1] : 2;
+      int r2 = fn->param_regs_n > 2 ? fn->param_regs[2] : 4;
+      int r3 = fn->param_regs_n > 3 ? fn->param_regs[3] : 6;
       if(pcount > 0 && regs > r0) fprintf(f, "  movq %%rcx, -%d(%%rbp)\n", reg_off(r0));
       if(pcount > 1 && regs > r1) fprintf(f, "  movq %%rdx, -%d(%%rbp)\n", reg_off(r1));
       if(pcount > 2 && regs > r2) fprintf(f, "  movq %%r8, -%d(%%rbp)\n", reg_off(r2));
       if(pcount > 3 && regs > r3) fprintf(f, "  movq %%r9, -%d(%%rbp)\n", reg_off(r3));
       for(int i=4;i<pcount;i++){
-        int vreg = i * 2;
+        int vreg = fn->param_regs_n > i ? fn->param_regs[i] : i * 2;
         if(vreg >= regs) break;
         int off = 48 + 8*(i-4);
         fprintf(f, "  movq %d(%%rbp), %%rax\n", off);
@@ -1149,8 +1154,15 @@ void ir_compile_to_gas(IRModule* m, const char* out_s){
         case I_FCMP:
           load_reg_xmm0(f, in->b);
           load_reg_xmm1(f, in->c);
-          fprintf(f, "  ucomisd %%xmm1, %%xmm0\n");
-          fprintf(f, "  %s %%al\n", setcc_for(in->cmpop));
+          fprintf(f, "  %s %%xmm1, %%xmm0\n", in->size==4 ? "ucomiss" : "ucomisd");
+          switch(in->cmpop){
+            case C_NEQ: fprintf(f, "  setne %%al\n  setp %%ah\n  orb %%ah, %%al\n"); break;
+            case C_LT: fprintf(f, "  setb %%al\n  setnp %%ah\n  andb %%ah, %%al\n"); break;
+            case C_LTE: fprintf(f, "  setbe %%al\n  setnp %%ah\n  andb %%ah, %%al\n"); break;
+            case C_GT: fprintf(f, "  seta %%al\n"); break;
+            case C_GTE: fprintf(f, "  setae %%al\n"); break;
+            default: fprintf(f, "  sete %%al\n  setnp %%ah\n  andb %%ah, %%al\n"); break;
+          }
           store_reg_al(f, in->a);
           break;
 
@@ -1288,6 +1300,11 @@ void ir_compile_to_gas(IRModule* m, const char* out_s){
 }
 
 void ir_compile_to_gas_target(IRModule* m, const char* out_s, const char* target){
+  if(tn_is_hardware_target(target)){
+    extern void ir_compile_to_c_hardware(IRModule*,const char*,const char*);
+    ir_compile_to_c_hardware(m,out_s,target);
+    return;
+  }
   if(!target || !target[0]){
     ir_compile_to_gas(m, out_s);
     return;

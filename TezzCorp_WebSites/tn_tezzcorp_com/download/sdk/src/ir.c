@@ -2,6 +2,8 @@
 #include "ir.h"
 #include "util.h"
 #include "sema.h"
+#include "float_bits.h"
+#include "integer_bits.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -17,129 +19,14 @@ void ir_set_repro(int on){ g_ir_repro = on ? 1 : 0; }
 void ir_set_async_zero(int on){ g_ir_async_zero = on ? 1 : 0; }
 void ir_set_vectorize(int on){ g_ir_vectorize = on ? 1 : 0; }
 
-static inline uint16_t float_to_bf16(float f) {
-  uint32_t u;
-  memcpy(&u, &f, 4);
-  u += 0x7FFF + ((u >> 16) & 1);
-  return (uint16_t)(u >> 16);
-}
-static inline float bf16_to_float(uint16_t bf) {
-  uint32_t u = (uint32_t)bf << 16;
-  float f;
-  memcpy(&f, &u, 4);
-  return f;
-}
-static inline uint16_t float_to_f16(float f) {
-  uint32_t u;
-  memcpy(&u, &f, 4);
-  uint32_t sign = (u >> 16) & 0x8000;
-  int32_t exp = (int32_t)((u >> 23) & 0xFF) - 127 + 15;
-  uint32_t mant = u & 0x7FFFFF;
-  if (exp <= 0) {
-    if (exp < -10) return (uint16_t)sign;
-    mant = (mant | 0x800000) >> (1 - exp);
-    return (uint16_t)(sign | ((mant + 0xFFF) >> 13));
-  } else if (exp >= 31) {
-    return (uint16_t)(sign | 0x7C00);
-  }
-  return (uint16_t)(sign | (exp << 10) | ((mant + 0xFFF) >> 13));
-}
-static inline float f16_to_float(uint16_t h) {
-  uint32_t sign = (uint32_t)(h & 0x8000) << 16;
-  uint32_t exp  = (h >> 10) & 0x1F;
-  uint32_t mant = h & 0x3FF;
-  uint32_t u;
-  if (exp == 0) {
-    if (mant == 0) {
-      u = sign;
-    } else {
-      exp = 1;
-      while ((mant & 0x400) == 0) {
-        mant <<= 1;
-        exp--;
-      }
-      mant &= 0x3FF;
-      u = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
-    }
-  } else if (exp == 31) {
-    u = sign | 0x7F800000 | (mant << 13);
-  } else {
-    u = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
-  }
-  float f;
-  memcpy(&f, &u, 4);
-  return f;
-}
-static inline uint8_t float_to_f8_e4m3(float f) {
-  if (f != f) return 0x7F; // NaN
-  uint8_t sign = (f < 0.0f) ? 0x80 : 0x00;
-  float val = (f < 0.0f) ? -f : f;
-  if (val >= 448.0f) return sign | 0x7E;
-  if (val == 0.0f) return sign;
-  uint32_t u;
-  memcpy(&u, &val, 4);
-  int32_t exp = (int32_t)((u >> 23) & 0xFF) - 127 + 7;
-  uint32_t mant = (u & 0x7FFFFF) | 0x800000;
-  if (exp <= 0) {
-    int shift = 1 - exp + 20;
-    uint32_t m = (shift < 31) ? (mant >> shift) : 0;
-    return sign | (m & 0x7);
-  } else if (exp >= 15) {
-    return sign | 0x7E;
-  }
-  uint32_t m = (mant >> 20) & 0x7;
-  return sign | ((exp & 0xF) << 3) | m;
-}
-static inline float f8_e4m3_to_float(uint8_t b) {
-  float sign = (b & 0x80) ? -1.0f : 1.0f;
-  uint32_t exp = (b >> 3) & 0xF;
-  uint32_t mant = b & 0x7;
-  if (exp == 0) {
-    return sign * ((float)mant / 8.0f) * 0.015625f; // 2^-6
-  } else if (exp == 15 && mant == 7) {
-    return 0.0f / 0.0f; // NaN
-  }
-  float pow2 = 1.0f;
-  int shift = (int)exp - 7;
-  if (shift >= 0) while (shift--) pow2 *= 2.0f;
-  else while (shift++) pow2 /= 2.0f;
-  return sign * (1.0f + (float)mant / 8.0f) * pow2;
-}
-static inline uint8_t float_to_f8_e5m2(float f) {
-  if (f != f) return 0x7F; // NaN
-  uint8_t sign = (f < 0.0f) ? 0x80 : 0x00;
-  float val = (f < 0.0f) ? -f : f;
-  if (val >= 57344.0f) return sign | 0x7B;
-  if (val == 0.0f) return sign;
-  uint32_t u;
-  memcpy(&u, &val, 4);
-  int32_t exp = (int32_t)((u >> 23) & 0xFF) - 127 + 15;
-  uint32_t mant = (u & 0x7FFFFF) | 0x800000;
-  if (exp <= 0) {
-    int shift = 1 - exp + 21;
-    uint32_t m = (shift < 31) ? (mant >> shift) : 0;
-    return sign | (m & 0x3);
-  } else if (exp >= 31) {
-    return sign | 0x7B;
-  }
-  uint32_t m = (mant >> 21) & 0x3;
-  return sign | ((exp & 0x1F) << 2) | m;
-}
-static inline float f8_e5m2_to_float(uint8_t b) {
-  float sign = (b & 0x80) ? -1.0f : 1.0f;
-  uint32_t exp = (b >> 2) & 0x1F;
-  uint32_t mant = b & 0x3;
-  if (exp == 0) {
-    return sign * ((float)mant / 4.0f) * 0.00006103515625f; // 2^-14
-  } else if (exp == 31) {
-    return mant != 0 ? (0.0f / 0.0f) : (sign < 0 ? -1.0f/0.0f : 1.0f/0.0f);
-  }
-  float pow2 = 1.0f;
-  int shift = (int)exp - 15;
-  if (shift >= 0) while (shift--) pow2 *= 2.0f;
-  else while (shift++) pow2 /= 2.0f;
-  return sign * (1.0f + (float)mant / 4.0f) * pow2;
-}
+static inline uint16_t float_to_bf16(float f) { return tn_f32_to_bf16(f); }
+static inline float bf16_to_float(uint16_t b) { return tn_f32_from_bits((uint32_t)b << 16); }
+static inline uint16_t float_to_f16(float f) { return tn_f32_to_f16(f); }
+static inline float f16_to_float(uint16_t h) { return tn_f16_to_f32(h); }
+static inline uint8_t float_to_f8_e4m3(float f) { return tn_f32_to_f8(f, 0); }
+static inline float f8_e4m3_to_float(uint8_t b) { return tn_f8_to_f32(b, 0); }
+static inline uint8_t float_to_f8_e5m2(float f) { return tn_f32_to_f8(f, 1); }
+static inline float f8_e5m2_to_float(uint8_t b) { return tn_f8_to_f32(b, 1); }
 
 /* -------------------------
  * helpers
@@ -412,8 +299,6 @@ static IRBin binop_to_bin(BinOp op){
     case OP_BXOR: return B_XOR;
     case OP_SHL:  return B_SHL;
     case OP_SHR:  return B_SHR;
-    case OP_LAND: return B_AND; // v4: no short-circuit yet
-    case OP_LOR:  return B_OR;
     default: return B_ADD;
   }
 }
@@ -443,6 +328,7 @@ static int expr_is_stringy_ir(Expr* e){
 typedef struct {
   Module* cur;
   Module* root;
+  int return_addr;
 } IRGenCtx;
 
 static int mod_has_fn(Module* M, const char* name, int len){
@@ -524,6 +410,7 @@ static int ir_alloca(IRFunc* F, int size, int align){
   int dst=new_reg(F);
   IRIns in; memset(&in,0,sizeof(in));
   in.op=I_ALLOCA; in.a=dst; in.size=size; in.align=align;
+  in.load_kind=TY_VOID;
   ir_emit(F,in);
   return dst;
 }
@@ -533,16 +420,29 @@ static void ir_store(IRFunc* F, int addr, int val, int size){
   ir_emit(F,in);
 }
 static int ir_load(IRFunc* F, int addr, Type* ty){
+  /* Aggregate rvalues are represented by their storage address throughout IR.
+     Loading their first word would turn a field value into a source pointer. */
+  if(ty && (ty->k==TY_STRUCT || ty->k==TY_ARRAY)) return addr;
   int dst=new_reg(F);
   IRIns in; memset(&in,0,sizeof(in));
   in.op=I_LOAD;
   in.a=dst;
   in.b=addr;
   in.size=ty ? type_size(ty) : 8;
+  in.load_kind=ty ? ty->k : TY_I64;
   in.is_unsigned=type_is_unsigned_int(ty);
   ir_emit(F,in);
   return dst;
 }
+static int ir_typed_move(IRFunc* F,int v,TyKind kind){
+  /* Native addresses/handles share bits; the VM additionally tracks a tag. */
+  int dst=new_reg(F);
+  IRIns in; memset(&in,0,sizeof(in));
+  in.op=I_MOV; in.a=dst; in.b=v; in.size=8; in.load_kind=kind;
+  ir_emit(F,in);
+  return dst;
+}
+
 static int ir_int_width_cast(IRFunc* F, int v, Type* to){
   int bits = type_int_bits(to);
   if(bits <= 0 || bits >= 64) return v;
@@ -586,6 +486,7 @@ static int ir_coerce_to_float(IRFunc* F, int v, Type* from, Type* target_flt){
       int dst = new_reg(F);
       IRIns in; memset(&in, 0, sizeof(in));
       in.op = I_I2F; in.a = dst; in.b = v; in.size = 8;
+      in.is_unsigned = from->k==TY_U64;
       ir_emit(F, in);
       return dst;
     }
@@ -628,6 +529,7 @@ static int ir_coerce_to_float(IRFunc* F, int v, Type* from, Type* target_flt){
     int dst = new_reg(F);
     IRIns in; memset(&in, 0, sizeof(in));
     in.op = I_I2F; in.a = dst; in.b = v; in.size = 4;
+    in.is_unsigned = from->k==TY_U64;
     ir_emit(F, in);
     v32 = dst;
   } else if(from->k == TY_F64){
@@ -701,6 +603,30 @@ static int ir_gep_imm(IRFunc* F, int base, int off){
   return dst;
 }
 
+static int ir_truth_value(IRFunc* F, int value, Type* ty){
+  if(type_is_float(ty)){
+    int mask = new_reg(F);
+    IRIns ic; memset(&ic,0,sizeof(ic));
+    ic.op=I_ICONST; ic.a=mask;
+    ic.imm = type_size(ty)==8 ? 0x7FFFFFFFFFFFFFFFLL : (1LL << (type_size(ty)*8-1))-1;
+    ir_emit(F,ic);
+    int magnitude = new_reg(F);
+    IRIns bin; memset(&bin,0,sizeof(bin));
+    bin.op=I_BIN; bin.a=magnitude; bin.b=value; bin.c=mask; bin.binop=B_AND;
+    ir_emit(F,bin);
+    value = magnitude;
+  }
+  int zero = new_reg(F);
+  IRIns ic; memset(&ic,0,sizeof(ic));
+  ic.op=I_ICONST; ic.a=zero; ic.imm=0;
+  ir_emit(F,ic);
+  int dst = new_reg(F);
+  IRIns cmp; memset(&cmp,0,sizeof(cmp));
+  cmp.op=I_CMP; cmp.a=dst; cmp.b=value; cmp.c=zero; cmp.cmpop=C_NEQ;
+  ir_emit(F,cmp);
+  return dst;
+}
+
 /* -------------------------
  * Calls
  * ------------------------- */
@@ -743,13 +669,25 @@ static int gen_call(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Expr* 
     callee_reg = gen_expr(M, tenv, F, ctx, e->call.callee, NULL);
   }
 
-  if(callee_reg < 0 && name && ctx && ctx->cur && ctx->root && ctx->cur != ctx->root){
+  if(callee_reg < 0 && name && !e->call.is_extern && ctx && ctx->cur && ctx->root && ctx->cur != ctx->root){
     if(mod_has_fn(ctx->cur, name, nlen)){
       char* full = mod_prefix_name(ctx->cur, name, nlen, &nlen);
       if(full){
         name = full;
         name_owned = 1;
       }
+    }
+  }
+
+  /* Source module namespaces do not change an extern's host symbol. */
+  if(callee_reg < 0 && name && e->call.is_extern){
+    int start=0;
+    for(int i=0;i<nlen;i++) if(name[i]=='.') start=i+1;
+    if(start){
+      char* bare=(char*)xmalloc((size_t)(nlen-start)+1);
+      memcpy(bare,name+start,(size_t)(nlen-start)); bare[nlen-start]=0;
+      if(name_owned) free((char*)name);
+      name=bare; nlen-=start; name_owned=1;
     }
   }
 
@@ -845,16 +783,31 @@ static int gen_call(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Expr* 
 call_direct:
 {
   int argc = e->call.argc;
+  int aggregate = e->ty && (e->ty->k==TY_STRUCT || e->ty->k==TY_ARRAY) && !e->call.is_extern;
+  int result_addr = aggregate ? ir_alloca(F, type_size(e->ty), type_align(e->ty)) : -1;
   int* args = NULL;
-  if(argc){
-    args = (int*)xmalloc(sizeof(int)*(size_t)argc);
+  if(argc || aggregate){
+    args = (int*)xmalloc(sizeof(int)*(size_t)(argc + aggregate));
+    if(aggregate) args[0] = result_addr;
     for(int i=0;i<argc;i++){
-      args[i] = gen_expr(M, tenv, F, ctx, e->call.args[i], NULL);
+      Type* param_ty = e->call.fn_ty && i < e->call.fn_ty->fparam_n
+                         ? e->call.fn_ty->fparams[i] : NULL;
+      int value = gen_expr(M, tenv, F, ctx, e->call.args[i], param_ty);
+      if(param_ty && type_is_float(param_ty)){
+        value = ir_coerce_to_float(F, value, e->call.args[i]->ty, param_ty);
+      }
+      args[i + aggregate] = value;
     }
   }
+  argc += aggregate;
 
   int dst=new_reg(F);
   IRIns in; memset(&in,0,sizeof(in));
+  in.call_ty = e->call.fn_ty;
+  if(e->ty && (e->ty->k==TY_STRUCT || e->ty->k==TY_ARRAY)){
+    in.size = type_size(e->ty);
+    in.align = type_align(e->ty);
+  }
   if(callee_reg>=0){
     in.op=I_CALLPTR; in.a=dst; in.b=callee_reg;
     in.args=args; in.argc=argc;
@@ -864,7 +817,7 @@ call_direct:
     in.args=args; in.argc=argc;
   }
   ir_emit(F,in);
-  return dst;
+  return aggregate ? result_addr : dst;
 }
 }
 
@@ -1114,6 +1067,31 @@ static int gen_expr(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Expr* 
     case EX_BIN: {
       Type* ta = e->bin.a ? e->bin.a->ty : NULL;
       Type* tb = e->bin.b ? e->bin.b->ty : NULL;
+      if(e->bin.op==OP_LAND || e->bin.op==OP_LOR){
+        int result = ir_alloca(F, 8, 8);
+        int left = gen_expr(M, tenv, F, ctx, e->bin.a, NULL);
+        left = ir_truth_value(F, left, ta);
+        ir_store(F, result, left, 8);
+        int end = new_label(F);
+        IRIns branch; memset(&branch,0,sizeof(branch));
+        branch.op=I_JZ; branch.a=left;
+        if(e->bin.op==OP_LOR){
+          int right = new_label(F);
+          branch.b=right; ir_emit(F,branch);
+          IRIns jump; memset(&jump,0,sizeof(jump));
+          jump.op=I_JMP; jump.a=end; ir_emit(F,jump);
+          IRIns label; memset(&label,0,sizeof(label));
+          label.op=I_LABEL; label.a=right; ir_emit(F,label);
+        } else {
+          branch.b=end; ir_emit(F,branch);
+        }
+        int right = gen_expr(M, tenv, F, ctx, e->bin.b, NULL);
+        right = ir_truth_value(F, right, tb);
+        ir_store(F, result, right, 8);
+        IRIns label; memset(&label,0,sizeof(label));
+        label.op=I_LABEL; label.a=end; ir_emit(F,label);
+        return ir_load(F, result, tenv->b.ty_i64);
+      }
       int pa = ta && (is_ptr(ta) || is_array(ta));
       int pb = tb && (is_ptr(tb) || is_array(tb));
 
@@ -1167,7 +1145,7 @@ static int gen_expr(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Expr* 
         bin.op=I_BIN; bin.a=dst; bin.b=base; bin.c=scale;
         bin.binop = (e->bin.op==OP_ADD) ? B_ADD : B_SUB;
         ir_emit(F,bin);
-        return dst;
+        return ir_typed_move(F,dst,TY_PTR);
       }
 
       int is_f64_op = (e->bin.a && is_f64(e->bin.a->ty)) || (e->bin.b && is_f64(e->bin.b->ty));
@@ -1269,6 +1247,13 @@ static int gen_expr(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Expr* 
       int v = gen_expr(M, tenv, F, ctx, e->cast.e, NULL);
       Type* from = e->cast.e ? e->cast.e->ty : NULL;
       Type* to = e->cast.to;
+      if(from && to && (from->k==TY_PTR || to->k==TY_PTR)){
+        /* Native pointers and integer handles share bits, but the VM must
+           preserve the destination value tag at builtin/call boundaries.
+           Use a typed move; an untyped alias can erase the conversion. */
+        int dst=ir_typed_move(F,v,to->k==TY_PTR ? TY_PTR : TY_I64);
+        return type_is_int(to) ? ir_int_width_cast(F,dst,to) : dst;
+      }
       if(from && to && type_is_int(from) && type_is_int(to)){
         return ir_int_width_cast(F, v, to);
       }
@@ -1281,6 +1266,7 @@ static int gen_expr(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Expr* 
         IRIns in; memset(&in,0,sizeof(in));
         in.op = I_F2I; in.a = dst; in.b = cur_v;
         in.size = (from->k == TY_F64) ? 8 : 4;
+        in.is_unsigned = to->k==TY_U64;
         ir_emit(F, in);
         return ir_int_width_cast(F, dst, to);
       }
@@ -1293,7 +1279,7 @@ static int gen_expr(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Expr* 
     case EX_ADDR: {
       Type* lty=NULL;
       int addr = gen_lvalue(M, tenv, F, ctx, e->un.e, &lty);
-      return addr;
+      return ir_typed_move(F,addr,TY_PTR);
     }
 
     case EX_DEREF: {
@@ -1331,7 +1317,21 @@ static int gen_expr(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Expr* 
           v = ir_coerce_to_float(F, v, e->arr.items[i] ? e->arr.items[i]->ty : NULL, elem);
         }
         int p = ir_gep_imm(F, addr, i*esz);
-        ir_store(F, p, v, esz);
+        if(elem && (elem->k==TY_STRUCT || elem->k==TY_ARRAY)){
+          int szr=new_reg(F);
+          IRIns ic; memset(&ic,0,sizeof(ic));
+          ic.op=I_ICONST; ic.a=szr; ic.imm=esz;
+          ir_emit(F,ic);
+          int* callargs=(int*)xmalloc(sizeof(int)*3);
+          callargs[0]=p; callargs[1]=v; callargs[2]=szr;
+          IRIns call; memset(&call,0,sizeof(call));
+          call.op=I_CALL; call.a=new_reg(F);
+          call.name="memcpy"; call.nlen=6;
+          call.args=callargs; call.argc=3;
+          ir_emit(F,call);
+        } else {
+          ir_store(F, p, v, esz);
+        }
       }
       return addr;
     }
@@ -1408,6 +1408,7 @@ static void gen_stmt(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Stmt*
       if(!ty) ty = tenv->b.ty_i64;
 
       int addr = ir_alloca(F, type_size(ty), type_align(ty));
+      F->ins[F->n-1].load_kind=ty->k;
       env_add(F, s->let.name, s->let.len, addr, ty);
 
       if(s->let.init){
@@ -1483,13 +1484,21 @@ static void gen_stmt(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Stmt*
       }
 
       int cur = ir_load(F, laddr, lty ? lty : tenv->b.ty_i64);
-      int rhs = gen_expr(M, tenv, F, ctx, s->asg.rhs, lty);
+      int rhs;
+      if(s->asg.op==TK_PLUSPLUS || s->asg.op==TK_MINUSMINUS){
+        rhs = new_reg(F);
+        IRIns one; memset(&one,0,sizeof(one));
+        one.op=I_ICONST; one.a=rhs; one.imm=1;
+        ir_emit(F,one);
+      } else {
+        rhs = gen_expr(M, tenv, F, ctx, s->asg.rhs, lty);
+      }
       int dst=new_reg(F);
 
       IRBin bop=B_ADD;
       switch(s->asg.op){
-        case TK_PLUSEQ: bop=B_ADD; break;
-        case TK_MINUSEQ: bop=B_SUB; break;
+        case TK_PLUSPLUS: case TK_PLUSEQ: bop=B_ADD; break;
+        case TK_MINUSMINUS: case TK_MINUSEQ: bop=B_SUB; break;
         case TK_STAREQ: bop=B_MUL; break;
         case TK_SLASHEQ: bop=B_DIV; break;
         case TK_PERCENTEQ: bop=B_MOD; break;
@@ -1519,7 +1528,23 @@ static void gen_stmt(IRModule* M, TypeEnv* tenv, IRFunc* F, IRGenCtx* ctx, Stmt*
     case ST_RET: {
       int r;
       if(s->ret.e){
-        r = gen_expr(M, tenv, F, ctx, s->ret.e, NULL);
+        r = gen_expr(M, tenv, F, ctx, s->ret.e, F->ret_ty);
+        if(F->ret_ty && type_is_float(F->ret_ty)){
+          r = ir_coerce_to_float(F, r, s->ret.e->ty, F->ret_ty);
+        }
+        if(ctx->return_addr >= 0){
+          int size = new_reg(F);
+          IRIns ic; memset(&ic,0,sizeof(ic));
+          ic.op=I_ICONST; ic.a=size; ic.imm=type_size(F->ret_ty);
+          ir_emit(F,ic);
+          int* args = (int*)xmalloc(sizeof(int)*3);
+          args[0]=ctx->return_addr; args[1]=r; args[2]=size;
+          IRIns copy; memset(&copy,0,sizeof(copy));
+          copy.op=I_CALL; copy.a=new_reg(F); copy.name="memcpy"; copy.nlen=6;
+          copy.args=args; copy.argc=3;
+          ir_emit(F,copy);
+          r = ctx->return_addr;
+        }
       } else {
         r = new_reg(F);
         IRIns ic; memset(&ic,0,sizeof(ic));
@@ -1985,14 +2010,21 @@ static void ir_add_func(IRModule* M, TypeEnv* tenv, Module* cur, Module* root, F
   F->name_owned = owned;
   F->next_reg=0;
   F->max_reg=-1;
-  F->param_count = fn->arity;
+  int aggregate = fn->ret && (fn->ret->k==TY_STRUCT || fn->ret->k==TY_ARRAY) && !fn->is_extern;
+  F->param_count = fn->arity + aggregate;
+  F->ret_ty = fn->ret;
   F->param_regs = NULL;
   F->param_regs_n = 0;
   F->is_extern = fn->is_extern;
   F->is_kernel = fn->is_kernel;
   F->force_inline = fn_has_attr_name(fn, "inline", 6);
-  if(fn->arity > 0){
-    F->param_regs = (int*)xmalloc(sizeof(int)*(size_t)fn->arity);
+  if(F->param_count > 0){
+    F->param_regs = (int*)xmalloc(sizeof(int)*(size_t)F->param_count);
+  }
+  int return_addr = -1;
+  if(aggregate){
+    return_addr = new_reg(F);
+    F->param_regs[F->param_regs_n++] = return_addr;
   }
 
   // Params: create incoming regs r0,r2,.. and store them into allocas
@@ -2002,6 +2034,7 @@ static void ir_add_func(IRModule* M, TypeEnv* tenv, Module* cur, Module* root, F
     int preg = new_reg(F); // incoming value reg (ABI will map these)
     if(F->param_regs) F->param_regs[F->param_regs_n++] = preg;
     int addr = ir_alloca(F, type_size(pty), type_align(pty));
+    F->ins[F->n-1].load_kind=pty->k;
     if(pty->k == TY_STRUCT || pty->k == TY_ARRAY){
       int szr=new_reg(F);
       IRIns ic; memset(&ic,0,sizeof(ic));
@@ -2031,6 +2064,7 @@ static void ir_add_func(IRModule* M, TypeEnv* tenv, Module* cur, Module* root, F
   IRGenCtx gctx;
   gctx.cur = cur;
   gctx.root = root ? root : cur;
+  gctx.return_addr = return_addr;
   gen_stmt(M, tenv, F, &gctx, fn->body);
 
   if(F->n==0 || F->ins[F->n-1].op!=I_RET){
@@ -2043,6 +2077,91 @@ static void ir_add_func(IRModule* M, TypeEnv* tenv, Module* cur, Module* root, F
     rt.op=I_RET; rt.a=z;
     ir_emit(F,rt);
   }
+}
+
+static int ir_float_initializer(Expr* e, double* value){
+  if(!e) return 0;
+  if(e->k==EX_FLOAT){ *value=e->f; return 1; }
+  if(e->k==EX_NUM){ *value=(double)e->num; return 1; }
+  if(e->k==EX_UN && (e->un.op==UN_POS || e->un.op==UN_NEG)){
+    if(!ir_float_initializer(e->un.e, value)) return 0;
+    if(e->un.op==UN_NEG) *value = -*value;
+    return 1;
+  }
+  return 0;
+}
+
+#include "global_ir_init.h"
+#include "float_ir_helpers.h"
+
+/* Builtin addresses use the language's function ABI. In particular, Windows
+ * strcmp imports return a signed C int, not a full-width language integer;
+ * a normal IR call also lets the VM resolve this builtin through its dispatcher. */
+static int ir_strcmp_address(IRModule* M, IRIns* in){
+  if(in->op!=I_ADDRSYM || !in->name) return 0;
+  for(int i=0;i<M->fn_n;i++){
+    if(M->fns[i].len==in->nlen && !memcmp(M->fns[i].name,in->name,(size_t)in->nlen)) return 0;
+  }
+  for(int i=0;i<M->global_n;i++){
+    if(M->globals[i].len==in->nlen && !memcmp(M->globals[i].name,in->name,(size_t)in->nlen)) return 0;
+  }
+  const char* name=in->name;
+  int length=in->nlen;
+  for(int i=length-1;i>=0;i--){
+    if(name[i]=='.'){ name+=i+1; length-=i+1; break; }
+  }
+  return (length==6 && !memcmp(name,"strcmp",6)) ||
+         (length==8 && !memcmp(name,"tn_strcmp",8));
+}
+
+static void ir_wrap_builtin_addresses(IRModule* M, TypeEnv* tenv){
+  int original=M->fn_n,needed=0;
+  for(int f=0;f<original;f++){
+    for(int i=0;i<M->fns[f].n;i++) needed|=ir_strcmp_address(M,&M->fns[f].ins[i]);
+  }
+  if(!needed) return;
+  char symbol[80];
+  int suffix=0;
+  for(;;){
+    snprintf(symbol,sizeof(symbol),"__tn_builtin_strcmp_address_%d",suffix++);
+    int collision=0;
+    for(int f=0;f<original;f++){
+      if(M->fns[f].len==(int)strlen(symbol) && !memcmp(M->fns[f].name,symbol,strlen(symbol))) collision=1;
+    }
+    if(!collision) break;
+  }
+  char* name=(char*)xmalloc(strlen(symbol)+1);
+  memcpy(name,symbol,strlen(symbol)+1);
+  /* Rewrite before appending the wrapper, so symbol lookup sees only source
+   * functions and the instruction pointers remain stable during traversal. */
+  for(int f=0;f<original;f++){
+    for(int i=0;i<M->fns[f].n;i++){
+      IRIns* in=&M->fns[f].ins[i];
+      if(ir_strcmp_address(M,in)){
+        if(in->name_owned) free((void*)in->name);
+        in->name=name; in->nlen=(int)strlen(name); in->name_owned=0;
+      }
+    }
+  }
+  if(M->fn_n==M->fn_cap){
+    M->fn_cap=M->fn_cap ? M->fn_cap*2 : 64;
+    M->fns=(IRFunc*)xrealloc(M->fns,sizeof(IRFunc)*(size_t)M->fn_cap);
+  }
+  IRFunc* fn=&M->fns[M->fn_n++];
+  memset(fn,0,sizeof(*fn));
+  fn->name=name; fn->len=(int)strlen(name); fn->name_owned=1;
+  fn->ret_ty=tenv->b.ty_i64; fn->param_count=2; fn->param_regs_n=2;
+  fn->param_regs=(int*)xmalloc(sizeof(int)*2);
+  fn->param_regs[0]=0; fn->param_regs[1]=1;
+  fn->next_reg=3; fn->max_reg=2; fn->next_label=1;
+  IRIns label; memset(&label,0,sizeof(label));
+  label.op=I_LABEL; label.a=0; ir_emit(fn,label);
+  IRIns call; memset(&call,0,sizeof(call));
+  call.op=I_CALL; call.a=2; call.name="strcmp"; call.nlen=6; call.argc=2;
+  call.args=(int*)xmalloc(sizeof(int)*2); call.args[0]=0; call.args[1]=1;
+  ir_emit(fn,call);
+  IRIns result; memset(&result,0,sizeof(result));
+  result.op=I_RET; result.a=2; ir_emit(fn,result);
 }
 
 IRModule* ir_build_from_module(Module* root, TypeEnv* tenv){
@@ -2076,11 +2195,11 @@ IRModule* ir_build_from_module(Module* root, TypeEnv* tenv){
     ig.is_extern = g->is_extern;
     ig.is_static = g->is_static;
     ig.has_init = (g->init!=NULL);
-    if(g->init && g->init->k==EX_NUM){
+    double x;
+    if(type_is_float(g->ty) && ir_float_initializer(g->init, &x)){
+      ig.init_fbits = (long long)tn_float_bits_from_double(x, g->ty->k);
+    } else if(g->init && g->init->k==EX_NUM){
       ig.init_int = g->init->num;
-    } else if(g->init && g->init->k==EX_FLOAT){
-      double x = g->init->f;
-      memcpy(&ig.init_fbits, &x, sizeof(double));
     }
     M->globals=(IRGlobal*)xrealloc(M->globals,sizeof(IRGlobal)*(size_t)(M->global_n+1));
     M->globals[M->global_n++] = ig;
@@ -2108,6 +2227,9 @@ IRModule* ir_build_from_module(Module* root, TypeEnv* tenv){
     ir_add_func(M, tenv, root, root, root->fns[idx]);
   }
   if(fidx) free(fidx);
+  ir_add_global_initializers(M, tenv, root, &root, 1);
+  ir_lower_float_bits(M, tenv);
+  ir_wrap_builtin_addresses(M, tenv);
   return M;
 }
 
@@ -2184,11 +2306,11 @@ IRModule* ir_build_from_graph(struct ModuleGraph* G, TypeEnv* tenv, Module* root
       ig.is_extern = g->is_extern;
       ig.is_static = g->is_static;
       ig.has_init = (g->init!=NULL);
-      if(g->init && g->init->k==EX_NUM){
+      double x;
+      if(type_is_float(g->ty) && ir_float_initializer(g->init, &x)){
+        ig.init_fbits = (long long)tn_float_bits_from_double(x, g->ty->k);
+      } else if(g->init && g->init->k==EX_NUM){
         ig.init_int = g->init->num;
-      } else if(g->init && g->init->k==EX_FLOAT){
-        double x = g->init->f;
-        memcpy(&ig.init_fbits, &x, sizeof(double));
       }
       M->globals=(IRGlobal*)xrealloc(M->globals,sizeof(IRGlobal)*(size_t)(M->global_n+1));
       M->globals[M->global_n++] = ig;
@@ -2224,6 +2346,9 @@ IRModule* ir_build_from_graph(struct ModuleGraph* G, TypeEnv* tenv, Module* root
   }
 
   if(sorted) free(sorted);
+  ir_add_global_initializers(M, tenv, root, G->mods, G->mod_n);
+  ir_lower_float_bits(M, tenv);
+  ir_wrap_builtin_addresses(M, tenv);
   return M;
 }
 
@@ -2335,16 +2460,16 @@ static int is_bin_pure(IRBin o){ (void)o; return 1; }
 
 static int eval_bin(IRBin o, long long a, long long b, long long* out){
   switch(o){
-    case B_ADD: *out = a + b; return 1;
-    case B_SUB: *out = a - b; return 1;
-    case B_MUL: *out = a * b; return 1;
-    case B_DIV: if(b==0) return 0; *out = a / b; return 1;
-    case B_MOD: if(b==0) return 0; *out = a % b; return 1;
+    case B_ADD: *out = tn_i64_add(a,b); return 1;
+    case B_SUB: *out = tn_i64_sub(a,b); return 1;
+    case B_MUL: *out = tn_i64_mul(a,b); return 1;
+    case B_DIV: if(b==0 || (a==LLONG_MIN && b==-1)) return 0; *out = a / b; return 1;
+    case B_MOD: if(b==0 || (a==LLONG_MIN && b==-1)) return 0; *out = a % b; return 1;
     case B_AND: *out = a & b; return 1;
     case B_OR:  *out = a | b; return 1;
     case B_XOR: *out = a ^ b; return 1;
-    case B_SHL: *out = a << b; return 1;
-    case B_SHR: *out = a >> b; return 1;
+    case B_SHL: *out = tn_i64_shl(a,b); return 1;
+    case B_SHR: *out = tn_i64_shr(a,b); return 1;
     default: return 0;
   }
 }
@@ -2367,8 +2492,9 @@ static void peephole_remove_trivial(IRFunc* F){
   int w=0;
   for(int i=0;i<F->n;i++){
     IRIns in = F->ins[i];
-    /* Remove self-copy: mov r, r */
-    if(in.op==I_MOV && in.a==in.b) continue;
+    /* A typed move may retag a VM value even when registers coincide. */
+    if(in.op==I_MOV && in.a==in.b &&
+       !(in.size==8 && (in.load_kind==TY_PTR || in.load_kind==TY_I64 || in.load_kind==TY_U64))) continue;
     /* Remove jump-to-next-label: jmp L; L: */
     if(in.op==I_JMP && (i+1)<F->n){
       IRIns nx = F->ins[i+1];
@@ -2458,7 +2584,10 @@ static void const_fold_block_local(IRFunc* F){
         break;
       case I_MOV:
         if(in->a>=0 && in->a<regs){
-          if(in->b>=0 && in->b<regs && is_c[in->b]){
+          /* ICONST creates an integer tag, so it cannot replace a pointer cast. */
+          if(in->size==8 && in->load_kind==TY_PTR){
+            is_c[in->a]=0;
+          } else if(in->b>=0 && in->b<regs && is_c[in->b]){
             in->op = I_ICONST;
             in->imm = cv[in->b];
             is_c[in->a]=1; cv[in->a]=in->imm;
@@ -3148,6 +3277,8 @@ typedef struct {
   IRBin binop;
   IRCmp cmpop;
   IRFlt fop;
+  int size;
+  TyKind load_kind;
   int a;
   int b;
   long long imm;
@@ -3202,6 +3333,8 @@ static int gvn_key_eq(const GVNKey* a, const GVNKey* b){
   if(a->binop!=b->binop) return 0;
   if(a->cmpop!=b->cmpop) return 0;
   if(a->fop!=b->fop) return 0;
+  if(a->size!=b->size) return 0;
+  if(a->load_kind!=b->load_kind) return 0;
   if(a->a!=b->a || a->b!=b->b) return 0;
   if(a->imm!=b->imm || a->immf!=b->immf) return 0;
   if(a->sid!=b->sid) return 0;
@@ -3312,6 +3445,8 @@ static void gvn_key_from_ins(const IRIns* in, GVNKey* key){
   key->binop = in->binop;
   key->cmpop = in->cmpop;
   key->fop = in->fop;
+  key->size = in->size;
+  key->load_kind = in->load_kind;
   switch(in->op){
     case I_ICONST:
       key->imm = in->imm;
@@ -4007,6 +4142,8 @@ static void promote_single_assign_locals(IRFunc* F){
 
   int* alloca_size = (int*)xmalloc(sizeof(int)*(size_t)regs);
   memset(alloca_size, 0, sizeof(int)*(size_t)regs);
+  TyKind* alloca_kind=(TyKind*)xmalloc(sizeof(TyKind)*(size_t)regs);
+  for(int i=0;i<regs;i++) alloca_kind[i]=TY_VOID;
 
   int* store_count = (int*)xmalloc(sizeof(int)*(size_t)regs);
   memset(store_count, 0, sizeof(int)*(size_t)regs);
@@ -4029,6 +4166,7 @@ static void promote_single_assign_locals(IRFunc* F){
       if(in->a >= 0 && in->a < regs){
         is_alloca[in->a] = 1;
         alloca_size[in->a] = in->size;
+        alloca_kind[in->a] = in->load_kind;
       }
     }
   }
@@ -4050,6 +4188,9 @@ static void promote_single_assign_locals(IRFunc* F){
       int addr = in->b;
       if(addr>=0 && addr<regs && is_alloca[addr]){
         if(first_load_idx[addr] < 0) first_load_idx[addr] = i;
+        /* An unsafe typed read reinterprets storage bits and may change VM
+           value tags. Forwarding the stored register would lose that cast. */
+        if(alloca_kind[addr]!=TY_VOID && in->load_kind!=alloca_kind[addr]) escape_count[addr]++;
       }
     } else if(in->op==I_ALLOCA){
       // skip
@@ -4084,11 +4225,13 @@ static void promote_single_assign_locals(IRFunc* F){
           F->ins[i].op = I_MOV;
           F->ins[i].a = z;
           F->ins[i].b = z;
+          F->ins[i].size = 0; /* untyped dead self-copy, not a value cast */
         } else if(F->ins[i].op==I_ALLOCA && F->ins[i].a==r){
           int z = new_reg(F);
           F->ins[i].op = I_MOV;
           F->ins[i].a = z;
           F->ins[i].b = z;
+          F->ins[i].size = 0;
         }
       }
     }
@@ -4096,6 +4239,7 @@ static void promote_single_assign_locals(IRFunc* F){
 
   free(is_alloca);
   free(alloca_size);
+  free(alloca_kind);
   free(store_count);
   free(escape_count);
   free(store_val);

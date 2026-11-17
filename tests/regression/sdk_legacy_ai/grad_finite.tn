@@ -1,0 +1,15 @@
+import "grad"
+
+fn main() -> int:
+  unsafe:
+    values:[float;2]
+    values[0] = 1.0e100
+    values[1] = 0.0 - 1.0e100
+    if grad.has_nan_inf(&values[0], 2) != 0:
+      say "FAIL: finite f64 gradients must not be classified as infinity"
+      ret 1
+    values[0] = 1.0 / 0.0
+    if grad.has_nan_inf(&values[0], 2) != 1: ret 2
+    values[0] = 0.0 / 0.0
+    if grad.has_nan_inf(&values[0], 2) != 1: ret 3
+  ret 0

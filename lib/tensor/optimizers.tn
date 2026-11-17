@@ -1,0 +1,288 @@
+// tensor implementation: optimizers.
+import "simd"
+import "math"
+import "io"
+import "str"
+import "tensor.state"
+import "tensor.tape"
+
+fn lr_linear_schedule(initial_lr:float, min_lr:float, cur_step:int, total_steps:int) -> float:
+  if cur_step >= total_steps:
+    ret min_lr
+  frac:float = 1.0 - (cur_step as float) / (total_steps as float)
+  ret min_lr + (initial_lr - min_lr) * frac
+
+fn lr_cosine_schedule(max_lr:float, min_lr:float, cur_step:int, warmup_steps:int, total_steps:int) -> float:
+  if cur_step < warmup_steps:
+    if warmup_steps <= 0: ret max_lr
+    ret min_lr + (max_lr - min_lr) * ((cur_step as float) / (warmup_steps as float))
+  
+  if cur_step >= total_steps:
+    ret min_lr
+  
+  decay_steps:float = (total_steps - warmup_steps) as float
+  if decay_steps <= 0.0: ret min_lr
+  progress:float = ((cur_step - warmup_steps) as float) / decay_steps
+  if progress > 1.0: progress = 1.0
+  factor:float = 0.5 * (1.0 + math.cos(math.PI() * progress))
+  ret min_lr + (max_lr - min_lr) * factor
+
+// -------------------------------------------------------------
+// AdamW Optimizer (Decoupled Weight Decay Adam)
+// -------------------------------------------------------------
+
+fn adamw_create(lr:float, beta1:float, beta2:float, eps:float, weight_decay:float) -> AdamW:
+  opt:AdamW
+  opt.cap = 128
+  opt.num_params = 0
+  unsafe:
+    opt.params_raw = malloc(opt.cap * 32)
+  opt.lr = lr
+  opt.beta1 = beta1
+  opt.beta2 = beta2
+  opt.eps = eps
+  opt.weight_decay = weight_decay
+  opt.step = 0
+  ret opt
+
+fn adamw_add_param(opt:*AdamW, p:*Tensor) -> int:
+  unsafe:
+    if opt.num_params >= opt.cap || p == 0 as *Tensor:
+      ret 0 - 1
+    entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+    entry:*OptimizerParam = entries + opt.num_params
+    entry.p = p
+    entry.size = p.size
+
+    m_raw:*char = malloc(p.size * 8)
+    v_raw:*char = malloc(p.size * 8)
+    entry.m = m_raw as *float
+    entry.v = v_raw as *float
+    i:int = 0
+    while i < p.size:
+      entry.m[i] = 0.0
+      entry.v[i] = 0.0
+      i = i + 1
+    opt.num_params = opt.num_params + 1
+  ret 0
+
+fn adamw_zero_grad(opt:*AdamW) -> int:
+  p_idx:int = 0
+  while p_idx < opt.num_params:
+    unsafe:
+      entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+      entry:*OptimizerParam = entries + p_idx
+      tensor.tape.tensor_zero_grad_p(entry.p)
+    p_idx = p_idx + 1
+  ret 0
+
+fn adamw_clip_grad_norm(opt:*AdamW, max_norm:float) -> float:
+  total_sq:float = 0.0
+  p_idx:int = 0
+  while p_idx < opt.num_params:
+    unsafe:
+      entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+      entry:*OptimizerParam = entries + p_idx
+      param:*Tensor = entry.p
+      if param != 0 as *Tensor && param.grad != 0 as *Tensor && param.grad.data != 0 as *float:
+        i:int = 0
+        while i < entry.size:
+          g:float = param.grad.data[i]
+          total_sq = total_sq + g * g
+          i = i + 1
+    p_idx = p_idx + 1
+
+  total_norm:float = math.sqrt(total_sq)
+  if total_norm > max_norm && total_norm > 0.0:
+    scale:float = max_norm / (total_norm + 1.0e-06)
+    p_idx = 0
+    while p_idx < opt.num_params:
+      unsafe:
+        entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+        entry:*OptimizerParam = entries + p_idx
+        param:*Tensor = entry.p
+        if param != 0 as *Tensor && param.grad != 0 as *Tensor && param.grad.data != 0 as *float:
+          i:int = 0
+          while i < entry.size:
+            param.grad.data[i] = param.grad.data[i] * scale
+            i = i + 1
+      p_idx = p_idx + 1
+  ret total_norm
+
+fn adamw_step(opt:*AdamW) -> int:
+  opt.step = opt.step + 1
+  bc1:float = 1.0 - math.pow(opt.beta1, opt.step as float)
+  bc2:float = 1.0 - math.pow(opt.beta2, opt.step as float)
+  if bc1 <= 0.0: bc1 = 1.0e-07
+  if bc2 <= 0.0: bc2 = 1.0e-07
+
+  p_idx:int = 0
+  while p_idx < opt.num_params:
+    unsafe:
+      entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+      entry:*OptimizerParam = entries + p_idx
+      param:*Tensor = entry.p
+      if param != 0 as *Tensor && param.grad != 0 as *Tensor && param.grad.data != 0 as *float:
+        i:int = 0
+        while i < entry.size:
+          g:float = param.grad.data[i]
+          w:float = param.data[i]
+
+          // 1. Decoupled weight decay
+          if opt.weight_decay > 0.0:
+            w = w * (1.0 - opt.lr * opt.weight_decay)
+
+          // 2. Update biased 1st and 2nd moment estimates
+          m_val:float = opt.beta1 * entry.m[i] + (1.0 - opt.beta1) * g
+          v_val:float = opt.beta2 * entry.v[i] + (1.0 - opt.beta2) * (g * g)
+          entry.m[i] = m_val
+          entry.v[i] = v_val
+
+          // 3. Compute bias-corrected moments
+          m_hat:float = m_val / bc1
+          v_hat:float = v_val / bc2
+
+          // 4. Update parameter
+          step_val:float = opt.lr * (m_hat / (math.sqrt(v_hat) + opt.eps))
+          param.data[i] = w - step_val
+          i = i + 1
+    p_idx = p_idx + 1
+  ret 0
+
+fn adamw_free(opt:*AdamW) -> int:
+  p_idx:int = 0
+  while p_idx < opt.num_params:
+    unsafe:
+      entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+      entry:*OptimizerParam = entries + p_idx
+      if entry.m != 0 as *float:
+        free(entry.m as *char)
+      if entry.v != 0 as *float:
+        free(entry.v as *char)
+    p_idx = p_idx + 1
+  unsafe:
+    if opt.params_raw != 0 as *char:
+      free(opt.params_raw)
+  ret 0
+
+// -------------------------------------------------------------
+// SGD Optimizer with Momentum & Weight Decay
+// -------------------------------------------------------------
+
+fn sgd_create(lr:float, momentum:float, weight_decay:float, nesterov:int) -> SGD:
+  opt:SGD
+  opt.cap = 128
+  opt.num_params = 0
+  unsafe:
+    opt.params_raw = malloc(opt.cap * 32)
+  opt.lr = lr
+  opt.momentum = momentum
+  opt.weight_decay = weight_decay
+  opt.nesterov = nesterov
+  opt.step = 0
+  ret opt
+
+fn sgd_add_param(opt:*SGD, p:*Tensor) -> int:
+  unsafe:
+    if opt.num_params >= opt.cap || p == 0 as *Tensor:
+      ret 0 - 1
+    entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+    entry:*OptimizerParam = entries + opt.num_params
+    entry.p = p
+    entry.size = p.size
+
+    v_raw:*char = malloc(p.size * 8)
+    entry.v = v_raw as *float
+    entry.m = 0 as *float
+    i:int = 0
+    while i < p.size:
+      entry.v[i] = 0.0
+      i = i + 1
+    opt.num_params = opt.num_params + 1
+  ret 0
+
+fn sgd_zero_grad(opt:*SGD) -> int:
+  p_idx:int = 0
+  while p_idx < opt.num_params:
+    unsafe:
+      entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+      entry:*OptimizerParam = entries + p_idx
+      tensor.tape.tensor_zero_grad_p(entry.p)
+    p_idx = p_idx + 1
+  ret 0
+
+fn sgd_clip_grad_norm(opt:*SGD, max_norm:float) -> float:
+  total_sq:float = 0.0
+  p_idx:int = 0
+  while p_idx < opt.num_params:
+    unsafe:
+      entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+      entry:*OptimizerParam = entries + p_idx
+      param:*Tensor = entry.p
+      if param != 0 as *Tensor && param.grad != 0 as *Tensor && param.grad.data != 0 as *float:
+        i:int = 0
+        while i < entry.size:
+          g:float = param.grad.data[i]
+          total_sq = total_sq + g * g
+          i = i + 1
+    p_idx = p_idx + 1
+
+  total_norm:float = math.sqrt(total_sq)
+  if total_norm > max_norm && total_norm > 0.0:
+    scale:float = max_norm / (total_norm + 1.0e-06)
+    p_idx = 0
+    while p_idx < opt.num_params:
+      unsafe:
+        entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+        entry:*OptimizerParam = entries + p_idx
+        param:*Tensor = entry.p
+        if param != 0 as *Tensor && param.grad != 0 as *Tensor && param.grad.data != 0 as *float:
+          i:int = 0
+          while i < entry.size:
+            param.grad.data[i] = param.grad.data[i] * scale
+            i = i + 1
+      p_idx = p_idx + 1
+  ret total_norm
+
+fn sgd_step(opt:*SGD) -> int:
+  opt.step = opt.step + 1
+  p_idx:int = 0
+  while p_idx < opt.num_params:
+    unsafe:
+      entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+      entry:*OptimizerParam = entries + p_idx
+      param:*Tensor = entry.p
+      if param != 0 as *Tensor && param.grad != 0 as *Tensor && param.grad.data != 0 as *float:
+        i:int = 0
+        while i < entry.size:
+          g:float = param.grad.data[i]
+          w:float = param.data[i]
+
+          if opt.weight_decay > 0.0:
+            g = g + opt.weight_decay * w
+
+          if opt.momentum > 0.0:
+            entry.v[i] = opt.momentum * entry.v[i] + g
+            if opt.nesterov != 0:
+              g = g + opt.momentum * entry.v[i]
+            else:
+              g = entry.v[i]
+
+          param.data[i] = w - opt.lr * g
+          i = i + 1
+    p_idx = p_idx + 1
+  ret 0
+
+fn sgd_free(opt:*SGD) -> int:
+  p_idx:int = 0
+  while p_idx < opt.num_params:
+    unsafe:
+      entries:*OptimizerParam = opt.params_raw as *OptimizerParam
+      entry:*OptimizerParam = entries + p_idx
+      if entry.v != 0 as *float:
+        free(entry.v as *char)
+    p_idx = p_idx + 1
+  unsafe:
+    if opt.params_raw != 0 as *char:
+      free(opt.params_raw)
+  ret 0

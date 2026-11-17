@@ -1,0 +1,608 @@
+// tezzdb implementation: tables.
+import "io"
+import "time"
+import "tezzdb.state"
+import "tezzdb.storage"
+import "tezzdb.queries"
+import "tezzdb.overflow"
+
+fn _find_table(db:*TezzDb, name:str) -> int:
+  if db == 0 || name == 0: ret 0 - 1
+  i:int = 0
+  while i < (*db).table_count:
+    if tezzdb.storage._db_streq((*db).tables[i].name, name) != 0:
+      ret i
+    i = i + 1
+  ret 0 - 1
+
+fn _grow_tables(db:*TezzDb) -> int:
+  if db == 0 || (*db).table_count >= tezzdb.state._get_DB_MAX_TABLES(): ret 0 - 1
+  capacity:int = (*db).table_cap * 2
+  if capacity < 8: capacity = 8
+  if capacity > tezzdb.state._get_DB_MAX_TABLES(): capacity = tezzdb.state._get_DB_MAX_TABLES()
+  entries:*DbTableMeta = (*DbTableMeta)malloc(sizeof(DbTableMeta) * capacity)
+  if entries == 0: ret 0 - 1
+  memcpy(entries as *char, (*db).tables as *char, sizeof(DbTableMeta) * (*db).table_count)
+  free((*db).tables as *char)
+  (*db).tables = entries
+  (*db).table_cap = capacity
+  ret 0
+
+// ─────────────────────────────────────────────────────────────
+// Public API: Open / Create / Close
+// ─────────────────────────────────────────────────────────────
+
+fn _db_dispose(db:*TezzDb) -> int:
+  if db == 0: ret 0 - 1
+  status:int = 0
+  if (*db).wal_h != 0:
+    if fclose((*db).wal_h) != 0: status = 0 - 1
+  if (*db).h != 0:
+    if fclose((*db).h) != 0: status = 0 - 1
+  i:int = 0
+  while i < (*db).cache_count:
+    free((*db).cache[i].data)
+    i = i + 1
+  free((*db).cache as *char)
+  i = 0
+  if (*db).tables != 0:
+    while i < (*db).table_count:
+      free((*db).tables[i].name)
+      free((*db).tables[i].idx_col)
+      i = i + 1
+  free((*db).tables as *char)
+  free((*db).path)
+  free((*db).wal_path)
+  free(db as *char)
+  ret status
+
+fn open(path:str) -> *TezzDb:
+  if path == 0 || len(path) == 0: ret tezzdb.storage._db_null_db()
+  directory:str = io.path_dir(path)
+  if directory != 0 && io.dir_exists(directory) == 0:
+    made:int = io.dir_make(directory)
+    free(directory)
+    if made != 0: ret tezzdb.storage._db_null_db()
+  else:
+    free(directory)
+  existed:int = io.file_exists(path)
+  h:*char = 0 as *char
+  if existed != 0: h = fopen(path, "r+b")
+  else: h = fopen(path, "w+b")
+  if h == 0: ret tezzdb.storage._db_null_db()
+  if fseek(h, 0, 2) != 0:
+    fclose(h)
+    ret tezzdb.storage._db_null_db()
+  bytes:int = ftell(h)
+  if bytes < 0 || (bytes > 0 && (bytes < 16384 || bytes % 8192 != 0)) || bytes / 8192 > 2147483647:
+    fclose(h)
+    ret tezzdb.storage._db_null_db()
+  db:*TezzDb = (*TezzDb)malloc(sizeof(TezzDb))
+  if db == 0:
+    fclose(h)
+    ret tezzdb.storage._db_null_db()
+  (*db).path = 0 as str
+  (*db).wal_path = 0 as str
+  (*db).h = h
+  (*db).wal_h = 0 as *char
+  (*db).page_count = bytes / 8192
+  (*db).tables = 0 as *DbTableMeta
+  (*db).table_count = 0
+  (*db).table_cap = 0
+  (*db).cache = 0 as *DbPage
+  (*db).cache_cap = 64
+  (*db).cache_count = 0
+  (*db).in_tx = 0
+  (*db).tx_start_page = 0
+  (*db).write_failed = 0
+  (*db).path = tezzdb.storage._db_strdup(path)
+  (*db).wal_path = tezzdb.storage._db_join2(path, ".wal")
+  (*db).cache = (*DbPage)malloc(sizeof(DbPage) * (*db).cache_cap)
+  if (*db).path == 0 || (*db).wal_path == 0 || (*db).cache == 0:
+    _db_dispose(db)
+    ret tezzdb.storage._db_null_db()
+  status:int = 0
+  if bytes == 0:
+    if tezzdb.storage._page_new(db, tezzdb.state._get_DB_PAGE_HEADER()) == 0: status = 0 - 1
+    if status == 0 && tezzdb.storage._page_new(db, tezzdb.state._get_DB_PAGE_TABLE_META()) == 0: status = 0 - 1
+    if status == 0: status = tezzdb.storage._db_write_header(db)
+    if status == 0: status = tezzdb.storage._db_save_tables(db)
+    if status == 0: status = tezzdb.storage._db_flush_all(db)
+  else:
+    status = tezzdb.storage._wal_replay(db)
+    if status == 0: status = tezzdb.storage._db_read_header(db)
+    if status == 0: status = tezzdb.storage._db_load_tables(db)
+    i:int = 0
+    while status == 0 && i < (*db).table_count:
+      root:*DbPage = tezzdb.storage._page_load(db, (*db).tables[i].root_page)
+      if root == 0:
+        status = 0 - 1
+      else:
+        kind:int = tezzdb.storage._db_r32_le((*root).data, 0)
+        if kind != tezzdb.state._get_DB_PAGE_BTREE_LEAF() && kind != tezzdb.state._get_DB_PAGE_BTREE_INTERNAL(): status = 0 - 1
+      i = i + 1
+  if status == 0: status = tezzdb.storage._wal_clear(db)
+  if status == 0: status = tezzdb.storage._wal_open(db)
+  if status != 0:
+    _db_dispose(db)
+    ret tezzdb.storage._db_null_db()
+  ret db
+
+fn close(db:*TezzDb) -> int:
+  if db == 0: ret tezzdb.state._get_TEZZDB_ERR()
+  status:int = 0
+  if (*db).write_failed != 0:
+    status = 0 - 1
+  else:
+    if (*db).in_tx != 0: status = rollback(db)
+    if status == 0: status = _autocommit(db)
+    if status == 0: status = tezzdb.storage._wal_clear(db)
+    if status == 0:
+      if remove((*db).wal_path) != 0: status = 0 - 1
+  disposed:int = _db_dispose(db)
+  if disposed != 0: status = 0 - 1
+  ret status
+
+// ─────────────────────────────────────────────────────────────
+// Table creation / deletion
+// ─────────────────────────────────────────────────────────────
+
+fn table_create(db:*TezzDb, name:str) -> int:
+  if db == 0 || name == 0 || (*db).write_failed != 0: ret tezzdb.state._get_TEZZDB_ERR()
+  if len(name) == 0 || len(name) > 56: ret tezzdb.state._get_TEZZDB_ERR()
+  if _find_table(db, name) >= 0: ret tezzdb.state._get_TEZZDB_DUPLICATE()
+  if (*db).table_count >= tezzdb.state._get_DB_MAX_TABLES(): ret tezzdb.state._get_TEZZDB_FULL()
+  if tezzdb.storage._cache_reserve(db, 4) != 0: ret tezzdb.state._get_TEZZDB_ERR()
+  if (*db).table_count >= (*db).table_cap:
+    if _grow_tables(db) != 0: ret tezzdb.state._get_TEZZDB_ERR()
+  // Create root leaf page
+  root:*DbPage = tezzdb.storage._page_new(db, tezzdb.state._get_DB_PAGE_BTREE_LEAF())
+  if root == 0 as *DbPage: ret tezzdb.state._get_TEZZDB_ERR()
+  idx:int = (*db).table_count
+  (*db).tables[idx].name = tezzdb.storage._db_strdup(name)
+  if (*db).tables[idx].name == 0: ret tezzdb.state._get_TEZZDB_ERR()
+  (*db).tables[idx].root_page = (*root).page_id
+  (*db).tables[idx].next_pk = 1
+  (*db).tables[idx].row_count = 0
+  (*db).tables[idx].idx_page = 0
+  (*db).tables[idx].idx_col = 0 as str
+  (*db).table_count = idx + 1
+  if tezzdb.storage._db_save_tables(db) != 0 || tezzdb.storage._db_write_header(db) != 0: ret tezzdb.storage._db_error(db)
+  ret _autocommit(db)
+
+fn table_drop(db:*TezzDb, name:str) -> int:
+  if db == 0 || name == 0 || (*db).write_failed != 0: ret tezzdb.state._get_TEZZDB_ERR()
+  idx:int = _find_table(db, name)
+  if idx < 0: ret tezzdb.state._get_TEZZDB_NOT_FOUND()
+  if (*db).tables[idx].name != 0:
+    free((*db).tables[idx].name)
+  if (*db).tables[idx].idx_col != 0:
+    free((*db).tables[idx].idx_col)
+  // Shift remaining
+  i:int = idx
+  while i + 1 < (*db).table_count:
+    (*db).tables[i] = (*db).tables[i + 1]
+    i = i + 1
+  (*db).table_count = (*db).table_count - 1
+  if tezzdb.storage._db_save_tables(db) != 0: ret tezzdb.storage._db_error(db)
+  ret _autocommit(db)
+
+fn table_exists(db:*TezzDb, name:str) -> int:
+  ret _find_table(db, name) >= 0
+
+fn table_row_count(db:*TezzDb, name:str) -> int:
+  if db == 0 || name == 0: ret 0 - 1
+  idx:int = _find_table(db, name)
+  if idx < 0: ret tezzdb.state._get_TEZZDB_NOT_FOUND()
+  ret (*db).tables[idx].row_count
+
+fn _autocommit(db:*TezzDb) -> int:
+  if db == 0 || (*db).write_failed != 0: ret tezzdb.state._get_TEZZDB_ERR()
+  if (*db).in_tx != 0: ret tezzdb.state._get_TEZZDB_OK()
+  ret _db_commit_pages(db)
+
+// ─────────────────────────────────────────────────────────────
+// Transactions
+// ─────────────────────────────────────────────────────────────
+
+// Logical transaction commit with a sealed redo batch. fflush orders the
+// writes; this API does not promise power-loss durability or multi-writer isolation.
+fn _db_commit_pages(db:*TezzDb) -> int:
+  if db == 0 || (*db).write_failed != 0: ret 0 - 1
+  if tezzdb.storage._cache_reserve(db, 2) != 0: ret 0 - 1
+  if tezzdb.storage._db_write_header(db) != 0 || tezzdb.storage._db_save_tables(db) != 0: ret tezzdb.storage._db_error(db)
+  if tezzdb.storage._wal_clear(db) != 0 || tezzdb.storage._wal_open(db) != 0: ret tezzdb.storage._db_error(db)
+  i:int = 0
+  while i < (*db).cache_count:
+    if (*db).cache[i].dirty != 0:
+      if tezzdb.storage._wal_log_page(db, &(*db).cache[i]) != 0: ret tezzdb.storage._db_error(db)
+    i = i + 1
+  if tezzdb.storage._wal_seal(db) != 0: ret tezzdb.storage._db_error(db)
+  previous:int = (*db).in_tx
+  (*db).in_tx = 2
+  if tezzdb.storage._db_flush_all(db) != 0: ret tezzdb.storage._db_error(db)
+  if tezzdb.storage._wal_clear(db) != 0 || tezzdb.storage._wal_open(db) != 0: ret tezzdb.storage._db_error(db)
+  (*db).in_tx = previous
+  ret 0
+
+fn begin(db:*TezzDb) -> int:
+  if db == 0 || (*db).write_failed != 0: ret tezzdb.state._get_TEZZDB_ERR()
+  if (*db).in_tx != 0: ret tezzdb.state._get_TEZZDB_LOCKED()
+  if _autocommit(db) != 0: ret tezzdb.state._get_TEZZDB_ERR()
+  (*db).in_tx = 1
+  (*db).tx_start_page = (*db).page_count
+  ret 0
+
+fn commit(db:*TezzDb) -> int:
+  if db == 0 || (*db).in_tx != 1 || (*db).write_failed != 0: ret tezzdb.state._get_TEZZDB_ERR()
+  if _db_commit_pages(db) != 0: ret tezzdb.state._get_TEZZDB_ERR()
+  (*db).in_tx = 0
+  ret 0
+
+fn rollback(db:*TezzDb) -> int:
+  if db == 0 || (*db).in_tx != 1 || (*db).write_failed != 0: ret tezzdb.state._get_TEZZDB_ERR()
+  i:int = 0
+  while i < (*db).cache_count:
+    free((*db).cache[i].data)
+    i = i + 1
+  (*db).cache_count = 0
+  i = 0
+  while i < (*db).table_count:
+    free((*db).tables[i].name)
+    free((*db).tables[i].idx_col)
+    (*db).tables[i].name = 0 as str
+    (*db).tables[i].idx_col = 0 as str
+    i = i + 1
+  (*db).table_count = 0
+  (*db).page_count = (*db).tx_start_page
+  if tezzdb.storage._db_read_header(db) != 0 || tezzdb.storage._db_load_tables(db) != 0: ret tezzdb.storage._db_error(db)
+  if tezzdb.storage._wal_clear(db) != 0 || tezzdb.storage._wal_open(db) != 0: ret tezzdb.storage._db_error(db)
+  (*db).in_tx = 0
+  ret 0
+
+// ─────────────────────────────────────────────────────────────
+// CRUD: B+ Tree Insert / Get / Update / Delete & Splits
+// ─────────────────────────────────────────────────────────────
+
+fn _internal_count(pg:*DbPage) -> int:
+  if pg == 0 as *DbPage: ret 0
+  ret tezzdb.storage._db_r32_le((*pg).data, 12)
+
+fn _internal_find_insert_pos(pg:*DbPage, key:int) -> int:
+  if pg == 0 as *DbPage: ret 0
+  count:int = _internal_count(pg)
+  lo:int = 0
+  hi:int = count - 1
+  while lo <= hi:
+    mid:int = (lo + hi) / 2
+    mk:int = tezzdb.storage._db_r64_le((*pg).data, 20 + mid * 12)
+    if mk < key: lo = mid + 1
+    else: hi = mid - 1
+  ret lo
+
+fn _internal_insert_at(pg:*DbPage, pos:int, key:int, child_pid:int) -> int:
+  if pg == 0 as *DbPage: ret 0 - 1
+  d:*char = (*pg).data
+  count:int = _internal_count(pg)
+  if pos < 0 || pos > count || count >= 681 || child_pid < 2: ret 0 - 1
+  ins_off:int = 20 + pos * 12
+  // Move entries after pos
+  used:int = 20 + count * 12
+  move_bytes:int = used - ins_off
+  if move_bytes > 0:
+    unsafe:
+      src:*char = d + ins_off
+      dst:*char = d + ins_off + 12
+      i:int = move_bytes - 1
+      while i >= 0:
+        dst[i] = src[i]
+        i = i - 1
+  tezzdb.storage._db_w64_le(d, ins_off, key)
+  tezzdb.storage._db_w32_le(d, ins_off + 8, child_pid)
+  tezzdb.storage._db_w32_le(d, 12, count + 1)
+  (*pg).dirty = 1
+  ret 0
+
+fn _btree_find_leaf(db:*TezzDb, root_pid:int, pk:int, path:*int, path_len:*int) -> *DbPage:
+  cur_pid:int = root_pid
+  plen:int = 0
+  while cur_pid != 0:
+    if plen >= 32 || cur_pid < 2 || cur_pid >= (*db).page_count: ret tezzdb.storage._db_null_page()
+    unsafe:
+      path[plen] = cur_pid
+    plen = plen + 1
+    pg:*DbPage = tezzdb.storage._page_load(db, cur_pid)
+    if pg == 0 as *DbPage: ret tezzdb.storage._db_null_page()
+    ptype:int = tezzdb.storage._db_r32_le((*pg).data, 0)
+    if ptype == tezzdb.state._get_DB_PAGE_BTREE_LEAF():
+      *path_len = plen
+      ret pg
+    else if ptype == tezzdb.state._get_DB_PAGE_BTREE_INTERNAL():
+      count:int = _internal_count(pg)
+      child_pid:int = tezzdb.storage._db_r32_le((*pg).data, 16)
+      i:int = 0
+      while i < count:
+        off:int = 20 + i * 12
+        k:int = tezzdb.storage._db_r64_le((*pg).data, off)
+        if pk >= k:
+          child_pid = tezzdb.storage._db_r32_le((*pg).data, off + 8)
+          i = i + 1
+        else:
+          break
+      cur_pid = child_pid
+    else:
+      ret tezzdb.storage._db_null_page()
+  ret tezzdb.storage._db_null_page()
+
+fn _btree_insert_internal(db:*TezzDb, parent_pid:int, key:int, child_pid:int, path:*int, path_len:int) -> int:
+  pg:*DbPage = tezzdb.storage._page_load(db, parent_pid)
+  if pg == 0 as *DbPage: ret 0 - 1
+  count:int = _internal_count(pg)
+  if count < 300:
+    pos:int = _internal_find_insert_pos(pg, key)
+    ret _internal_insert_at(pg, pos, key, child_pid)
+
+  // Internal split
+  new_pg:*DbPage = tezzdb.storage._page_new(db, tezzdb.state._get_DB_PAGE_BTREE_INTERNAL())
+  if new_pg == 0 as *DbPage: ret 0 - 1
+  mid:int = count / 2
+  promo_key:int = tezzdb.storage._db_r64_le((*pg).data, 20 + mid * 12)
+  first_child:int = tezzdb.storage._db_r32_le((*pg).data, 20 + mid * 12 + 8)
+  tezzdb.storage._db_w32_le((*new_pg).data, 16, first_child)
+
+  move_cnt:int = count - 1 - mid
+  if move_cnt > 0:
+    unsafe:
+      memcpy((*new_pg).data + 20, (*pg).data + 20 + (mid + 1) * 12, move_cnt * 12)
+  tezzdb.storage._db_w32_le((*new_pg).data, 12, move_cnt)
+  tezzdb.storage._db_w32_le((*pg).data, 12, mid)
+
+  if key < promo_key:
+    pos:int = _internal_find_insert_pos(pg, key)
+    _internal_insert_at(pg, pos, key, child_pid)
+  else:
+    pos:int = _internal_find_insert_pos(new_pg, key)
+    _internal_insert_at(new_pg, pos, key, child_pid)
+
+  (*pg).dirty = 1
+  (*new_pg).dirty = 1
+
+  if path_len == 0:
+    // New root internal page
+    new_root:*DbPage = tezzdb.storage._page_new(db, tezzdb.state._get_DB_PAGE_BTREE_INTERNAL())
+    if new_root == 0 as *DbPage: ret 0 - 1
+    tezzdb.storage._db_w32_le((*new_root).data, 16, parent_pid)
+    _internal_insert_at(new_root, 0, promo_key, (*new_pg).page_id)
+    i:int = 0
+    while i < (*db).table_count:
+      if (*db).tables[i].root_page == parent_pid:
+        (*db).tables[i].root_page = (*new_root).page_id
+        break
+      if (*db).tables[i].idx_page == parent_pid:
+        (*db).tables[i].idx_page = (*new_root).page_id
+        break
+      i = i + 1
+    tezzdb.storage._db_save_tables(db)
+  else:
+    ret _btree_insert_internal(db, path[path_len - 1], promo_key, (*new_pg).page_id, path, path_len - 1)
+  ret 0
+
+fn _btree_insert_leaf_raw(db:*TezzDb, tidx:int, pk:int, data:str, dlen:int, path:*int, path_len:int, is_sec:int) -> int:
+  payload:*char = data as *char
+  overflow_id:[char;4]
+  if dlen > tezzdb.state._get_DB_MAX_INLINE_VAL():
+    first:int = tezzdb.overflow._overflow_store(db, payload, dlen)
+    if first == 0: ret 0 - 1
+    tezzdb.storage._db_w32_le(&overflow_id[0], 0, first)
+    payload = &overflow_id[0]
+  pg:*DbPage = tezzdb.storage._page_load(db, path[path_len - 1])
+  if pg == 0 as *DbPage: ret 0 - 1
+  if tezzdb.storage._leaf_can_insert(pg, dlen) != 0:
+    pos:int = tezzdb.storage._leaf_find_insert_pos(pg, pk)
+    ret tezzdb.storage._leaf_insert_at(pg, pos, pk, payload, dlen)
+
+  // Split leaf page!
+  new_pg:*DbPage = tezzdb.storage._page_new(db, tezzdb.state._get_DB_PAGE_BTREE_LEAF())
+  if new_pg == 0 as *DbPage: ret 0 - 1
+  count:int = tezzdb.storage._leaf_count(pg)
+  mid:int = 1
+  used:int = tezzdb.storage._leaf_used_bytes(pg)
+  while mid + 1 < count && tezzdb.storage._leaf_entry_offset(pg, mid) < 16 + (used - 16) / 2:
+    mid = mid + 1
+
+  // Sibling chain
+  next_pid:int = tezzdb.storage._db_r32_le((*pg).data, 8)
+  tezzdb.storage._db_w32_le((*new_pg).data, 8, next_pid)
+  tezzdb.storage._db_w32_le((*pg).data, 8, (*new_pg).page_id)
+
+  mid_off:int = tezzdb.storage._leaf_entry_offset(pg, mid)
+  end_off:int = tezzdb.storage._leaf_entry_offset(pg, count)
+  move_bytes:int = end_off - mid_off
+  if move_bytes > 0:
+    unsafe:
+      memcpy((*new_pg).data + 16, (*pg).data + mid_off, move_bytes)
+  tezzdb.storage._db_w32_le((*new_pg).data, 12, count - mid)
+  tezzdb.storage._db_w32_le((*pg).data, 12, mid)
+
+  split_key:int = tezzdb.storage._db_r64_le((*new_pg).data, 16)
+  if pk < split_key:
+    pos:int = tezzdb.storage._leaf_find_insert_pos(pg, pk)
+    tezzdb.storage._leaf_insert_at(pg, pos, pk, payload, dlen)
+  else:
+    pos:int = tezzdb.storage._leaf_find_insert_pos(new_pg, pk)
+    tezzdb.storage._leaf_insert_at(new_pg, pos, pk, payload, dlen)
+
+  (*pg).dirty = 1
+  (*new_pg).dirty = 1
+
+  if path_len <= 1:
+    // Split root leaf!
+    new_root:*DbPage = tezzdb.storage._page_new(db, tezzdb.state._get_DB_PAGE_BTREE_INTERNAL())
+    if new_root == 0 as *DbPage: ret 0 - 1
+    tezzdb.storage._db_w32_le((*new_root).data, 16, (*pg).page_id)
+    _internal_insert_at(new_root, 0, split_key, (*new_pg).page_id)
+    if is_sec != 0:
+      (*db).tables[tidx].idx_page = (*new_root).page_id
+    else:
+      (*db).tables[tidx].root_page = (*new_root).page_id
+    tezzdb.storage._db_save_tables(db)
+  else:
+    ret _btree_insert_internal(db, path[path_len - 2], split_key, (*new_pg).page_id, path, path_len - 2)
+  ret 0
+
+fn insert(db:*TezzDb, table:str, data:str) -> int:
+  if db == 0 || table == 0 || data == 0: ret tezzdb.state._get_TEZZDB_ERR()
+  tidx:int = _find_table(db, table)
+  if tidx < 0: ret tezzdb.state._get_TEZZDB_NOT_FOUND()
+  pk:int = (*db).tables[tidx].next_pk
+  if pk <= 0: ret tezzdb.state._get_TEZZDB_FULL()
+  r:int = insert_pk(db, table, pk, data)
+  if r < 0: ret r
+  ret pk
+
+fn insert_pk(db:*TezzDb, table:str, pk:int, data:str) -> int:
+  if db == 0 || table == 0 || data == 0 || (*db).write_failed != 0: ret tezzdb.state._get_TEZZDB_ERR()
+  tidx:int = _find_table(db, table)
+  if tidx < 0: ret tezzdb.state._get_TEZZDB_NOT_FOUND()
+  
+  dlen:int = len(data)
+  if dlen > 2147483647 || (*db).tables[tidx].row_count >= 2147483647: ret tezzdb.state._get_TEZZDB_FULL()
+  reserve:int = 136 + (dlen + 8175) / 8176
+  if tezzdb.storage._cache_reserve(db, reserve) != 0: ret tezzdb.state._get_TEZZDB_ERR()
+  // Search keys directly so a value-allocation failure cannot hide duplicates.
+  root_pid:int = (*db).tables[tidx].root_page
+  path:[int;32]
+  plen:int = 0
+  pg:*DbPage = _btree_find_leaf(db, root_pid, pk, &path[0], &plen)
+  if pg == 0: ret tezzdb.state._get_TEZZDB_ERR()
+  if tezzdb.storage._leaf_find_key(pg, pk) >= 0: ret tezzdb.state._get_TEZZDB_DUPLICATE()
+  
+  r:int = _btree_insert_leaf_raw(db, tidx, pk, data, dlen, &path[0], plen, 0)
+  if r != 0: ret tezzdb.state._get_TEZZDB_ERR()
+  
+  (*db).tables[tidx].row_count = (*db).tables[tidx].row_count + 1
+  if pk >= (*db).tables[tidx].next_pk:
+    if pk == 9223372036854775807: (*db).tables[tidx].next_pk = 0
+    else: (*db).tables[tidx].next_pk = pk + 1
+    
+  // Index update if secondary index column present
+  if (*db).tables[tidx].idx_page > 0:
+    val_str:str = tezzdb.queries.row_get_str(data, (*db).tables[tidx].idx_col)
+    if val_str != 0:
+      h:int = tezzdb.storage._db_crc32_str(val_str)
+      idx_key:int = (h << 32) | (pk & 4294967295)
+      idx_path:[int;32]
+      idx_plen:int = 0
+      idx_pg:*DbPage = _btree_find_leaf(db, (*db).tables[tidx].idx_page, idx_key, &idx_path[0], &idx_plen)
+      if idx_pg != 0 as *DbPage:
+        _btree_insert_leaf_raw(db, tidx, idx_key, "", 0, &idx_path[0], idx_plen, 1)
+      free(val_str)
+      
+  if tezzdb.storage._db_save_tables(db) != 0: ret tezzdb.storage._db_error(db)
+  if _autocommit(db) != 0: ret tezzdb.state._get_TEZZDB_ERR()
+  ret pk
+
+fn get(db:*TezzDb, table:str, pk:int) -> str:
+  if db == 0 || table == 0: ret 0 as str
+  index:int = _find_table(db, table)
+  if index < 0: ret 0 as str
+  path:[int;32]
+  length:int = 0
+  page:*DbPage = _btree_find_leaf(db, (*db).tables[index].root_page, pk, &path[0], &length)
+  if page == 0: ret 0 as str
+  position:int = tezzdb.storage._leaf_find_key(page, pk)
+  if position < 0: ret 0 as str
+  ret tezzdb.overflow._leaf_value(db, page, position)
+
+fn delete(db:*TezzDb, table:str, pk:int) -> int:
+  if db == 0 || table == 0 || (*db).write_failed != 0: ret tezzdb.state._get_TEZZDB_ERR()
+  tidx:int = _find_table(db, table)
+  if tidx < 0: ret tezzdb.state._get_TEZZDB_NOT_FOUND()
+  
+  if tezzdb.storage._cache_reserve(db, 136) != 0: ret tezzdb.state._get_TEZZDB_ERR()
+  // Secondary index cleanup
+  if (*db).tables[tidx].idx_page > 0:
+    row_data:str = get(db, table, pk)
+    if row_data != 0:
+      val_str:str = tezzdb.queries.row_get_str(row_data, (*db).tables[tidx].idx_col)
+      if val_str != 0:
+        h:int = tezzdb.storage._db_crc32_str(val_str)
+        idx_key:int = (h << 32) | (pk & 4294967295)
+        idx_path:[int;32]
+        idx_plen:int = 0
+        idx_pg:*DbPage = _btree_find_leaf(db, (*db).tables[tidx].idx_page, idx_key, &idx_path[0], &idx_plen)
+        if idx_pg != 0 as *DbPage:
+          idx:int = tezzdb.storage._leaf_find_key(idx_pg, idx_key)
+          if idx >= 0:
+            tezzdb.storage._leaf_delete_at(idx_pg, idx)
+        free(val_str)
+      free(row_data)
+
+  root_pid:int = (*db).tables[tidx].root_page
+  path:[int;32]
+  plen:int = 0
+  pg:*DbPage = _btree_find_leaf(db, root_pid, pk, &path[0], &plen)
+  if pg == 0 as *DbPage: ret tezzdb.state._get_TEZZDB_NOT_FOUND()
+  idx:int = tezzdb.storage._leaf_find_key(pg, pk)
+  if idx >= 0:
+    tezzdb.storage._leaf_delete_at(pg, idx)
+    (*db).tables[tidx].row_count = (*db).tables[tidx].row_count - 1
+    if tezzdb.storage._db_save_tables(db) != 0: ret tezzdb.storage._db_error(db)
+    ret _autocommit(db)
+  ret tezzdb.state._get_TEZZDB_NOT_FOUND()
+
+fn update(db:*TezzDb, table:str, pk:int, new_data:str) -> int:
+  if db == 0 || table == 0 || new_data == 0 || (*db).write_failed != 0: ret tezzdb.state._get_TEZZDB_ERR()
+  if len(new_data) > 2147483647: ret tezzdb.state._get_TEZZDB_FULL()
+  own_transaction:int = 0
+  if (*db).in_tx == 0:
+    if begin(db) != 0: ret tezzdb.state._get_TEZZDB_ERR()
+    own_transaction = 1
+  result:int = delete(db, table, pk)
+  if result == 0: result = insert_pk(db, table, pk, new_data)
+  if result < 0:
+    if own_transaction != 0: rollback(db)
+    ret result
+  if own_transaction != 0:
+    if commit(db) != 0: ret tezzdb.state._get_TEZZDB_ERR()
+  ret result
+
+fn table_index_create(db:*TezzDb, table:str, col:str) -> int:
+  if db == 0 || table == 0 || col == 0: ret tezzdb.state._get_TEZZDB_ERR()
+  tidx:int = _find_table(db, table)
+  if tidx < 0: ret tezzdb.state._get_TEZZDB_NOT_FOUND()
+  if (*db).tables[tidx].idx_page > 0: ret tezzdb.state._get_TEZZDB_DUPLICATE()
+  
+  idx_root:*DbPage = tezzdb.storage._page_new(db, tezzdb.state._get_DB_PAGE_BTREE_LEAF())
+  if idx_root == 0 as *DbPage: ret tezzdb.state._get_TEZZDB_ERR()
+  
+  (*db).tables[tidx].idx_page = (*idx_root).page_id
+  (*db).tables[tidx].idx_col = tezzdb.storage._db_strdup(col)
+  tezzdb.storage._db_save_tables(db)
+  
+  // Populate index with existing rows
+  cur:*DbCursor = tezzdb.queries.cursor_open(db, table)
+  if cur != 0 as *DbCursor:
+    while 1:
+      row:*DbRow = tezzdb.queries.cursor_next(cur)
+      if row == 0 as *DbRow: break
+      val_str:str = tezzdb.queries.row_get_str((*row).data, col)
+      if val_str != 0:
+        h:int = tezzdb.storage._db_crc32_str(val_str)
+        idx_key:int = (h << 32) | ((*row).pk & 4294967295)
+        idx_path:[int;32]
+        idx_plen:int = 0
+        idx_pg:*DbPage = _btree_find_leaf(db, (*idx_root).page_id, idx_key, &idx_path[0], &idx_plen)
+        if idx_pg != 0 as *DbPage:
+          _btree_insert_leaf_raw(db, tidx, idx_key, "", 0, &idx_path[0], idx_plen, 1)
+        free(val_str)
+      tezzdb.queries.row_free(row)
+    tezzdb.queries.cursor_close(cur)
+    
+  tezzdb.storage._db_save_tables(db)
+  _autocommit(db)
+  ret tezzdb.state._get_TEZZDB_OK()
+
+// ─────────────────────────────────────────────────────────────
+// Cursor / full-table scan
+// ─────────────────────────────────────────────────────────────

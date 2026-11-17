@@ -1,0 +1,302 @@
+// json implementation: encode.
+import "runtime"
+import "json.state"
+
+fn _json_ser_int(n:int, buf:*char, pos:int, cap:*int) -> int:
+  neg:int = 0
+  v:int = n
+  if v < 0:
+    neg = 1
+    v = 0 - v
+  digits:[char;24]
+  di:int = 0
+  if v == 0:
+    digits[0] = 48 as char
+    di = 1
+  else:
+    while v > 0:
+      digits[di] = (48 + v % 10) as char
+      di = di + 1
+      v = v / 10
+  total:int = di
+  if neg != 0:
+    total = total + 1
+  if neg != 0:
+    unsafe: buf[pos] = 45 as char
+    pos = pos + 1
+  j:int = di - 1
+  while j >= 0:
+    unsafe: buf[pos] = digits[j]
+    pos = pos + 1
+    j = j - 1
+  ret pos
+
+// Internal: write float to a dynamic buffer (6 decimal places)
+
+fn _json_ser_float(f:float, buf:*char, pos:int) -> int:
+  neg:int = 0
+  v:float = f
+  if v < 0.0:
+    neg = 1
+    v = 0.0 - v
+  whole:int = v as int
+  frac:float = v - (whole as float)
+  frac6:int  = (frac * 1000000.0) as int
+  dummy_cap:int = 0
+  if neg != 0:
+    unsafe: buf[pos] = 45 as char
+    pos = pos + 1
+  pos = _json_ser_int(whole, buf, pos, &dummy_cap)
+  unsafe: buf[pos] = 46 as char   // '.'
+  pos = pos + 1
+  // 6 frac digits
+  frac_digits:[char;8]
+  fi:int = 0
+  fv:int = frac6
+  if fv == 0:
+    i2:int = 0
+    while i2 < 6:
+      frac_digits[i2] = 48 as char
+      i2 = i2 + 1
+    fi = 6
+  else:
+    while fv > 0:
+      frac_digits[fi] = (48 + fv % 10) as char
+      fi = fi + 1
+      fv = fv / 10
+    while fi < 6:
+      frac_digits[fi] = 48 as char
+      fi = fi + 1
+    // reverse
+    lf:int = 0
+    rf:int = fi - 1
+    while lf < rf:
+      tmp:char = frac_digits[lf]
+      frac_digits[lf] = frac_digits[rf]
+      frac_digits[rf] = tmp
+      lf = lf + 1
+      rf = rf - 1
+  // trim trailing zeros
+  end:int = fi
+  while end > 1 && frac_digits[end - 1] as int == 48:
+    end = end - 1
+  i3:int = 0
+  while i3 < end:
+    unsafe: buf[pos] = frac_digits[i3]
+    pos = pos + 1
+    i3 = i3 + 1
+  ret pos
+
+// Forward decl not possible — stringify uses a depth-limited inline recursion
+// via an explicit stack (iterative approach matches the parser).
+
+fn _ser_grow(ser:*_JsonSer, need:int) -> int:
+  if (*ser).pos + need < (*ser).cap:
+    ret 0
+  ncap:int = (*ser).cap * 2
+  if ncap < (*ser).pos + need + 64:
+    ncap = (*ser).pos + need + 256
+  nb:*char = (*char)malloc(ncap)
+  if nb == 0:
+    ret 0 - 1
+  runtime.memcpy(nb, (*ser).buf, (*ser).pos)
+  free((*ser).buf)
+  (*ser).buf = nb
+  (*ser).cap = ncap
+  ret 0
+
+fn _ser_char(ser:*_JsonSer, c:char) -> int:
+  if _ser_grow(ser, 2) != 0:
+    ret 0 - 1
+  unsafe: (*ser).buf[(*ser).pos] = c
+  (*ser).pos = (*ser).pos + 1
+  ret 0
+
+fn _ser_str(ser:*_JsonSer, s:str) -> int:
+  if s == 0:
+    ret 0
+  sl:int = len(s)
+  if _ser_grow(ser, sl + 2) != 0:
+    ret 0 - 1
+  i:int = 0
+  while i < sl:
+    unsafe: (*ser).buf[(*ser).pos] = s[i]
+    (*ser).pos = (*ser).pos + 1
+    i = i + 1
+  ret 0
+
+fn _ser_quoted_str(ser:*_JsonSer, s:str) -> int:
+  _ser_char(ser, 34 as char)   // '"'
+  if s != 0:
+    sl:int = len(s)
+    i:int = 0
+    while i < sl:
+      c:int = s[i] as int
+      if c == 34:
+        _ser_char(ser, 92 as char)
+        _ser_char(ser, 34 as char)
+      else if c == 92:
+        _ser_char(ser, 92 as char)
+        _ser_char(ser, 92 as char)
+      else if c == 10:
+        _ser_char(ser, 92 as char)
+        _ser_char(ser, 110 as char)
+      else if c == 9:
+        _ser_char(ser, 92 as char)
+        _ser_char(ser, 116 as char)
+      else if c == 13:
+        _ser_char(ser, 92 as char)
+        _ser_char(ser, 114 as char)
+      else:
+        _ser_char(ser, c as char)
+      i = i + 1
+  _ser_char(ser, 34 as char)   // '"'
+  ret 0
+
+// Iterative serializer using an explicit stack
+
+fn json_stringify(root:*JsonVal) -> str:
+  if root == 0:
+    ret "null"
+  ser:*_JsonSer = (*_JsonSer)malloc(sizeof(_JsonSer))
+  if ser == 0:
+    ret 0 as str
+  init_buf:*char = (*char)malloc(512)
+  if init_buf == 0:
+    free(ser)
+    ret 0 as str
+  (*ser).buf = init_buf
+  (*ser).pos = 0
+  (*ser).cap = 512
+
+  stk:*_SerFrame = (*_SerFrame)malloc((*json.state._state__SER_STACK_MAX()) * sizeof(_SerFrame))
+  if stk == 0:
+    free((*ser).buf)
+    free(ser)
+    ret 0 as str
+  // init stack
+  si:int = 0
+  while si < (*json.state._state__SER_STACK_MAX()):
+    f:*_SerFrame = stk + si
+    (*f).val          = 0 as *JsonVal
+    (*f).idx          = 0
+    (*f).key_pos      = 0
+    (*f).emitted_open = 0
+    si = si + 1
+
+  depth:int = 0
+  // push root
+  sf:*_SerFrame = stk + 0
+  (*sf).val = root
+  (*sf).idx = 0
+  (*sf).key_pos = 0
+  (*sf).emitted_open = 0
+  depth = 1
+
+  while depth > 0:
+    top:*_SerFrame = stk + (depth - 1)
+    v:*JsonVal = (*top).val
+    kind:int = (*v).kind
+
+    if kind == (*json.state._state_JSON_ARRAY()) || kind == (*json.state._state_JSON_OBJECT()):
+      if (*top).emitted_open == 0:
+        (*top).emitted_open = 1
+        if kind == (*json.state._state_JSON_ARRAY()):
+          _ser_char(ser, 91 as char)   // '['
+        else:
+          _ser_char(ser, 123 as char)  // '{'
+      idx:int = (*top).idx
+      cnt:int = (*v).count
+      if idx >= cnt:
+        // Close
+        if kind == (*json.state._state_JSON_ARRAY()):
+          _ser_char(ser, 93 as char)   // ']'
+        else:
+          _ser_char(ser, 125 as char)  // '}'
+        depth = depth - 1
+        // The parent emits its separator before the next element.
+        continue
+      // Emit comma before element (except first)
+      if idx > 0:
+        _ser_char(ser, 44 as char)
+      // For objects: emit key
+      if kind == (*json.state._state_JSON_OBJECT()):
+        ks:str = (*v).keys
+        kp:int = (*top).key_pos
+        key_start:int = kp
+        while ks[kp] != 0 as char && ks[kp] as int != 10:
+          kp = kp + 1
+        // emit key
+        key_len:int = kp - key_start
+        _ser_char(ser, 34 as char)
+        j:int = 0
+        while j < key_len:
+          kc:int = ks[key_start + j] as int
+          if kc == 34:
+            _ser_char(ser, 92 as char)
+            _ser_char(ser, 34 as char)
+          else:
+            _ser_char(ser, kc as char)
+          j = j + 1
+        _ser_char(ser, 34 as char)
+        _ser_char(ser, 58 as char)   // ':'
+        (*top).key_pos = kp + 1
+      // Push child
+      child:*JsonVal = (*v).children + idx
+      (*top).idx = idx + 1
+      child_kind:int = (*child).kind
+      if child_kind == (*json.state._state_JSON_ARRAY()) || child_kind == (*json.state._state_JSON_OBJECT()):
+        if depth < (*json.state._state__SER_STACK_MAX()):
+          nf:*_SerFrame = stk + depth
+          (*nf).val          = child
+          (*nf).idx          = 0
+          (*nf).key_pos      = 0
+          (*nf).emitted_open = 0
+          depth = depth + 1
+        continue
+      // Scalar child
+      if child_kind == (*json.state._state_JSON_NULL()):
+        _ser_str(ser, "null")
+      else if child_kind == (*json.state._state_JSON_BOOL()):
+        if (*child).bval != 0:
+          _ser_str(ser, "true")
+        else:
+          _ser_str(ser, "false")
+      else if child_kind == (*json.state._state_JSON_INT()):
+        dummy:int = 0
+        (*ser).pos = _json_ser_int((*child).ival, (*ser).buf, (*ser).pos, &dummy)
+      else if child_kind == (*json.state._state_JSON_FLOAT()):
+        (*ser).pos = _json_ser_float((*child).fval, (*ser).buf, (*ser).pos)
+      else if child_kind == (*json.state._state_JSON_STRING()):
+        _ser_quoted_str(ser, (*child).sval)
+
+    else:
+      // Scalar root
+      if kind == (*json.state._state_JSON_NULL()):
+        _ser_str(ser, "null")
+      else if kind == (*json.state._state_JSON_BOOL()):
+        if (*v).bval != 0:
+          _ser_str(ser, "true")
+        else:
+          _ser_str(ser, "false")
+      else if kind == (*json.state._state_JSON_INT()):
+        dummy2:int = 0
+        (*ser).pos = _json_ser_int((*v).ival, (*ser).buf, (*ser).pos, &dummy2)
+      else if kind == (*json.state._state_JSON_FLOAT()):
+        (*ser).pos = _json_ser_float((*v).fval, (*ser).buf, (*ser).pos)
+      else if kind == (*json.state._state_JSON_STRING()):
+        _ser_quoted_str(ser, (*v).sval)
+      depth = depth - 1
+
+  // null-terminate
+  _ser_grow(ser, 2)
+  unsafe: (*ser).buf[(*ser).pos] = 0 as char
+
+  result:str = (*ser).buf as str
+  free(stk)
+  free(ser)
+  ret result
+
+// ---------------------------------------------------------------------------
+// Builder API — construct JSON programmatically
+// ---------------------------------------------------------------------------

@@ -1,0 +1,185 @@
+// Parse the supported SQL subset completely before executing any mutation.
+import "tezzdbql.state"
+import "tezzdbql.parser"
+
+fn statement_new() -> *TzQlStatement:
+  statement:*TzQlStatement = (*TzQlStatement)malloc(sizeof(TzQlStatement))
+  if statement == 0: ret 0 as *TzQlStatement
+  statement[0].kind = 0
+  statement[0].table = 0 as str
+  statement[0].count = 0
+  statement[0].has_where = 0
+  statement[0].where_column = 0 as str
+  statement[0].where_value = 0 as str
+  statement[0].limit = -1
+  statement[0].parameter_index = 0
+  i:int = 0
+  while i < 32:
+    statement[0].columns[i] = 0 as str
+    statement[0].values[i] = 0 as str
+    i = i + 1
+  ret statement
+
+fn statement_free(statement:*TzQlStatement) -> int:
+  if statement == 0: ret 0
+  free(statement[0].table)
+  free(statement[0].where_column)
+  free(statement[0].where_value)
+  i:int = 0
+  while i < 32:
+    free(statement[0].columns[i])
+    free(statement[0].values[i])
+    i = i + 1
+  free(statement)
+  ret 0
+
+fn word(query:str, position:*int) -> str:
+  position[0] = tezzdbql.parser._ql_skip_spaces(query, position[0])
+  result:str = 0 as str
+  ending:int = position[0]
+  if tezzdbql.parser._ql_read_word(query, position[0], &result, &ending) == 0:
+    ret 0 as str
+  position[0] = ending
+  ret result
+
+fn keyword(query:str, position:*int, expected:str) -> int:
+  found:str = word(query, position)
+  matched:int = found != 0 && strcmp(found, expected) == 0
+  free(found)
+  ret matched
+
+fn is_keyword(query:str, position:int, expected:str) -> int:
+  ret keyword(query, &position, expected)
+
+fn punctuation(query:str, position:*int, expected:int) -> int:
+  position[0] = tezzdbql.parser._ql_skip_spaces(query, position[0])
+  if position[0] >= len(query) || (query[position[0]] as int) != expected: ret 0
+  position[0] = position[0] + 1
+  ret 1
+
+fn identifier(query:str, position:*int) -> str:
+  result:str = word(query, position)
+  if result == 0: ret 0 as str
+  first:int = result[0] as int
+  if first >= 48 && first <= 57:
+    free(result)
+    ret 0 as str
+  ret result
+
+fn value(statement:*TzQlStatement, query:str, position:*int, params:*str, count:int) -> str:
+  result:str = 0 as str
+  ending:int = position[0]
+  if tezzdbql.parser._ql_parse_where_val(query, position[0], params, count, &statement[0].parameter_index, &result, &ending) == 0:
+    ret 0 as str
+  position[0] = ending
+  ret result
+
+fn finish(query:str, position:int) -> int:
+  position = tezzdbql.parser._ql_skip_spaces(query, position)
+  if position < len(query) && query[position] == ';':
+    position = tezzdbql.parser._ql_skip_spaces(query, position + 1)
+  ret position == len(query)
+
+fn unique_column(statement:*TzQlStatement, column:str) -> int:
+  i:int = 0
+  while i < statement[0].count:
+    if strcmp(statement[0].columns[i], column) == 0: ret 0
+    i = i + 1
+  ret 1
+
+fn tail(statement:*TzQlStatement, query:str, position:*int, params:*str, count:int, allow_limit:int) -> int:
+  if is_keyword(query, position[0], "where") != 0:
+    if keyword(query, position, "where") == 0: ret 0
+    statement[0].has_where = 1
+    statement[0].where_column = identifier(query, position)
+    if statement[0].where_column == 0: ret 0
+    if punctuation(query, position, 61) == 0: ret 0
+    statement[0].where_value = value(statement, query, position, params, count)
+    if statement[0].where_value == 0: ret 0
+  if allow_limit != 0 && is_keyword(query, position[0], "limit") != 0:
+    if keyword(query, position, "limit") == 0: ret 0
+    text:str = value(statement, query, position, params, count)
+    if text == 0: ret 0
+    ending:int = 0
+    number:int = -1
+    valid:int = tezzdbql.parser._ql_read_number(text, 0, &number, &ending)
+    valid = valid != 0 && ending == len(text) && number >= 0
+    free(text)
+    if valid == 0: ret 0
+    statement[0].limit = number
+  ret finish(query, position[0])
+
+fn parse(statement:*TzQlStatement, query:str, params:*str, count:int) -> int:
+  if statement == 0 || query == 0 || count < 0 || (count > 0 && params == 0): ret 0
+  position:int = 0
+  first:str = word(query, &position)
+  if first == 0: ret 0
+  if strcmp(first, "select") == 0: statement[0].kind = 1
+  else if strcmp(first, "insert") == 0: statement[0].kind = 2
+  else if strcmp(first, "update") == 0: statement[0].kind = 3
+  else if strcmp(first, "delete") == 0: statement[0].kind = 4
+  else if strcmp(first, "create") == 0: statement[0].kind = 5
+  else if strcmp(first, "drop") == 0: statement[0].kind = 6
+  free(first)
+  kind:int = statement[0].kind
+  if kind == 0: ret 0
+  if kind == 1:
+    if punctuation(query, &position, 42) == 0: ret 0
+    if keyword(query, &position, "from") == 0: ret 0
+  else if kind == 2:
+    if keyword(query, &position, "into") == 0: ret 0
+  else if kind == 4:
+    if keyword(query, &position, "from") == 0: ret 0
+  else if kind == 5 || kind == 6:
+    if keyword(query, &position, "table") == 0: ret 0
+  statement[0].table = identifier(query, &position)
+  if statement[0].table == 0: ret 0
+  if kind == 1 || kind == 4:
+    if tail(statement, query, &position, params, count, kind == 1) == 0: ret 0
+  else if kind == 2:
+    if punctuation(query, &position, 40) == 0: ret 0
+    while 1:
+      if statement[0].count >= 32: ret 0
+      column:str = identifier(query, &position)
+      if column == 0: ret 0
+      if unique_column(statement, column) == 0:
+        free(column)
+        ret 0
+      statement[0].columns[statement[0].count] = column
+      statement[0].count = statement[0].count + 1
+      if punctuation(query, &position, 41) != 0: break
+      if punctuation(query, &position, 44) == 0: ret 0
+    if keyword(query, &position, "values") == 0: ret 0
+    if punctuation(query, &position, 40) == 0: ret 0
+    index:int = 0
+    while 1:
+      if index >= statement[0].count: ret 0
+      item:str = value(statement, query, &position, params, count)
+      if item == 0: ret 0
+      statement[0].values[index] = item
+      index = index + 1
+      if punctuation(query, &position, 41) != 0: break
+      if punctuation(query, &position, 44) == 0: ret 0
+    if index != statement[0].count || finish(query, position) == 0: ret 0
+  else if kind == 3:
+    if keyword(query, &position, "set") == 0: ret 0
+    while 1:
+      if statement[0].count >= 32: ret 0
+      column:str = identifier(query, &position)
+      if column == 0: ret 0
+      if unique_column(statement, column) == 0:
+        free(column)
+        ret 0
+      statement[0].columns[statement[0].count] = column
+      if punctuation(query, &position, 61) == 0: ret 0
+      item:str = value(statement, query, &position, params, count)
+      if item == 0: ret 0
+      statement[0].values[statement[0].count] = item
+      statement[0].count = statement[0].count + 1
+      position = tezzdbql.parser._ql_skip_spaces(query, position)
+      if position >= len(query) || query[position] != ',': break
+      position = position + 1
+    if tail(statement, query, &position, params, count, 0) == 0: ret 0
+  else:
+    if finish(query, position) == 0: ret 0
+  ret statement[0].parameter_index == count

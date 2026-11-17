@@ -1,0 +1,686 @@
+// tensor implementation: numeric.
+import "simd"
+import "math"
+import "io"
+import "str"
+import "tensor.operators"
+import "tensor.state"
+import "tensor.storage"
+import "tensor.tape"
+
+fn _tensor_matmul_2d(a:Tensor, b:Tensor) -> Tensor:
+  m:int = a.shape0
+  k:int = a.shape1
+  n:int = b.shape1
+  c:Tensor = tensor.storage.tensor_zeros_2d(m, n)
+  if c.data == 0 as *float: ret c
+
+  i:int = 0
+  while i < m:
+    j:int = 0
+    while j < n:
+      sum:float = 0.0
+      p:int = 0
+      lim_k:int = k - (k % 8)
+      s0:float = 0.0
+      s1:float = 0.0
+      s2:float = 0.0
+      s3:float = 0.0
+      s4:float = 0.0
+      s5:float = 0.0
+      s6:float = 0.0
+      s7:float = 0.0
+      while p < lim_k:
+        idx_a0:int = a.offset + i * a.stride0 + (p + 0) * a.stride1
+        idx_b0:int = b.offset + (p + 0) * b.stride0 + j * b.stride1
+        idx_a1:int = a.offset + i * a.stride0 + (p + 1) * a.stride1
+        idx_b1:int = b.offset + (p + 1) * b.stride0 + j * b.stride1
+        idx_a2:int = a.offset + i * a.stride0 + (p + 2) * a.stride1
+        idx_b2:int = b.offset + (p + 2) * b.stride0 + j * b.stride1
+        idx_a3:int = a.offset + i * a.stride0 + (p + 3) * a.stride1
+        idx_b3:int = b.offset + (p + 3) * b.stride0 + j * b.stride1
+        idx_a4:int = a.offset + i * a.stride0 + (p + 4) * a.stride1
+        idx_b4:int = b.offset + (p + 4) * b.stride0 + j * b.stride1
+        idx_a5:int = a.offset + i * a.stride0 + (p + 5) * a.stride1
+        idx_b5:int = b.offset + (p + 5) * b.stride0 + j * b.stride1
+        idx_a6:int = a.offset + i * a.stride0 + (p + 6) * a.stride1
+        idx_b6:int = b.offset + (p + 6) * b.stride0 + j * b.stride1
+        idx_a7:int = a.offset + i * a.stride0 + (p + 7) * a.stride1
+        idx_b7:int = b.offset + (p + 7) * b.stride0 + j * b.stride1
+        unsafe:
+          s0 = s0 + a.data[idx_a0] * b.data[idx_b0]
+          s1 = s1 + a.data[idx_a1] * b.data[idx_b1]
+          s2 = s2 + a.data[idx_a2] * b.data[idx_b2]
+          s3 = s3 + a.data[idx_a3] * b.data[idx_b3]
+          s4 = s4 + a.data[idx_a4] * b.data[idx_b4]
+          s5 = s5 + a.data[idx_a5] * b.data[idx_b5]
+          s6 = s6 + a.data[idx_a6] * b.data[idx_b6]
+          s7 = s7 + a.data[idx_a7] * b.data[idx_b7]
+        p = p + 8
+      sum = s0 + s1 + s2 + s3 + s4 + s5 + s6 + s7
+      while p < k:
+        idx_a:int = a.offset + i * a.stride0 + p * a.stride1
+        idx_b:int = b.offset + p * b.stride0 + j * b.stride1
+        unsafe:
+          sum = sum + a.data[idx_a] * b.data[idx_b]
+        p = p + 1
+      unsafe:
+        c.data[i * n + j] = sum
+      j = j + 1
+    i = i + 1
+  ret c
+
+fn _tensor_matmul_3d(a:Tensor, b:Tensor) -> Tensor:
+  batch:int = a.shape0
+  m:int = a.shape1
+  k:int = a.shape2
+  n:int = b.shape2
+  c:Tensor = tensor.storage.tensor_zeros_3d(batch, m, n)
+  if c.data == 0 as *float: ret c
+
+  bat:int = 0
+  while bat < batch:
+    a_slice:Tensor = a
+    a_slice.ndim = 2
+    a_slice.shape0 = m
+    a_slice.shape1 = k
+    a_slice.stride0 = a.stride1
+    a_slice.stride1 = a.stride2
+    a_slice.offset = a.offset + bat * a.stride0
+    a_slice.size = m * k
+    a_slice.is_view = 1
+
+    b_slice:Tensor = b
+    b_slice.ndim = 2
+    b_slice.shape0 = k
+    b_slice.shape1 = n
+    b_slice.stride0 = b.stride1
+    b_slice.stride1 = b.stride2
+    b_slice.offset = b.offset + bat * b.stride0
+    b_slice.size = k * n
+    b_slice.is_view = 1
+
+    c_2d:Tensor = _tensor_matmul_2d(a_slice, b_slice)
+    row:int = 0
+    while row < m:
+      col:int = 0
+      while col < n:
+        unsafe:
+          c.data[bat * c.stride0 + row * c.stride1 + col * c.stride2] = c_2d.data[row * n + col]
+        col = col + 1
+      row = row + 1
+    tensor.storage.tensor_free_tensor(c_2d)
+    bat = bat + 1
+  ret c
+
+fn _tensor_matmul_4d(a:Tensor, b:Tensor) -> Tensor:
+  b0:int = a.shape0
+  b1:int = a.shape1
+  m:int = a.shape2
+  k:int = a.shape3
+  n:int = b.shape3
+  c:Tensor = tensor.storage.tensor_zeros_4d(b0, b1, m, n)
+  if c.data == 0 as *float: ret c
+
+  i0:int = 0
+  while i0 < b0:
+    i1:int = 0
+    while i1 < b1:
+      a_slice:Tensor = a
+      a_slice.ndim = 2
+      a_slice.shape0 = m
+      a_slice.shape1 = k
+      a_slice.stride0 = a.stride2
+      a_slice.stride1 = a.stride3
+      a_slice.offset = a.offset + i0 * a.stride0 + i1 * a.stride1
+      a_slice.size = m * k
+      a_slice.is_view = 1
+
+      b_slice:Tensor = b
+      b_slice.ndim = 2
+      b_slice.shape0 = k
+      b_slice.shape1 = n
+      b_slice.stride0 = b.stride2
+      b_slice.stride1 = b.stride3
+      b_slice.offset = b.offset + i0 * b.stride0 + i1 * b.stride1
+      b_slice.size = k * n
+      b_slice.is_view = 1
+
+      c_2d:Tensor = _tensor_matmul_2d(a_slice, b_slice)
+      row:int = 0
+      while row < m:
+        col:int = 0
+        while col < n:
+          unsafe:
+            c.data[i0 * c.stride0 + i1 * c.stride1 + row * c.stride2 + col * c.stride3] = c_2d.data[row * n + col]
+          col = col + 1
+        row = row + 1
+      tensor.storage.tensor_free_tensor(c_2d)
+      i1 = i1 + 1
+    i0 = i0 + 1
+  ret c
+
+fn _tensor_matmul_raw(a:Tensor, b:Tensor) -> Tensor:
+  if a.data == 0 as *float || b.data == 0 as *float || a.size <= 0 || b.size <= 0 || a.ndim != b.ndim:
+    ret tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0)
+  if a.ndim < 2 || a.ndim > 4:
+    ret tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0)
+  if tensor.storage.tensor_shape(a, a.ndim - 1) != tensor.storage.tensor_shape(b, b.ndim - 2):
+    ret tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0)
+  axis:int = 0
+  while axis < a.ndim - 2:
+    if tensor.storage.tensor_shape(a, axis) != tensor.storage.tensor_shape(b, axis):
+      ret tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0)
+    axis = axis + 1
+  if a.ndim == 2: ret _tensor_matmul_2d(a, b)
+  if a.ndim == 3: ret _tensor_matmul_3d(a, b)
+  ret _tensor_matmul_4d(a, b)
+
+fn tensor_bmm(a:Tensor, b:Tensor) -> Tensor:
+  ret tensor.operators.tensor_matmul(a, b)
+
+// -------------------------------------------------------------
+// Elementwise Broadcast Arithmetic (Add, Sub, Mul, Div)
+// -------------------------------------------------------------
+
+fn _tensor_broadcast_offset(source:Tensor, output:Tensor, index:int) -> int:
+  off:int = source.offset
+  rem:int = index
+  axis:int = output.ndim - 1
+  while axis >= 0:
+    d:int = tensor.storage.tensor_shape(output, axis)
+    coord:int = rem % d
+    rem = rem / d
+    source_axis:int = axis - (output.ndim - source.ndim)
+    if source_axis >= 0 && tensor.storage.tensor_shape(source, source_axis) > 1:
+      off = off + coord * tensor.storage.tensor_stride(source, source_axis)
+    axis = axis - 1
+  ret off
+
+fn _tensor_binary_raw(a:Tensor, b:Tensor, operation:int) -> Tensor:
+  if a.data == 0 as *float || b.data == 0 as *float || a.size <= 0 || b.size <= 0:
+    ret tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0)
+  shape:Tensor = tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0)
+  shape.ndim = a.ndim
+  if b.ndim > shape.ndim: shape.ndim = b.ndim
+  if shape.ndim == 0: shape.size = 1
+  axis:int = 0
+  while axis < shape.ndim:
+    ax_a:int = axis - (shape.ndim - a.ndim)
+    ax_b:int = axis - (shape.ndim - b.ndim)
+    da:int = 1
+    db:int = 1
+    if ax_a >= 0: da = tensor.storage.tensor_shape(a, ax_a)
+    if ax_b >= 0: db = tensor.storage.tensor_shape(b, ax_b)
+    if da <= 0 || db <= 0 || (da != db && da != 1 && db != 1):
+      ret tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0)
+    d:int = da
+    if db > d: d = db
+    shape = tensor.storage.tensor_set_shape(shape, axis, d)
+    axis = axis + 1
+  out:Tensor = tensor.storage._tensor_alloc_shape(shape)
+  if out.data == 0 as *float: ret out
+  i:int = 0
+  while i < out.size:
+    av:float = a.data[_tensor_broadcast_offset(a, out, i)]
+    bv:float = b.data[_tensor_broadcast_offset(b, out, i)]
+    if operation == 1: out.data[i] = av + bv
+    else if operation == 2: out.data[i] = av - bv
+    else if operation == 3: out.data[i] = av * bv
+    else: out.data[i] = av / bv
+    i = i + 1
+  ret out
+
+fn _tensor_add_raw(a:Tensor, b:Tensor) -> Tensor:
+  ret _tensor_binary_raw(a, b, 1)
+
+fn _tensor_sub_raw(a:Tensor, b:Tensor) -> Tensor:
+  ret _tensor_binary_raw(a, b, 2)
+
+fn _tensor_mul_raw(a:Tensor, b:Tensor) -> Tensor:
+  ret _tensor_binary_raw(a, b, 3)
+
+fn _tensor_div_raw(a:Tensor, b:Tensor) -> Tensor:
+  ret _tensor_binary_raw(a, b, 4)
+
+// -------------------------------------------------------------
+// In-place & Scalar Arithmetic
+// -------------------------------------------------------------
+
+fn _tensor_scale_raw(a:Tensor, s:float) -> Tensor:
+  c:Tensor = tensor.storage._tensor_clone_raw(a)
+  i:int = 0
+  while i < c.size:
+    unsafe:
+      c.data[i] = c.data[i] * s
+    i = i + 1
+  ret c
+
+fn tensor_scale_inplace(a:Tensor, s:float) -> int:
+  // In-place graph versioning is unsupported; use an out-of-place operation.
+  if (*tensor.state._state__tape_enabled()) != 0 && (a.requires_grad != 0):
+    ret 0 - 1
+  if a.data == 0 as *float || a.size <= 0:
+    ret 0
+  i:int = 0
+  while i < a.size:
+    off:int = tensor.storage._tensor_unravel_offset(a, i)
+    a.data[off] = a.data[off] * s
+    i = i + 1
+  ret 0
+
+fn tensor_add_scalar(a:Tensor, s:float) -> Tensor:
+  c:Tensor = tensor.storage._tensor_clone_raw(a)
+  i:int = 0
+  while i < c.size:
+    unsafe:
+      c.data[i] = c.data[i] + s
+    i = i + 1
+  ret tensor.storage._tensor_track_copy(c, a)
+
+fn tensor_sub_scalar(a:Tensor, s:float) -> Tensor:
+  ret tensor_add_scalar(a, 0.0 - s)
+
+fn _tensor_neg_raw(a:Tensor) -> Tensor:
+  ret _tensor_scale_raw(a, 0.0 - 1.0)
+
+fn tensor_clamp(a:Tensor, min_val:float, max_val:float) -> Tensor:
+  c:Tensor = tensor.storage._tensor_clone_raw(a)
+  mask:Tensor = tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0)
+  track:int = 0
+  if (*tensor.state._state__tape_enabled()) != 0 && a.requires_grad != 0 && c.data != 0 as *float:
+    track = 1
+    mask = tensor.storage._tensor_zeros_like(a)
+  i:int = 0
+  while i < c.size:
+    unsafe:
+      v:float = c.data[i]
+      if track != 0 && mask.data != 0 as *float:
+        if v >= min_val && v <= max_val:
+          mask.data[i] = 1.0
+      if v < min_val: v = min_val
+      if v > max_val: v = max_val
+      c.data[i] = v
+    i = i + 1
+  if track != 0:
+    if mask.data == 0 as *float:
+      (*tensor.state._state__tape_error()) = 1
+    c = tensor.tape.tensor_require_grad(c)
+    tensor.tape.tape_record_unary((*tensor.state._state_AUTOGRAD_OP_CLAMP()), c, a, mask, 0.0, 0, 0)
+  tensor.storage.tensor_free_tensor(mask)
+  ret c
+
+// -------------------------------------------------------------
+// Global Reductions
+// -------------------------------------------------------------
+
+fn tensor_sum_all(t:Tensor) -> float:
+  if t.size <= 0: ret 0.0
+  if tensor.storage.tensor_is_contiguous(t) != 0 && t.offset == 0:
+    s0:float = 0.0
+    s1:float = 0.0
+    s2:float = 0.0
+    s3:float = 0.0
+    s4:float = 0.0
+    s5:float = 0.0
+    s6:float = 0.0
+    s7:float = 0.0
+    lim:int = t.size - (t.size % 8)
+    i:int = 0
+    while i < lim:
+      unsafe:
+        s0 = s0 + t.data[i + 0]
+        s1 = s1 + t.data[i + 1]
+        s2 = s2 + t.data[i + 2]
+        s3 = s3 + t.data[i + 3]
+        s4 = s4 + t.data[i + 4]
+        s5 = s5 + t.data[i + 5]
+        s6 = s6 + t.data[i + 6]
+        s7 = s7 + t.data[i + 7]
+      i = i + 8
+    total:float = s0 + s1 + s2 + s3 + s4 + s5 + s6 + s7
+    while i < t.size:
+      unsafe:
+        total = total + t.data[i]
+      i = i + 1
+    ret total
+
+  tot:float = 0.0
+  k:int = 0
+  while k < t.size:
+    off:int = tensor.storage._tensor_unravel_offset(t, k)
+    unsafe:
+      tot = tot + t.data[off]
+    k = k + 1
+  ret tot
+
+fn tensor_mean_all(t:Tensor) -> float:
+  if t.size <= 0: ret 0.0
+  ret tensor_sum_all(t) / (t.size as float)
+
+fn tensor_max_all(t:Tensor) -> float:
+  if t.size <= 0: ret 0.0
+  first:float = 0.0
+  unsafe:
+    first = t.data[t.offset]
+  m:float = first
+  k:int = 1
+  while k < t.size:
+    off:int = tensor.storage._tensor_unravel_offset(t, k)
+    unsafe:
+      v:float = t.data[off]
+      if v > m: m = v
+    k = k + 1
+  ret m
+
+fn tensor_min_all(t:Tensor) -> float:
+  if t.size <= 0: ret 0.0
+  first:float = 0.0
+  unsafe:
+    first = t.data[t.offset]
+  m:float = first
+  k:int = 1
+  while k < t.size:
+    off:int = tensor.storage._tensor_unravel_offset(t, k)
+    unsafe:
+      v:float = t.data[off]
+      if v < m: m = v
+    k = k + 1
+  ret m
+
+fn tensor_norm(t:Tensor) -> float:
+  if t.size <= 0: ret 0.0
+  sum_sq:float = 0.0
+  k:int = 0
+  while k < t.size:
+    off:int = tensor.storage._tensor_unravel_offset(t, k)
+    unsafe:
+      v:float = t.data[off]
+      sum_sq = sum_sq + v * v
+    k = k + 1
+  ret math.sqrt(sum_sq)
+
+// -------------------------------------------------------------
+// Axis Reductions
+// -------------------------------------------------------------
+
+fn _tensor_axis_inner(t:Tensor, axis:int) -> int:
+  inner:int = 1
+  d:int = axis + 1
+  while d < t.ndim:
+    inner = inner * tensor.storage.tensor_shape(t, d)
+    d = d + 1
+  ret inner
+
+fn _tensor_sum_raw(t:Tensor, axis:int, keepdim:int) -> Tensor:
+  ax:int = tensor.storage._tensor_axis(t, axis)
+  if ax < 0 || t.data == 0 as *float || t.size <= 0:
+    ret tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0)
+  shape:Tensor = t
+  shape.size = 1
+  if keepdim != 0:
+    shape = tensor.storage.tensor_set_shape(shape, ax, 1)
+  else:
+    d:int = ax
+    while d < t.ndim - 1:
+      shape = tensor.storage.tensor_set_shape(shape, d, tensor.storage.tensor_shape(t, d + 1))
+      d = d + 1
+    shape = tensor.storage.tensor_set_shape(shape, t.ndim - 1, 0)
+    shape.ndim = t.ndim - 1
+  out:Tensor = tensor.storage._tensor_zeros_like(shape)
+  if out.data == 0 as *float: ret out
+  inner:int = _tensor_axis_inner(t, ax)
+  width:int = tensor.storage.tensor_shape(t, ax) * inner
+  i:int = 0
+  while i < t.size:
+    dst:int = (i / width) * inner + (i % inner)
+    out.data[dst] = out.data[dst] + t.data[tensor.storage._tensor_unravel_offset(t, i)]
+    i = i + 1
+  ret out
+
+fn tensor_sum(t:Tensor, axis:int, keepdim:int) -> Tensor:
+  ax:int = tensor.storage._tensor_axis(t, axis)
+  if ax < 0: ret tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0)
+  out:Tensor = _tensor_sum_raw(t, ax, keepdim)
+  if (*tensor.state._state__tape_enabled()) != 0 && t.requires_grad != 0 && out.data != 0 as *float:
+    out = tensor.tape.tensor_require_grad(out)
+    tensor.tape.tape_record_unary((*tensor.state._state_AUTOGRAD_OP_SUM()), out, t, tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0), 1.0, ax, keepdim)
+  ret out
+
+fn tensor_mean(t:Tensor, axis:int, keepdim:int) -> Tensor:
+  ax:int = tensor.storage._tensor_axis(t, axis)
+  if ax < 0: ret tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0)
+  out:Tensor = _tensor_sum_raw(t, ax, keepdim)
+  divisor:float = tensor.storage.tensor_shape(t, ax) as float
+  if divisor > 0.0: tensor_scale_inplace(out, 1.0 / divisor)
+  if (*tensor.state._state__tape_enabled()) != 0 && t.requires_grad != 0 && out.data != 0 as *float:
+    out = tensor.tape.tensor_require_grad(out)
+    tensor.tape.tape_record_unary((*tensor.state._state_AUTOGRAD_OP_MEAN()), out, t, tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0), 1.0 / divisor, ax, keepdim)
+  ret out
+
+fn tensor_max(t:Tensor, axis:int, keepdim:int) -> Tensor:
+  s_red:int = tensor.storage.tensor_shape(t, axis)
+  if s_red <= 0: ret t
+
+  out_ndim:int = t.ndim
+  out_s0:int = t.shape0
+  out_s1:int = t.shape1
+  out_s2:int = t.shape2
+  out_s3:int = t.shape3
+
+  if keepdim != 0:
+    if axis == 0: out_s0 = 1
+    else if axis == 1: out_s1 = 1
+    else if axis == 2: out_s2 = 1
+    else if axis == 3: out_s3 = 1
+  else:
+    out_ndim = t.ndim - 1
+    if axis == 0:
+      out_s0 = t.shape1
+      out_s1 = t.shape2
+      out_s2 = t.shape3
+      out_s3 = 0
+    else if axis == 1:
+      out_s1 = t.shape2
+      out_s2 = t.shape3
+      out_s3 = 0
+    else if axis == 2:
+      out_s2 = t.shape3
+      out_s3 = 0
+    else if axis == 3:
+      out_s3 = 0
+
+  out:Tensor = tensor.storage.tensor_empty_raw(out_ndim, out_s0, out_s1, out_s2, out_s3)
+
+  k:int = 0
+  while k < out.size:
+    rem:int = k
+    c3:int = 0
+    c2:int = 0
+    c1:int = 0
+    c0:int = 0
+
+    if out_ndim >= 4 && out_s3 > 0:
+      c3 = rem % out_s3
+      rem = rem / out_s3
+    if out_ndim >= 3 && out_s2 > 0:
+      c2 = rem % out_s2
+      rem = rem / out_s2
+    if out_ndim >= 2 && out_s1 > 0:
+      c1 = rem % out_s1
+      rem = rem / out_s1
+    if out_ndim >= 1 && out_s0 > 0:
+      c0 = rem % out_s0
+      rem = rem / out_s0
+
+    in_c0:int = c0
+    in_c1:int = c1
+    in_c2:int = c2
+    in_c3:int = c3
+
+    if keepdim == 0:
+      if axis == 0:
+        in_c3 = c2
+        in_c2 = c1
+        in_c1 = c0
+        in_c0 = 0
+      else if axis == 1:
+        in_c3 = c2
+        in_c2 = c1
+        in_c1 = 0
+        in_c0 = c0
+      else if axis == 2:
+        in_c3 = c2
+        in_c2 = 0
+        in_c1 = c1
+        in_c0 = c0
+
+    max_v:float = 0.0
+    p:int = 0
+    while p < s_red:
+      if axis == 0: in_c0 = p
+      else if axis == 1: in_c1 = p
+      else if axis == 2: in_c2 = p
+      else if axis == 3: in_c3 = p
+
+      idx:int = t.offset + in_c0 * t.stride0 + in_c1 * t.stride1 + in_c2 * t.stride2 + in_c3 * t.stride3
+      v:float = 0.0
+      unsafe:
+        v = t.data[idx]
+      if p == 0 || v > max_v:
+        max_v = v
+      p = p + 1
+
+    unsafe:
+      out.data[k] = max_v
+    k = k + 1
+
+  ret out
+
+fn tensor_min(t:Tensor, axis:int, keepdim:int) -> Tensor:
+  s_red:int = tensor.storage.tensor_shape(t, axis)
+  if s_red <= 0: ret t
+
+  out_ndim:int = t.ndim
+  out_s0:int = t.shape0
+  out_s1:int = t.shape1
+  out_s2:int = t.shape2
+  out_s3:int = t.shape3
+
+  if keepdim != 0:
+    if axis == 0: out_s0 = 1
+    else if axis == 1: out_s1 = 1
+    else if axis == 2: out_s2 = 1
+    else if axis == 3: out_s3 = 1
+  else:
+    out_ndim = t.ndim - 1
+    if axis == 0:
+      out_s0 = t.shape1
+      out_s1 = t.shape2
+      out_s2 = t.shape3
+      out_s3 = 0
+    else if axis == 1:
+      out_s1 = t.shape2
+      out_s2 = t.shape3
+      out_s3 = 0
+    else if axis == 2:
+      out_s2 = t.shape3
+      out_s3 = 0
+    else if axis == 3:
+      out_s3 = 0
+
+  out:Tensor = tensor.storage.tensor_empty_raw(out_ndim, out_s0, out_s1, out_s2, out_s3)
+
+  k:int = 0
+  while k < out.size:
+    rem:int = k
+    c3:int = 0
+    c2:int = 0
+    c1:int = 0
+    c0:int = 0
+
+    if out_ndim >= 4 && out_s3 > 0:
+      c3 = rem % out_s3
+      rem = rem / out_s3
+    if out_ndim >= 3 && out_s2 > 0:
+      c2 = rem % out_s2
+      rem = rem / out_s2
+    if out_ndim >= 2 && out_s1 > 0:
+      c1 = rem % out_s1
+      rem = rem / out_s1
+    if out_ndim >= 1 && out_s0 > 0:
+      c0 = rem % out_s0
+      rem = rem / out_s0
+
+    in_c0:int = c0
+    in_c1:int = c1
+    in_c2:int = c2
+    in_c3:int = c3
+
+    if keepdim == 0:
+      if axis == 0:
+        in_c3 = c2
+        in_c2 = c1
+        in_c1 = c0
+        in_c0 = 0
+      else if axis == 1:
+        in_c3 = c2
+        in_c2 = c1
+        in_c1 = 0
+        in_c0 = c0
+      else if axis == 2:
+        in_c3 = c2
+        in_c2 = 0
+        in_c1 = c1
+        in_c0 = c0
+
+    min_v:float = 0.0
+    p:int = 0
+    while p < s_red:
+      if axis == 0: in_c0 = p
+      else if axis == 1: in_c1 = p
+      else if axis == 2: in_c2 = p
+      else if axis == 3: in_c3 = p
+
+      idx:int = t.offset + in_c0 * t.stride0 + in_c1 * t.stride1 + in_c2 * t.stride2 + in_c3 * t.stride3
+      v:float = 0.0
+      unsafe:
+        v = t.data[idx]
+      if p == 0 || v < min_v:
+        min_v = v
+      p = p + 1
+
+    unsafe:
+      out.data[k] = min_v
+    k = k + 1
+
+  ret out
+
+fn tensor_var(t:Tensor, axis:int, keepdim:int) -> Tensor:
+  mean_t:Tensor = tensor_mean(t, axis, 1)
+  diff:Tensor = tensor.operators.tensor_sub(t, mean_t)
+  diff_sq:Tensor = tensor.operators.tensor_mul(diff, diff)
+  v:Tensor = tensor_mean(diff_sq, axis, keepdim)
+  tensor.storage.tensor_free_tensor(mean_t)
+  tensor.storage.tensor_free_tensor(diff)
+  tensor.storage.tensor_free_tensor(diff_sq)
+  ret v
+
+fn tensor_std(t:Tensor, axis:int, keepdim:int) -> Tensor:
+  v:Tensor = tensor_var(t, axis, keepdim)
+  i:int = 0
+  while i < v.size:
+    unsafe:
+      v.data[i] = math.sqrt(v.data[i])
+    i = i + 1
+  ret v
+
+// ============================================================
+// Phase 3: Activation & LLM Layers
+// ============================================================
+
+// -------------------------------------------------------------
+// Fused Elementwise Activations
+// -------------------------------------------------------------
+
+// ReLU

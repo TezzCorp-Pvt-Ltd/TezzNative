@@ -2,6 +2,7 @@
 #include "util.h"
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 static void* xmalloc(size_t n){ void* p=malloc(n); if(!p) die("out of memory"); return p; }
 
@@ -194,6 +195,49 @@ static void compute_struct_layout(Type* st){
   off = align_up(off, maxa);
   st->align = maxa;
   st->size = off;
+}
+
+/* Parsing a parent before its imported/forward-declared value fields are
+ * complete gives only a provisional layout. Resolve the whole value graph
+ * before sema evaluates sizeof or any backend consumes offsets. Pointers and
+ * function types have fixed storage and do not recurse into their targets. */
+static void finalize_layout(Type* type, SrcLoc owner){
+  if(!type || type->layout_state==2) return;
+  if(type->k!=TY_ARRAY && type->k!=TY_STRUCT){ type->layout_state=2; return; }
+  SrcLoc loc=type->k==TY_STRUCT ? type->decl_loc : owner;
+  if(type->layout_state==1) err_at(loc,"recursive value type has no finite size");
+  if(type->k==TY_STRUCT && type->incomplete) err_at(loc,"incomplete struct type");
+  type->layout_state=1;
+  if(type->k==TY_ARRAY){
+    finalize_layout(type->elem,owner);
+    int size=type_size(type->elem);
+    if(size && type->len>(1LL<<30)/size) err_at(owner,"array too large");
+    type->size=(int)((long long)size*type->len);
+    type->align=type_align(type->elem);
+  } else {
+    long long offset=0;
+    int alignment=1;
+    for(int i=0;i<type->field_n;i++){
+      Field* field=&type->fields[i];
+      finalize_layout(field->ty,loc);
+      int align=type_align(field->ty),size=type_size(field->ty);
+      if(align>alignment) alignment=align;
+      offset=(offset+align-1)&~((long long)align-1);
+      if(offset>INT_MAX-size) err_at(loc,"aggregate type too large");
+      field->off=(int)offset;
+      offset+=size;
+    }
+    offset=(offset+alignment-1)&~((long long)alignment-1);
+    if(offset>INT_MAX) err_at(loc,"aggregate type too large");
+    type->size=(int)offset;
+    type->align=alignment;
+  }
+  type->layout_state=2;
+}
+
+void tenv_finalize_layouts(TypeEnv* E){
+  for(int i=0;i<E->count;i++) E->items[i]->layout_state=0;
+  for(int i=0;i<E->count;i++) finalize_layout(E->items[i],E->items[i]->decl_loc);
 }
 
 Type* tenv_add_struct(TypeEnv* E, const char* name, int len, Field* fields, int field_n, SrcLoc loc){

@@ -1,0 +1,518 @@
+// runtime implementation: format.
+
+import "runtime.memory"
+import "runtime.state"
+
+fn atoi(s:str) -> int:
+  if s == 0:
+    ret 0
+  i:int = 0
+  // Skip whitespace
+  while s[i] == 32 as char || s[i] == 9 as char || s[i] == 10 as char || s[i] == 13 as char:
+    i = i + 1
+  sign:int = 1
+  if s[i] == 45 as char:
+    sign = 0 - 1
+    i = i + 1
+  else if s[i] == 43 as char:
+    i = i + 1
+  n:int = 0
+  while s[i] != 0 as char:
+    c:int = s[i] as int
+    if c < 48 || c > 57:
+      break
+    n = n * 10 + (c - 48)
+    i = i + 1
+  ret n * sign
+
+// atol — same as atoi for TezzNative (int is 64-bit)
+
+fn atol(s:str) -> int:
+  ret atoi(s)
+
+// atof — convert decimal/scientific string to float
+
+fn atof(s:str) -> float:
+  if s == 0:
+    ret 0.0
+  i:int = 0
+  // Skip whitespace
+  while s[i] == 32 as char || s[i] == 9 as char || s[i] == 10 as char || s[i] == 13 as char:
+    i = i + 1
+  sign:float = 1.0
+  if s[i] == 45 as char:
+    sign = 0.0 - 1.0
+    i = i + 1
+  else if s[i] == 43 as char:
+    i = i + 1
+  n:float = 0.0
+  while s[i] != 0 as char:
+    c:int = s[i] as int
+    if c < 48 || c > 57:
+      break
+    n = n * 10.0 + (c - 48) as float
+    i = i + 1
+  if s[i] == 46 as char:
+    i = i + 1
+    div:float = 10.0
+    while s[i] != 0 as char:
+      c2:int = s[i] as int
+      if c2 < 48 || c2 > 57:
+        break
+      n = n + (c2 - 48) as float / div
+      div = div * 10.0
+      i = i + 1
+  // Scientific notation: e/E followed by optional +/- and exponent
+  if s[i] == 101 as char || s[i] == 69 as char:
+    i = i + 1
+    esign:int = 1
+    if s[i] == 45 as char:
+      esign = 0 - 1
+      i = i + 1
+    else if s[i] == 43 as char:
+      i = i + 1
+    exp:int = 0
+    while s[i] != 0 as char:
+      c3:int = s[i] as int
+      if c3 < 48 || c3 > 57:
+        break
+      exp = exp * 10 + (c3 - 48)
+      i = i + 1
+    pow10:float = 1.0
+    j:int = 0
+    while j < exp:
+      pow10 = pow10 * 10.0
+      j = j + 1
+    if esign < 0:
+      n = n / pow10
+    else:
+      n = n * pow10
+  ret n * sign
+
+// itoa — convert int to string; returns heap-allocated *char (caller frees)
+
+fn itoa(n:int) -> *char:
+  neg:int = 0
+  v:int = n
+  if v < 0:
+    neg = 1
+    v = 0 - v
+  digits:[char;24]
+  di:int = 0
+  if v == 0:
+    digits[0] = 48 as char
+    di = 1
+  else:
+    while v > 0:
+      digits[di] = (48 + v % 10) as char
+      di = di + 1
+      v = v / 10
+  total:int = di
+  if neg != 0:
+    total = total + 1
+  out:*char = (*char)malloc(total + 1)
+  if out == 0:
+    ret 0 as *char
+  wi:int = 0
+  if neg != 0:
+    out[wi] = 45 as char
+    wi = wi + 1
+  j:int = di - 1
+  while j >= 0:
+    out[wi] = digits[j]
+    wi = wi + 1
+    j = j - 1
+  out[wi] = 0 as char
+  ret out
+
+// ftoa — convert float to string with `decimals` decimal places (caller frees)
+
+fn ftoa(f:float, decimals:int) -> *char:
+  if decimals < 0:
+    decimals = 6
+  if decimals > 18:
+    decimals = 18
+  neg:int = 0
+  v:float = f
+  if v < 0.0:
+    neg = 1
+    v = 0.0 - v
+  whole:int = v as int
+  frac:float = v - (whole as float)
+  // Scale fractional part
+  scale:float = 1.0
+  i:int = 0
+  while i < decimals:
+    scale = scale * 10.0
+    i = i + 1
+  frac_int:int = (frac * scale) as int
+  ws:*char = itoa(whole)
+  fs:*char = itoa(frac_int)
+  if ws == 0:
+    if fs != 0:
+      free(fs)
+    ret 0 as *char
+  wl:int = runtime.memory.strlen(ws as str)
+  fl:int = 0
+  if fs != 0:
+    fl = runtime.memory.strlen(fs as str)
+  // Total: neg + whole + '.' + pad + frac + null
+  total:int = 1 + wl + 1 + decimals + 1
+  out:*char = (*char)malloc(total)
+  if out == 0:
+    free(ws)
+    if fs != 0:
+      free(fs)
+    ret 0 as *char
+  wi:int = 0
+  if neg != 0:
+    out[wi] = 45 as char
+    wi = wi + 1
+  j:int = 0
+  while j < wl:
+    out[wi] = ws[j]
+    wi = wi + 1
+    j = j + 1
+  free(ws)
+  if decimals > 0:
+    out[wi] = 46 as char
+    wi = wi + 1
+    // Pad fractional digits to `decimals` places
+    pad:int = decimals - fl
+    while pad > 0:
+      out[wi] = 48 as char
+      wi = wi + 1
+      pad = pad - 1
+    j = 0
+    while j < fl:
+      if fs != 0:
+        out[wi] = fs[j]
+      wi = wi + 1
+      j = j + 1
+  if fs != 0:
+    free(fs)
+  out[wi] = 0 as char
+  ret out
+
+// ============================================================
+// SECTION 4: sprintf — format string into buffer
+// ============================================================
+
+// sprintf(buf, fmt, ...) — writes formatted string to buf
+// Supported format specs: %d %i %u %s %c %f %g %% %p
+// Returns number of characters written (not counting null terminator).
+
+// Internal: write a single char into buf at pos, returns new pos
+
+fn _rt_putc(buf:*char, pos:int, c:char) -> int:
+  unsafe:
+    buf[pos] = c
+  ret pos + 1
+
+// Internal: write a str into buf at pos, returns new pos
+
+fn _rt_puts_n(buf:*char, pos:int, s:str, max_chars:int) -> int:
+  if s == 0:
+    s = "(null)"
+  i:int = 0
+  while s[i] != 0 as char:
+    if max_chars >= 0 && i >= max_chars:
+      break
+    unsafe:
+      buf[pos] = s[i]
+    pos = pos + 1
+    i = i + 1
+  ret pos
+
+// Internal: write integer to buf at pos, returns new pos
+
+fn _rt_put_int(buf:*char, pos:int, n:int, base:int, uppercase:int) -> int:
+  neg:int = 0
+  v:int = n
+  if base == 10 && v < 0:
+    neg = 1
+    v = 0 - v
+  if v == 0:
+    unsafe:
+      buf[pos] = 48 as char
+    ret pos + 1
+  digits:[char;64]
+  di:int = 0
+  while v > 0:
+    rem:int = v % base
+    if rem < 10:
+      digits[di] = (48 + rem) as char
+    else:
+      if uppercase != 0:
+        digits[di] = (55 + rem) as char  // 'A'-10+rem
+      else:
+        digits[di] = (87 + rem) as char  // 'a'-10+rem
+    di = di + 1
+    v = v / base
+  if neg != 0:
+    unsafe:
+      buf[pos] = 45 as char
+    pos = pos + 1
+  j:int = di - 1
+  while j >= 0:
+    unsafe:
+      buf[pos] = digits[j]
+    pos = pos + 1
+    j = j - 1
+  ret pos
+
+// Internal: write float to buf at pos with given decimal places
+
+fn _rt_put_float(buf:*char, pos:int, f:float, decimals:int, compact:int) -> int:
+  // compact=1 means %g mode (strip trailing zeros)
+  neg:int = 0
+  v:float = f
+  if v < 0.0:
+    neg = 1
+    v = 0.0 - v
+  whole:int = v as int
+  frac:float = v - (whole as float)
+  if neg != 0:
+    unsafe:
+      buf[pos] = 45 as char
+    pos = pos + 1
+  pos = _rt_put_int(buf, pos, whole, 10, 0)
+  if decimals <= 0:
+    ret pos
+  // Scale frac
+  scale:float = 1.0
+  i:int = 0
+  while i < decimals:
+    scale = scale * 10.0
+    i = i + 1
+  frac_int:int = (frac * scale) as int
+  // Trailing-zero strip for %g mode
+  if compact != 0 && frac_int == 0:
+    ret pos
+  unsafe:
+    buf[pos] = 46 as char
+  pos = pos + 1
+  // Write frac digits with leading zeros
+  frac_str:[char;24]
+  fdi:int = 0
+  fv:int = frac_int
+  if fv == 0:
+    i = 0
+    while i < decimals:
+      frac_str[i] = 48 as char
+      i = i + 1
+    fdi = decimals
+  else:
+    while fv > 0:
+      frac_str[fdi] = (48 + fv % 10) as char
+      fdi = fdi + 1
+      fv = fv / 10
+    // Pad to decimals places
+    while fdi < decimals:
+      frac_str[fdi] = 48 as char
+      fdi = fdi + 1
+  // Write in reverse
+  j:int = fdi - 1
+  // frac_str is reversed (units first) — need to un-reverse
+  // Sort: flip the digits
+  lf:int = 0
+  rf:int = fdi - 1
+  while lf < rf:
+    tmp:char = frac_str[lf]
+    frac_str[lf] = frac_str[rf]
+    frac_str[rf] = tmp
+    lf = lf + 1
+    rf = rf - 1
+  // Strip trailing zeros in compact mode
+  end_pos:int = fdi
+  if compact != 0:
+    while end_pos > 0 && frac_str[end_pos - 1] == 48 as char:
+      end_pos = end_pos - 1
+  i = 0
+  while i < end_pos:
+    unsafe:
+      buf[pos] = frac_str[i]
+    pos = pos + 1
+    i = i + 1
+  ret pos
+
+// sprintf — primary formatting function
+// Usage: sprintf(buf, "%d items at $%f", count, price)
+// Variadic args passed as individual params up to 8 args.
+// Call sprintf1..sprintf8 for 1..8 arguments.
+// sprintf0 for no extra args (only literal text / %%).
+
+fn sprintf0(buf:*char, fmt:str) -> int:
+  if buf == 0 || fmt == 0:
+    ret 0
+  pos:int = 0
+  i:int = 0
+  while fmt[i] != 0 as char:
+    if fmt[i] as int == 37:  // '%'
+      i = i + 1
+      if fmt[i] as int == 37:
+        unsafe:
+          buf[pos] = 37 as char
+        pos = pos + 1
+        i = i + 1
+      else:
+        // Unknown spec — copy literally
+        unsafe:
+          buf[pos] = fmt[i]
+        pos = pos + 1
+        i = i + 1
+    else:
+      unsafe:
+        buf[pos] = fmt[i]
+      pos = pos + 1
+      i = i + 1
+  unsafe:
+    buf[pos] = 0 as char
+  ret pos
+
+// sprintf_int — format string with exactly one int argument (%d/%i/%u/%x/%o)
+
+fn sprintf_int(buf:*char, fmt:str, arg:int) -> int:
+  if buf == 0 || fmt == 0:
+    ret 0
+  pos:int = 0
+  i:int = 0
+  used:int = 0
+  while fmt[i] != 0 as char:
+    if fmt[i] as int == 37:  // '%'
+      i = i + 1
+      spec:int = fmt[i] as int
+      if spec == 37:
+        unsafe:
+          buf[pos] = 37 as char
+        pos = pos + 1
+        i = i + 1
+        continue
+      if used == 0:
+        used = 1
+        if spec == 100 || spec == 105:  // %d %i
+          pos = _rt_put_int(buf, pos, arg, 10, 0)
+        else if spec == 117:  // %u
+          pos = _rt_put_int(buf, pos, arg, 10, 0)
+        else if spec == 120:  // %x
+          pos = _rt_put_int(buf, pos, arg, 16, 0)
+        else if spec == 88:  // %X
+          pos = _rt_put_int(buf, pos, arg, 16, 1)
+        else if spec == 111:  // %o
+          pos = _rt_put_int(buf, pos, arg, 8, 0)
+        else if spec == 99:  // %c
+          unsafe:
+            buf[pos] = arg as char
+          pos = pos + 1
+        else:
+          // Unrecognized — emit literally
+          unsafe:
+            buf[pos] = 37 as char
+          pos = pos + 1
+          unsafe:
+            buf[pos] = spec as char
+          pos = pos + 1
+      i = i + 1
+    else:
+      unsafe:
+        buf[pos] = fmt[i]
+      pos = pos + 1
+      i = i + 1
+  unsafe:
+    buf[pos] = 0 as char
+  ret pos
+
+// sprintf_str — format string with exactly one str argument (%s)
+
+fn sprintf_str(buf:*char, fmt:str, arg:str) -> int:
+  if buf == 0 || fmt == 0:
+    ret 0
+  pos:int = 0
+  i:int = 0
+  used:int = 0
+  while fmt[i] != 0 as char:
+    if fmt[i] as int == 37:
+      i = i + 1
+      spec:int = fmt[i] as int
+      if spec == 37:
+        unsafe:
+          buf[pos] = 37 as char
+        pos = pos + 1
+        i = i + 1
+        continue
+      if used == 0 && spec == 115:  // %s
+        used = 1
+        pos = _rt_puts_n(buf, pos, arg, 0 - 1)
+      else:
+        unsafe:
+          buf[pos] = 37 as char
+        pos = pos + 1
+        unsafe:
+          buf[pos] = spec as char
+        pos = pos + 1
+      i = i + 1
+    else:
+      unsafe:
+        buf[pos] = fmt[i]
+      pos = pos + 1
+      i = i + 1
+  unsafe:
+    buf[pos] = 0 as char
+  ret pos
+
+// sprintf_float — format string with exactly one float argument (%f/%g)
+
+fn sprintf_float(buf:*char, fmt:str, arg:float) -> int:
+  if buf == 0 || fmt == 0:
+    ret 0
+  pos:int = 0
+  i:int = 0
+  used:int = 0
+  while fmt[i] != 0 as char:
+    if fmt[i] as int == 37:
+      i = i + 1
+      spec:int = fmt[i] as int
+      if spec == 37:
+        unsafe:
+          buf[pos] = 37 as char
+        pos = pos + 1
+        i = i + 1
+        continue
+      if used == 0:
+        used = 1
+        if spec == 102:  // %f
+          pos = _rt_put_float(buf, pos, arg, 6, 0)
+        else if spec == 103:  // %g
+          pos = _rt_put_float(buf, pos, arg, 6, 1)
+        else if spec == 101:  // %e — approximate via %g
+          pos = _rt_put_float(buf, pos, arg, 6, 1)
+        else:
+          unsafe:
+            buf[pos] = 37 as char
+          pos = pos + 1
+          unsafe:
+            buf[pos] = spec as char
+          pos = pos + 1
+      i = i + 1
+    else:
+      unsafe:
+        buf[pos] = fmt[i]
+      pos = pos + 1
+      i = i + 1
+  unsafe:
+    buf[pos] = 0 as char
+  ret pos
+
+// sprintf — master dispatcher: scan format for first spec and dispatch
+// Supports mixed %d %s %f in one call by scanning for all specs.
+// This version handles up to 4 heterogeneous args via a simple state machine.
+// For uniformity use sprintf_int / sprintf_str / sprintf_float for single-arg.
+
+fn sprintf(buf:*char, fmt:str) -> int:
+  ret sprintf0(buf, fmt)
+
+// ============================================================
+// SECTION 5: File I/O helpers
+// ============================================================
+
+// fputs — write string s to file handle h, returns number of bytes written

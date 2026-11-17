@@ -1,0 +1,41 @@
+struct Voice:
+  name:str
+  rate:float
+  pitch:float
+  energy:float
+  gender:int
+
+struct Engine:
+  voices:*Voice
+  count:int
+
+fn main() -> int:
+  unsafe:
+    voices:*Voice = (*Voice)malloc(sizeof(Voice) * 2)
+    engine:*Engine = (*Engine)malloc(sizeof(Engine))
+    if voices == 0 || engine == 0: ret 99
+    (*engine).voices = voices
+    (*engine).count = 2
+    voices[0].name = "first"
+    voices[0].rate = 1.25
+    voices[0].pitch = 0.75
+    voices[0].energy = 0.5
+    voices[0].gender = 11
+    voices[1].name = "second"
+    voices[1].rate = 2.0
+    voices[1].pitch = 3.0
+    voices[1].energy = 4.0
+    voices[1].gender = 22
+    copy:Voice = (*engine).voices[0]
+    second:Voice = (*engine).voices[1]
+    failures:int = 0
+    if copy.name != voices[0].name || copy.rate != 1.25 || copy.pitch != 0.75 || copy.energy != 0.5 || copy.gender != 11:
+      failures = failures + 1
+    if second.name != voices[1].name || second.rate != 2.0 || second.pitch != 3.0 || second.energy != 4.0 || second.gender != 22:
+      failures = failures + 1
+    voices[0].rate = 9.0
+    if copy.rate != 1.25: failures = failures + 1
+    free(voices as *char)
+    free(engine as *char)
+    say "POINTER_ARRAY_STRUCT_COPY", failures
+    ret failures

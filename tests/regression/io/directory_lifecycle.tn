@@ -1,0 +1,30 @@
+import "io"
+
+fn main() -> int:
+  path:str = "verification_directory"
+  io.dir_remove(path)
+  if path_is_dir(path) != 0:
+    say "FAIL absent path reported as directory"
+    ret 1
+  if io.dir_remove(path) != -1:
+    say "FAIL removing absent directory must return -1"
+    ret 2
+  if io.dir_make(path) != 0:
+    say "FAIL directory creation"
+    ret 3
+  if io.dir_make(path) != -1:
+    say "FAIL duplicate directory creation must return -1"
+    ret 4
+  if io.dir_exists(path) != 1 || io.file_exists(path) != 0:
+    say "FAIL directory classification"
+    ret 5
+  listing:str = io.dir_list(path)
+  if listing == 0:
+    say "FAIL empty directory listing"
+    ret 6
+  unsafe:
+    free(listing as *char)
+  if io.dir_remove(path) != 0 || io.dir_exists(path) != 0:
+    say "FAIL directory removal"
+    ret 7
+  ret 0

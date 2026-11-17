@@ -1,0 +1,8 @@
+import "./support/lib/arduino.tn"
+import "./support/lib/kernel.tn"
+import "./support/lib/raspi.tn"
+
+fn main() -> int:
+  record:KernelRecord = KernelRecord{value:22}
+  if arduino.value() != 11 || record.value != 22 || raspi.value() != 33: ret 1
+  ret 0

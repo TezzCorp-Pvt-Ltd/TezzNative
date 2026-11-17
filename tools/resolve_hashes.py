@@ -23,6 +23,8 @@ import shutil
 import hashlib
 import subprocess
 import struct
+from pathlib import Path
+from library_package import manifest_source, source_checksum
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 LIB_DIR = os.path.join(REPO_ROOT, "lib")
@@ -33,26 +35,7 @@ MOD_PATH = os.path.join(REPO_ROOT, "tezz.mod")
 LOCK_PATH = os.path.join(REPO_ROOT, "tezz.lock")
 REGISTRY_PATH = os.path.join(REPO_ROOT, "registry.tnx")
 
-def hash8_source_file(path):
-    with open(path, "rb") as f:
-        data = f.read()
-    h = 5381
-    pending_cr = False
-    for b in data:
-        if pending_cr:
-            if b == 10:
-                h = (((h << 5) + h + 10) & 0x7FFFFFFF)
-                pending_cr = False
-                continue
-            h = (((h << 5) + h + 13) & 0x7FFFFFFF)
-            pending_cr = False
-        if b == 13:
-            pending_cr = True
-        else:
-            h = (((h << 5) + h + b) & 0x7FFFFFFF)
-    if pending_cr:
-        h = (((h << 5) + h + 13) & 0x7FFFFFFF)
-    return f"{h:08X}"
+hash8_source_file = source_checksum
 
 def hash8_text(text):
     data = text.encode("utf-8")
@@ -83,7 +66,18 @@ def get_declared_dependencies():
     return deps
 
 def resolve_lock_and_registry():
-    print("[1/6] Resolving library checksums from lib/*.tn...")
+    print("[1/6] Resolving library component and facade checksums...")
+    public, sdk = Path(LIB_DIR), Path(SITE_LIB_DIR)
+    # A facade checksum covers its complete implementation inventory.
+    for facade in sorted(public.glob("*.tn")):
+        facade.write_text(manifest_source(facade), encoding="utf-8", newline="\n")
+    for source in sorted(public.rglob("*.tn")):
+        destination = sdk / source.relative_to(public)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+    for facade in sorted(sdk.glob("*.tn")):
+        if not (public / facade.name).exists():
+            facade.write_text(manifest_source(facade), encoding="utf-8", newline="\n")
     deps = get_declared_dependencies()
     if not deps:
         print("Warning: No dependencies found in tezz.mod. Scanning lib/ directory...")
@@ -97,6 +91,8 @@ def resolve_lock_and_registry():
     for name in sorted(deps.keys()):
         ver = deps[name]
         lib_path = os.path.join(LIB_DIR, f"{name}.tn")
+        if not os.path.exists(lib_path):
+            lib_path = os.path.join(SITE_LIB_DIR, f"{name}.tn")
         if not os.path.exists(lib_path):
             print(f"  Warning: lib/{name}.tn missing, skipping...")
             continue
@@ -133,15 +129,11 @@ def resolve_lock_and_registry():
         f.write(lock_header + lock_payload)
     with open(os.path.join(SITE_ROOT, "registry.tnx"), "w", encoding="utf-8", newline="\n") as f:
         f.write(reg_header + reg_payload)
+    for filename, content in (("tezz.lock", lock_header + lock_payload),
+                              ("registry.tnx", reg_header + reg_payload)):
+        (Path(SITE_LIB_DIR).parent / filename).write_text(content, encoding="utf-8", newline="\n")
 
-    # Sync lib files to website
-    os.makedirs(SITE_LIB_DIR, exist_ok=True)
-    synced_libs = 0
-    for f in os.listdir(LIB_DIR):
-        if f.endswith(".tn"):
-            shutil.copyfile(os.path.join(LIB_DIR, f), os.path.join(SITE_LIB_DIR, f))
-            synced_libs += 1
-    print(f"  Synced {synced_libs} library files to {SITE_LIB_DIR}")
+    print(f"  Synced {sum(1 for _ in public.rglob('*.tn'))} library source files to {sdk}")
 
 def get_pe_machine(path):
     if not os.path.exists(path):
@@ -235,7 +227,7 @@ def repackage_sdk():
             for line in res.stdout.strip().splitlines()[-3:]:
                 print(f"    {line}")
         else:
-            print(f"  Error packaging SDK: {res.stderr}")
+            raise RuntimeError(f"SDK packaging failed:\n{res.stdout}\n{res.stderr}")
     else:
         print(f"  Notice: {pkg_script} not found.")
 
@@ -249,7 +241,7 @@ def rebuild_release_manifest():
                 if "sha256:" in line or "artifacts:" in line or "manifest:" in line:
                     print(f"    {line}")
         else:
-            print(f"  Error building release manifest: {res.stderr}")
+            raise RuntimeError(f"Release manifest build failed:\n{res.stdout}\n{res.stderr}")
 
 def verify_manifest():
     print("[5/6] Verifying release manifest integrity...")
@@ -259,7 +251,7 @@ def verify_manifest():
         if res.returncode == 0:
             print("  Release manifest verification PASSED (0 failures).")
         else:
-            print(f"  Manifest verification report:\n{res.stdout}\n{res.stderr}")
+            raise RuntimeError(f"Release manifest verification failed:\n{res.stdout}\n{res.stderr}")
 
 def verify_package_trust():
     print("[6/6] Running package trust conformance gate...")
@@ -273,13 +265,20 @@ def verify_package_trust():
         if res.returncode == 0:
             print("  Package trust gate PASSED (100%).")
         else:
-            print(f"  Package trust issues detected:\n{res.stdout}")
+            raise RuntimeError(f"Package trust verification failed:\n{res.stdout}\n{res.stderr}")
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--metadata-only", action="store_true",
+                        help="update source manifests/checksums without copying binaries or packaging releases")
+    args = parser.parse_args()
     print("=" * 72)
     print(" TezzNative Unified SHA, Key & Verification Metadata Resolver")
     print("=" * 72)
     resolve_lock_and_registry()
+    if args.metadata_only:
+        return
     sync_compiler_binaries()
     repackage_sdk()
     rebuild_release_manifest()

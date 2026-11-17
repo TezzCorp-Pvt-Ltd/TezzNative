@@ -1,0 +1,54 @@
+import "./support/lib/float_calls.tn"
+
+fn take_f64(x:f64) -> f64:
+  ret x
+
+fn take_f32(x:f32) -> f32:
+  ret x
+
+fn take_f16(x:f16) -> f16:
+  ret x
+
+fn take_bf16(x:bf16) -> bf16:
+  ret x
+
+fn take_f8(x:f8) -> f8:
+  ret x
+
+fn take_e5(x:f8_e5m2) -> f8_e5m2:
+  ret x
+
+fn integer_return() -> f64:
+  ret 3
+
+fn narrow_return() -> f16:
+  ret 1.25
+
+fn wide_return() -> f64:
+  value:f32 = 2.5
+  ret value
+
+struct Scale:
+  value:f64
+
+  fn by(self:*Scale, factor:f64) -> f64:
+    ret self.value * factor
+
+fn main() -> int:
+  if take_f64(3) != 3.0: ret 1
+  if take_f32(1.25) != 1.25: ret 2
+  if take_f16(1.25) != 1.25: ret 3
+  if take_bf16(1.25) != 1.25: ret 4
+  if take_f8(1.25) != 1.25: ret 5
+  if take_e5(1.25) != 1.25: ret 6
+  if take_f32(3) != 3.0: ret 7
+  if take_f64(1.25 as f16) != 1.25: ret 8
+  if integer_return() != 3.0: ret 9
+  if narrow_return() != 1.25: ret 10
+  if wide_return() != 2.5: ret 11
+  if float_calls.half(1.25) != 1.25: ret 12
+  scale:Scale = Scale{value:3.0}
+  if scale.by(2) != 6.0: ret 13
+  callback:fn(f32) -> f32 = take_f32
+  if callback(1.25) != 1.25: ret 14
+  ret 0

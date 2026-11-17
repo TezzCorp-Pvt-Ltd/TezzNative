@@ -1,0 +1,10 @@
+import "otp_sys"
+import "gen_server"
+import "supervisor"
+import "time"
+
+fn main() -> int:
+  if otp_sys.OTP_ALIVE() != 1: ret 1
+  if otp_sys.RESTART_ONE_FOR_ONE() != 10: ret 2
+  if time.now_ns() <= 0: ret 3
+  ret 0

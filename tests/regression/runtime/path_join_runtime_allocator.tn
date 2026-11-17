@@ -1,0 +1,11 @@
+extern fn speech_stt_steps(handle:int) -> int
+
+fn main() -> int:
+  unsafe:
+    if speech_stt_steps(0) != -1: ret 1
+    joined:str = path_join("base", "file.txt")
+    if joined == 0: ret 2
+    if strcmp(joined, "base/file.txt") != 0 && strcmp(joined, "base\\file.txt") != 0: ret 3
+    free(joined)
+    say "PATH_JOIN_RUNTIME_ALLOCATOR", 0
+    ret 0

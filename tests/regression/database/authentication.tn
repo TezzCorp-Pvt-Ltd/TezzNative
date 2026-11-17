@@ -1,0 +1,60 @@
+import "tezzdb"
+import "tezzdb.auth"
+
+fn main() -> int:
+  unsafe:
+    remove("authentication.tdb")
+    remove("authentication.tdb.wal")
+    db:*TezzDb = tezzdb.open("authentication.tdb")
+    if db == 0:
+      ret 1
+    user:str = "ali\"ce\\quoted"
+    if tezzdb.register_user(db, user, "test password") != 0:
+      ret 2
+    if tezzdb.register_user(db, user, "another password") != 0 - 3:
+      ret 3
+    if tezzdb.login_token(db, user, "wrong password") != 0:
+      ret 4
+    first:str = tezzdb.login_token(db, user, "test password")
+    second:str = tezzdb.login_token(db, user, "test password")
+    if first == 0 || second == 0 || len(first) != 64 || strcmp(first, second) == 0:
+      ret 5
+    found:str = tezzdb.user_from_token(db, first)
+    if found == 0 || strcmp(found, user) != 0:
+      ret 6
+    free(found)
+    if tezzdb.user_from_token(db, "tok_alice_123456") != 0:
+      ret 7
+    if tezzdb.user_from_token(db, "0000000000000000000000000000000000000000000000000000000000000000") != 0:
+      ret 8
+    sessions:str = tezzdb.query_all(db, "sessions")
+    if sessions == 0:
+      ret 9
+    if tezzdb.row_get_str(sessions, "token") != 0:
+      ret 10
+    stored:str = tezzdb.row_get_str(sessions, "token_hash")
+    if stored == 0 || len(stored) != 64 || strcmp(stored, first) == 0:
+      ret 11
+    free(stored)
+    free(sessions)
+    legacy:str = tezzdb.row_json2("username", "legacy", "password_hash", "123456789")
+    if tezzdb.insert(db, "users", legacy) < 0:
+      ret 12
+    free(legacy)
+    if tezzdb.login_token(db, "legacy", "password") != 0:
+      ret 13
+    first_hash:str = tezzdb.auth.token_hash(first)
+    expired:str = tezzdb.row_json3("token_hash", first_hash, "username", user, "expires_at", "0")
+    free(first_hash)
+    if tezzdb.update(db, "sessions", 1, expired) < 0:
+      ret 14
+    free(expired)
+    if tezzdb.user_from_token(db, first) != 0:
+      ret 15
+    active:str = tezzdb.user_from_token(db, second)
+    if active == 0 || strcmp(active, user) != 0:
+      ret 16
+    free(active)
+    free(first)
+    free(second)
+    ret tezzdb.close(db)

@@ -1,0 +1,236 @@
+// io implementation: bigfile.
+
+import "io.state"
+
+fn bigfile_open(path:str, chunk_size:int) -> *BigFile:
+  if path == 0:
+    ret 0 as *BigFile
+  cs:int = chunk_size
+  if cs <= 0:
+    cs = io.state._get_IO_CHUNK_DEFAULT()
+  h:*char = fopen(path, "rb")
+  if h == 0 as *char:
+    ret 0 as *BigFile
+  // Measure file size via seek
+  if fseek(h, 0, io.state._get_SEEK_END()) != 0:
+    fclose(h)
+    ret 0 as *BigFile
+  sz:int = ftell(h)
+  if sz < 0:
+    sz = 0
+  if fseek(h, 0, io.state._get_SEEK_SET()) != 0:
+    fclose(h)
+    ret 0 as *BigFile
+  bf:*BigFile = (*BigFile)malloc(sizeof(BigFile))
+  if bf == 0:
+    fclose(h)
+    ret 0 as *BigFile
+  pn:int = len(path)
+  pc:*char = malloc(pn + 1)
+  if pc == 0:
+    free(bf)
+    fclose(h)
+    ret 0 as *BigFile
+  unsafe:
+    memcpy(pc, path as *char, pn)
+    pc[pn] = 0 as char
+  (*bf).h = h
+  (*bf).size = sz
+  (*bf).pos = 0
+  (*bf).chunk = cs
+  (*bf).last_read = 0
+  (*bf).eof = 0
+  (*bf).path = pc as str
+  ret bf
+
+fn bigfile_read_chunk(bf:*BigFile) -> str:
+  if bf == 0 || (*bf).eof != 0:
+    ret 0 as str
+  remaining:int = (*bf).size - (*bf).pos
+  if remaining <= 0:
+    (*bf).eof = 1
+    (*bf).last_read = 0
+    ret 0 as str
+  to_read:int = (*bf).chunk
+  if to_read > remaining:
+    to_read = remaining
+  buf:*char = malloc(to_read + 1)
+  if buf == 0:
+    ret 0 as str
+  n:int = fread(buf, 1, to_read, (*bf).h)
+  if n <= 0:
+    free(buf)
+    (*bf).eof = 1
+    (*bf).last_read = 0
+    ret 0 as str
+  buf[n] = 0 as char
+  (*bf).pos = (*bf).pos + n
+  (*bf).last_read = n
+  if (*bf).pos >= (*bf).size:
+    (*bf).eof = 1
+  ret buf as str
+
+// Read exactly n bytes at current position. Returns allocated buffer.
+
+fn bigfile_read_exact(bf:*BigFile, n:int) -> str:
+  if bf == 0 || n <= 0 || (*bf).eof != 0:
+    ret 0 as str
+  buf:*char = malloc(n + 1)
+  if buf == 0:
+    ret 0 as str
+  got:int = fread(buf, 1, n, (*bf).h)
+  buf[got] = 0 as char
+  (*bf).pos = (*bf).pos + got
+  (*bf).last_read = got
+  if got <= 0:
+    free(buf)
+    (*bf).eof = 1
+    ret 0 as str
+  if (*bf).pos >= (*bf).size:
+    (*bf).eof = 1
+  ret buf as str
+
+fn bigfile_seek(bf:*BigFile, off:int) -> int:
+  if bf == 0:
+    ret 0 - 1
+  r:int = fseek((*bf).h, off, io.state._get_SEEK_SET())
+  if r != 0:
+    ret 0 - 1
+  (*bf).pos = off
+  (*bf).eof = 0
+  ret 0
+
+fn bigfile_seek_rel(bf:*BigFile, delta:int) -> int:
+  if bf == 0:
+    ret 0 - 1
+  r:int = fseek((*bf).h, delta, io.state._get_SEEK_CUR())
+  if r != 0:
+    ret 0 - 1
+  np:int = (*bf).pos + delta
+  if np < 0:
+    np = 0
+  (*bf).pos = np
+  (*bf).eof = 0
+  ret 0
+
+fn bigfile_pos(bf:*BigFile) -> int:
+  if bf == 0:
+    ret 0 - 1
+  ret (*bf).pos
+
+fn bigfile_size(bf:*BigFile) -> int:
+  if bf == 0:
+    ret 0 - 1
+  ret (*bf).size
+
+fn bigfile_eof(bf:*BigFile) -> int:
+  if bf == 0:
+    ret 1
+  ret (*bf).eof
+
+fn bigfile_last_read(bf:*BigFile) -> int:
+  if bf == 0:
+    ret 0
+  ret (*bf).last_read
+
+fn bigfile_progress_pct(bf:*BigFile) -> int:
+  if bf == 0 || (*bf).size <= 0:
+    ret 0
+  ret ((*bf).pos * 100) / (*bf).size
+
+fn bigfile_close(bf:*BigFile) -> int:
+  if bf == 0:
+    ret 0 - 1
+  if (*bf).h != 0 as *char:
+    fclose((*bf).h)
+    (*bf).h = 0 as *char
+  if (*bf).path != 0:
+    free((*bf).path)
+    (*bf).path = 0 as str
+  free(bf)
+  ret 0
+
+// Walk a BigFile line by line (newline-delimited).
+// Calls cb(line_str, line_num) for each line.
+// Returns total lines processed.
+
+fn bigfile_walk_lines(path:str, chunk_size:int, cb:fn(str, int)->int) -> int:
+  bf:*BigFile = bigfile_open(path, chunk_size)
+  if bf == 0:
+    ret 0 - 1
+  line_num:int = 0
+  // Internal line buffer — grows as needed
+  line_buf:*char = malloc(65536)
+  if line_buf == 0:
+    bigfile_close(bf)
+    ret 0 - 1
+  line_buf_cap:int = 65536
+  line_len:int = 0
+  while bigfile_eof(bf) == 0:
+    chunk:str = bigfile_read_chunk(bf)
+    if chunk == 0:
+      break
+    nr:int = bigfile_last_read(bf)
+    i:int = 0
+    while i < nr:
+      c:int = 0
+      unsafe:
+        c = (chunk as *char)[i] as int
+      if c == 10 || c == 0:
+        // Flush line
+        if line_len > 0:
+          if line_len + 1 > line_buf_cap:
+            nb:*char = malloc(line_len + 1)
+            if nb == 0:
+              free(line_buf)
+              free(chunk)
+              bigfile_close(bf)
+              ret line_num
+            free(line_buf)
+            line_buf = nb
+            line_buf_cap = line_len + 1
+          line_buf[line_len] = 0 as char
+          cb(line_buf as str, line_num)
+          line_num = line_num + 1
+          line_len = 0
+      else:
+        if line_len + 2 > line_buf_cap:
+          new_cap:int = line_buf_cap * 2
+          if new_cap < line_len + 2:
+            new_cap = line_len + 2
+          nb2:*char = malloc(new_cap)
+          if nb2 == 0:
+            free(line_buf)
+            free(chunk)
+            bigfile_close(bf)
+            ret line_num
+          unsafe:
+            memcpy(nb2, line_buf, line_len)
+          free(line_buf)
+          line_buf = nb2
+          line_buf_cap = new_cap
+        line_buf[line_len] = c as char
+        line_len = line_len + 1
+      i = i + 1
+    free(chunk)
+  // Flush remaining line
+  if line_len > 0:
+    line_buf[line_len] = 0 as char
+    cb(line_buf as str, line_num)
+    line_num = line_num + 1
+  free(line_buf)
+  bigfile_close(bf)
+  ret line_num
+
+// ─────────────────────────────────────────────────────────────
+// StreamWriter — high-throughput buffered sequential writes
+//
+// Uses an internal buffer (IO_STREAM_BUF bytes) and flushes
+// automatically. Ideal for writing GB/TB output files fast.
+//
+// Usage:
+//   sw:*StreamWriter = stream_writer_open("out.bin")
+//   stream_write_str(sw, "Hello ")
+//   stream_write_str(sw, "World\n")
+//   stream_writer_close(sw)  // auto-flushes
+// ─────────────────────────────────────────────────────────────

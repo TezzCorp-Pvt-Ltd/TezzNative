@@ -1,0 +1,35 @@
+import "io"
+
+fn main() -> int:
+  path:str = "verification_read_file.txt"
+  io.file_delete(path)
+  missing:str = read_file(path)
+  if missing != 0:
+    say "FAIL nonexistent file must return null"
+    ret 1
+  f:*File = io.open_w(path)
+  if f == 0:
+    ret 2
+  if io.file_write_line(f, "payload") != 0 || io.file_close(f) != 0:
+    ret 3
+  text:str = read_file(path)
+  if text == 0 || len(text) < 7:
+    say "FAIL read_file payload"
+    ret 4
+  unsafe:
+    if (text as *char)[0] != 112 as char || (text as *char)[6] != 100 as char:
+      ret 5
+    free(text as *char)
+  io.file_delete(path)
+  f = io.open_w(path)
+  if f == 0:
+    ret 6
+  io.file_close(f)
+  empty:str = read_file(path)
+  if empty == 0 || len(empty) != 0:
+    say "FAIL empty file must return an owned empty string"
+    ret 7
+  unsafe:
+    free(empty as *char)
+  io.file_delete(path)
+  ret 0

@@ -1,0 +1,9 @@
+extern fn tz_cuda_device_count() -> int
+extern fn tz_cuda_malloc(size:int) -> int
+extern fn tz_gpu_fill_f32(data:int, count:int, value:float) -> int
+
+fn main() -> int:
+  if tz_cuda_device_count() != 0: ret 1
+  if tz_cuda_malloc(4) != 0: ret 2
+  if tz_gpu_fill_f32(0, 1, 1.0) >= 0: ret 3
+  ret 0

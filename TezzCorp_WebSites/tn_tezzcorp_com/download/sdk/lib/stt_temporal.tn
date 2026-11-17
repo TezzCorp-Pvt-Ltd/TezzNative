@@ -1,0 +1,40 @@
+// package-file stt_temporal/checkpoint.tn 6863D626
+// package-file stt_temporal/manifest.tn 4C2AFE54
+// package-file stt_temporal/ops.tn 126E03E0
+// package-file stt_temporal/state.tn 6E4D4CB1
+import "stt_temporal.state"
+import "stt_temporal.ops"
+import "stt_temporal.checkpoint"
+
+fn create(hidden:i64, device:i64, seed:i64) -> *TemporalStt:
+  ret stt_temporal.state.create(hidden, device, seed)
+
+fn free_model(model:*TemporalStt):
+  ret stt_temporal.state.destroy(model)
+
+fn train(model:*TemporalStt, mel:*f64, frames:i64, labels:*i64, count:i64, rate_ppm:i64, loss:*f64):
+  if rate_ppm <= 0:
+    ret -1
+  ret stt_temporal.ops.objective(model, mel, frames, labels, count, loss, 1, rate_ppm)
+
+fn loss(model:*TemporalStt, mel:*f64, frames:i64, labels:*i64, count:i64, value:*f64):
+  ret stt_temporal.ops.objective(model, mel, frames, labels, count, value, 0, 0)
+
+fn backward(model:*TemporalStt, mel:*f64, frames:i64, labels:*i64, count:i64, value:*f64):
+  ret stt_temporal.ops.objective(model, mel, frames, labels, count, value, 1, 0)
+
+fn predict(model:*TemporalStt, mel:*f64, frames:i64, text:*u8, capacity:i64, beam:i64):
+  ret stt_temporal.ops.predict(model, mel, frames, text, capacity, beam)
+
+fn save(model:*TemporalStt, path:*u8):
+  ret stt_temporal.checkpoint.save(model, path)
+
+fn load(path:*u8, device:i64) -> *TemporalStt:
+  ret stt_temporal.checkpoint.load(path, device)
+
+fn steps(model:*TemporalStt):
+  if stt_temporal.state.valid(model) == 0:
+    ret -1
+  unsafe:
+    ret (*model).step
+

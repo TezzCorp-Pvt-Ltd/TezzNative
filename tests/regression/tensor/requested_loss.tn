@@ -1,0 +1,18 @@
+import "tensor"
+
+fn main() -> int:
+  tensor.tape_init()
+  x:Tensor = tensor.tensor_ones_1d(1)
+  x = tensor.tensor_require_grad(x)
+  selected:Tensor = tensor.tensor_scale(x, 3.0)
+  unrelated:Tensor = tensor.tensor_scale(x, 7.0)
+  tensor.tensor_backward(selected)
+  actual:float = tensor.tensor_grad_item(x, 0)
+  tensor.tape_reset()
+  tensor.tensor_free_tensor(selected)
+  tensor.tensor_free_tensor(unrelated)
+  tensor.tensor_free_tensor(x)
+  if actual != 3.0:
+    say "FAIL: backward must differentiate the requested loss; got ", actual
+    ret 1
+  ret 0

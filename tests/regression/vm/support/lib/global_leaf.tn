@@ -1,0 +1,9 @@
+let VALUE:int = 20 + 1
+let CALLS:int = 0
+
+fn value() -> int:
+  ret VALUE
+
+fn once() -> int:
+  CALLS = CALLS + 1
+  ret CALLS

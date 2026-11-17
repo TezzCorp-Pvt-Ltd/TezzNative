@@ -1,0 +1,458 @@
+// net implementation: websocket.
+
+import "net.state"
+import "net.transport"
+import "net.http"
+
+fn _rotl32(x:int, shift:int) -> int:
+  mask:int = 4294967295
+  s:int = shift % 32
+  if s < 0:
+    s = s + 32
+  v:int = x & mask
+  if s == 0:
+    ret v
+  ret (((v << s) & mask) | ((v >> (32 - s)) & mask)) & mask
+
+fn _sha1_bytes(data:*char, n:int, out20:*char) -> int:
+  if data == 0 || out20 == 0 || n < 0:
+    ret net.state._get_NET_ERR()
+  total:int = n + 1 + 8
+  while (total % 64) != 0:
+    total = total + 1
+  msg:*char = malloc(total)
+  if msg == 0:
+    ret net.state._get_NET_ERR()
+  if n > 0:
+    unsafe:
+      memcpy(msg, data, n)
+  msg[n] = 128 as char
+  i:int = n + 1
+  while i < total:
+    msg[i] = 0 as char
+    i = i + 1
+  bit_len:int = n * 8
+  i = 0
+  while i < 8:
+    shift:int = (7 - i) * 8
+    msg[total - 8 + i] = ((bit_len >> shift) & 255) as char
+    i = i + 1
+
+  mask:int = 4294967295
+  h0:int = 1732584193
+  h1:int = 4023233417
+  h2:int = 2562383102
+  h3:int = 271733878
+  h4:int = 3285377520
+  w:[int;80]
+
+  block:int = 0
+  while block < total:
+    t:int = 0
+    while t < 16:
+      j:int = block + (t * 4)
+      b0:int = (msg[j] as int) & 255
+      b1:int = (msg[j + 1] as int) & 255
+      b2:int = (msg[j + 2] as int) & 255
+      b3:int = (msg[j + 3] as int) & 255
+      w[t] = ((b0 << 24) | (b1 << 16) | (b2 << 8) | b3) & mask
+      t = t + 1
+    while t < 80:
+      x:int = w[t - 3] ^ w[t - 8] ^ w[t - 14] ^ w[t - 16]
+      w[t] = _rotl32(x, 1)
+      t = t + 1
+
+    a:int = h0
+    b:int = h1
+    c:int = h2
+    d:int = h3
+    e:int = h4
+    t = 0
+    while t < 80:
+      f:int = 0
+      k:int = 0
+      if t < 20:
+        f = (b & c) | (((b ^ mask)) & d)
+        k = 1518500249
+      else if t < 40:
+        f = b ^ c ^ d
+        k = 1859775393
+      else if t < 60:
+        f = (b & c) | (b & d) | (c & d)
+        k = 2400959708
+      else:
+        f = b ^ c ^ d
+        k = 3395469782
+      temp:int = (_rotl32(a, 5) + f + e + k + w[t]) & mask
+      e = d
+      d = c
+      c = _rotl32(b, 30)
+      b = a
+      a = temp
+      t = t + 1
+
+    h0 = (h0 + a) & mask
+    h1 = (h1 + b) & mask
+    h2 = (h2 + c) & mask
+    h3 = (h3 + d) & mask
+    h4 = (h4 + e) & mask
+    block = block + 64
+
+  out20[0] = ((h0 >> 24) & 255) as char
+  out20[1] = ((h0 >> 16) & 255) as char
+  out20[2] = ((h0 >> 8) & 255) as char
+  out20[3] = (h0 & 255) as char
+  out20[4] = ((h1 >> 24) & 255) as char
+  out20[5] = ((h1 >> 16) & 255) as char
+  out20[6] = ((h1 >> 8) & 255) as char
+  out20[7] = (h1 & 255) as char
+  out20[8] = ((h2 >> 24) & 255) as char
+  out20[9] = ((h2 >> 16) & 255) as char
+  out20[10] = ((h2 >> 8) & 255) as char
+  out20[11] = (h2 & 255) as char
+  out20[12] = ((h3 >> 24) & 255) as char
+  out20[13] = ((h3 >> 16) & 255) as char
+  out20[14] = ((h3 >> 8) & 255) as char
+  out20[15] = (h3 & 255) as char
+  out20[16] = ((h4 >> 24) & 255) as char
+  out20[17] = ((h4 >> 16) & 255) as char
+  out20[18] = ((h4 >> 8) & 255) as char
+  out20[19] = (h4 & 255) as char
+  free(msg)
+  ret net.state._get_NET_OK()
+
+fn _base64_encode(data:*char, n:int) -> str:
+  if data == 0 || n < 0:
+    ret 0 as str
+  tbl:str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+  out_len:int = ((n + 2) / 3) * 4
+  out:*char = malloc(out_len + 1)
+  if out == 0:
+    ret 0 as str
+  i:int = 0
+  w:int = 0
+  while i < n:
+    b0:int = (data[i] as int) & 255
+    i = i + 1
+    b1:int = 0
+    b2:int = 0
+    has1:int = 0
+    has2:int = 0
+    if i < n:
+      b1 = (data[i] as int) & 255
+      i = i + 1
+      has1 = 1
+    if i < n:
+      b2 = (data[i] as int) & 255
+      i = i + 1
+      has2 = 1
+    s0:int = (b0 >> 2) & 63
+    s1:int = ((b0 & 3) << 4) | ((b1 >> 4) & 15)
+    s2:int = ((b1 & 15) << 2) | ((b2 >> 6) & 3)
+    s3:int = b2 & 63
+    out[w] = tbl[s0]
+    out[w + 1] = tbl[s1]
+    if has1 != 0:
+      out[w + 2] = tbl[s2]
+    else:
+      out[w + 2] = 61 as char
+    if has2 != 0:
+      out[w + 3] = tbl[s3]
+    else:
+      out[w + 3] = 61 as char
+    w = w + 4
+  out[w] = 0 as char
+  ret out as str
+
+fn ws_accept_key(client_key:str) -> str:
+  if client_key == 0 || client_key[0] == 0 as char:
+    ret 0 as str
+  joined:str = net.transport._join2(client_key, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+  if joined == 0:
+    ret 0 as str
+  digest:[char;20]
+  if _sha1_bytes(joined as *char, len(joined), digest) != 0:
+    free(joined)
+    ret 0 as str
+  free(joined)
+  ret _base64_encode(digest, 20)
+
+fn ws_is_upgrade_request(req:str) -> int:
+  if req == 0:
+    ret 0
+  m:str = net.http.http_method(req)
+  if m == 0:
+    ret 0
+  ok:int = 0
+  if net.transport._starts_with(m, "GET") != 0 && len(m) == 3:
+    u:str = net.http.http_get_header(req, "Upgrade")
+    k:str = net.http.http_get_header(req, "Sec-WebSocket-Key")
+    c:str = net.http.http_get_header(req, "Connection")
+    if u != 0 && k != 0 && c != 0:
+      // For now expect canonical values as sent by modern clients.
+      if (net.transport._starts_with(u, "websocket") != 0 || net.transport._starts_with(u, "WebSocket") != 0):
+        if (net.transport._starts_with(c, "Upgrade") != 0 || net.transport._starts_with(c, "upgrade") != 0):
+          if k[0] != 0 as char:
+            ok = 1
+    if u != 0:
+      free(u)
+    if k != 0:
+      free(k)
+    if c != 0:
+      free(c)
+  free(m)
+  ret ok
+
+fn ws_server_handshake(sock:int, req:str) -> int:
+  if sock < 0 || req == 0:
+    ret net.state._get_NET_ERR()
+  key:str = net.http.http_get_header(req, "Sec-WebSocket-Key")
+  if key == 0 || key[0] == 0 as char:
+    if key != 0:
+      free(key)
+    ret net.state._get_NET_ERR()
+  accept:str = ws_accept_key(key)
+  free(key)
+  if accept == 0:
+    ret net.state._get_NET_ERR()
+  r1:str = net.transport._join2("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ", accept)
+  r2:str = net.transport._join2(r1, "\r\n\r\n")
+  w:int = net.transport.tcp_send_text(sock, r2)
+  free(accept)
+  free(r1)
+  free(r2)
+  if w < 0:
+    ret net.state._get_NET_ERR()
+  ret net.state._get_NET_OK()
+
+fn ws_send_frame(sock:int, opcode:int, payload:*char, n:int) -> int:
+  if sock < 0 || n < 0:
+    ret net.state._get_NET_ERR()
+  head:[char;10]
+  head[0] = (128 | (opcode & 15)) as char
+  hlen:int = 0
+  plen:int = n
+  if plen < 126:
+    head[1] = (plen & 127) as char
+    hlen = 2
+  else if plen <= 65535:
+    head[1] = 126 as char
+    head[2] = ((plen >> 8) & 255) as char
+    head[3] = (plen & 255) as char
+    hlen = 4
+  else:
+    head[1] = 127 as char
+    head[2] = ((plen >> 56) & 255) as char
+    head[3] = ((plen >> 48) & 255) as char
+    head[4] = ((plen >> 40) & 255) as char
+    head[5] = ((plen >> 32) & 255) as char
+    head[6] = ((plen >> 24) & 255) as char
+    head[7] = ((plen >> 16) & 255) as char
+    head[8] = ((plen >> 8) & 255) as char
+    head[9] = (plen & 255) as char
+    hlen = 10
+  if net.transport.tcp_send_all(sock, head, hlen) < 0:
+    ret net.state._get_NET_ERR()
+  if plen > 0:
+    if payload == 0:
+      ret net.state._get_NET_ERR()
+    if net.transport.tcp_send_all(sock, payload, plen) < 0:
+      ret net.state._get_NET_ERR()
+  ret net.state._get_NET_OK()
+
+fn ws_send_text(sock:int, text:str) -> int:
+  if text == 0:
+    ret net.state._get_NET_ERR()
+  ret ws_send_frame(sock, 1, text as *char, len(text))
+
+fn ws_send_binary(sock:int, payload:*char, n:int) -> int:
+  ret ws_send_frame(sock, 2, payload, n)
+
+fn _drain_bytes(sock:int, n:int) -> int:
+  if n <= 0:
+    ret net.state._get_NET_OK()
+  tmp:[char;256]
+  left:int = n
+  while left > 0:
+    take:int = left
+    if take > 256:
+      take = 256
+    if net.http._recv_exact(sock, tmp, take) < 0:
+      ret net.state._get_NET_ERR()
+    left = left - take
+  ret net.state._get_NET_OK()
+
+// Reads one WebSocket frame and returns decoded payload as string.
+// opcode_out (optional) receives frame opcode. Close returns 0 with opcode=8.
+
+fn ws_recv_frame(sock:int, max_bytes:int, opcode_out:*int) -> str:
+  if sock < 0:
+    if opcode_out != 0:
+      unsafe:
+        *opcode_out = 0 - 1
+    ret 0 as str
+  lim:int = max_bytes
+  if lim <= 0:
+    lim = net.state._get_NET_DEFAULT_MAX_READ()
+
+  h2:[char;2]
+  if net.http._recv_exact(sock, h2, 2) < 0:
+    if opcode_out != 0:
+      unsafe:
+        *opcode_out = 0 - 1
+    ret 0 as str
+  b0:int = (h2[0] as int) & 255
+  b1:int = (h2[1] as int) & 255
+  opcode:int = b0 & 15
+  masked:int = (b1 >> 7) & 1
+  plen:int = b1 & 127
+
+  if plen == 126:
+    e2:[char;2]
+    if net.http._recv_exact(sock, e2, 2) < 0:
+      if opcode_out != 0:
+        unsafe:
+          *opcode_out = 0 - 1
+      ret 0 as str
+    plen = (((e2[0] as int) & 255) << 8) | ((e2[1] as int) & 255)
+  else if plen == 127:
+    e8:[char;8]
+    if net.http._recv_exact(sock, e8, 8) < 0:
+      if opcode_out != 0:
+        unsafe:
+          *opcode_out = 0 - 1
+      ret 0 as str
+    plen = (((e8[0] as int) & 255) << 56)
+    plen = plen | (((e8[1] as int) & 255) << 48)
+    plen = plen | (((e8[2] as int) & 255) << 40)
+    plen = plen | (((e8[3] as int) & 255) << 32)
+    plen = plen | (((e8[4] as int) & 255) << 24)
+    plen = plen | (((e8[5] as int) & 255) << 16)
+    plen = plen | (((e8[6] as int) & 255) << 8)
+    plen = plen | ((e8[7] as int) & 255)
+  if plen < 0:
+    if opcode_out != 0:
+      unsafe:
+        *opcode_out = 0 - 1
+    ret 0 as str
+
+  mask_key:[char;4]
+  if masked != 0:
+    if net.http._recv_exact(sock, mask_key, 4) < 0:
+      if opcode_out != 0:
+        unsafe:
+          *opcode_out = 0 - 1
+      ret 0 as str
+
+  if plen > lim:
+    if _drain_bytes(sock, plen) < 0:
+      if opcode_out != 0:
+        unsafe:
+          *opcode_out = 0 - 1
+      ret 0 as str
+    if opcode_out != 0:
+      unsafe:
+        *opcode_out = opcode
+    ret 0 as str
+
+  out:*char = malloc(plen + 1)
+  if out == 0:
+    _drain_bytes(sock, plen)
+    if opcode_out != 0:
+      unsafe:
+        *opcode_out = 0 - 1
+    ret 0 as str
+  if plen > 0:
+    if net.http._recv_exact(sock, out, plen) < 0:
+      free(out)
+      if opcode_out != 0:
+        unsafe:
+          *opcode_out = 0 - 1
+      ret 0 as str
+
+  if masked != 0:
+    i:int = 0
+    while i < plen:
+      m:int = (mask_key[i % 4] as int) & 255
+      v:int = ((out[i] as int) & 255) ^ m
+      out[i] = (v & 255) as char
+      i = i + 1
+
+  out[plen] = 0 as char
+  if opcode_out != 0:
+    unsafe:
+      *opcode_out = opcode
+  if opcode == 8:
+    free(out)
+    ret 0 as str
+  ret out as str
+
+// Compatibility helper: receive one text frame payload.
+
+fn ws_recv_text(sock:int, max_bytes:int) -> str:
+  opcode:int = 0 - 1
+  payload:str = ws_recv_frame(sock, max_bytes, &opcode)
+  if payload == 0:
+    ret 0 as str
+  if opcode == 1 || opcode == 2 || opcode == 0:
+    ret payload
+  free(payload)
+  ret 0 as str
+
+fn ws_send_ping(sock:int, payload:str) -> int:
+  if payload == 0:
+    ret ws_send_frame(sock, 9, 0 as *char, 0)
+  ret ws_send_frame(sock, 9, payload as *char, len(payload))
+
+fn ws_send_pong(sock:int, payload:str) -> int:
+  if payload == 0:
+    ret ws_send_frame(sock, 10, 0 as *char, 0)
+  ret ws_send_frame(sock, 10, payload as *char, len(payload))
+
+// Echo-oriented session loop:
+// - text -> text echo
+// - binary -> binary echo
+// - ping -> pong
+// - close/end -> exits
+// Returns processed frame count or NET_ERR.
+
+fn ws_session_echo_loop(sock:int, max_bytes:int, max_frames:int) -> int:
+  if sock < 0:
+    ret net.state._get_NET_ERR()
+  limit:int = max_frames
+  if limit <= 0:
+    limit = 2147483647
+  handled:int = 0
+  while handled < limit:
+    opcode:int = 0 - 1
+    msg:str = ws_recv_frame(sock, max_bytes, &opcode)
+    if msg == 0:
+      if opcode == 8 || opcode == 0:
+        ret handled
+      ret net.state._get_NET_ERR()
+    rc:int = net.state._get_NET_OK()
+    if opcode == 1:
+      rc = ws_send_text(sock, msg)
+    else if opcode == 2:
+      rc = ws_send_binary(sock, msg as *char, len(msg))
+    else if opcode == 9:
+      rc = ws_send_pong(sock, msg)
+    else:
+      rc = net.state._get_NET_OK()
+    free(msg)
+    if rc < 0:
+      ret net.state._get_NET_ERR()
+    handled = handled + 1
+  ret handled
+
+// Upgrade request to WebSocket and run echo loop.
+// Returns frame count (>=0) or NET_ERR.
+
+fn ws_upgrade_and_session_echo(sock:int, req:str, max_bytes:int, max_frames:int) -> int:
+  if sock < 0 || req == 0:
+    ret net.state._get_NET_ERR()
+  if ws_server_handshake(sock, req) != 0:
+    ret net.state._get_NET_ERR()
+  ret ws_session_echo_loop(sock, max_bytes, max_frames)
+
+// DNS helpers.

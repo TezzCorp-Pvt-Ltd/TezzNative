@@ -1,0 +1,68 @@
+struct OptimizerState:
+  first:Moment
+  second:Moment
+  length:int
+  step:int
+  rate:float
+
+struct MomentArrayState:
+  moments:[Moment;2]
+  sentinel:int
+
+struct Moment:
+  values:[int;8]
+  size:int
+
+struct LinkedState:
+  next:*LinkedState
+  value:int
+
+struct DerivedState:
+  base:BaseState
+  extra:i32
+
+struct BaseState:
+  values:[i16;3]
+
+fn moment(length:int) -> Moment:
+  result:Moment
+  result.size = length
+  result.values[0] = 17
+  result.values[7] = 29
+  ret result
+
+fn initialize(length:int) -> OptimizerState:
+  state:OptimizerState
+  state.first = moment(length)
+  state.second = moment(length + 1)
+  state.length = length
+  state.step = 0
+  state.rate = 0.9
+  ret state
+
+fn main() -> int:
+  if sizeof(Moment) != 72 || sizeof(OptimizerState) != 168 || sizeof(MomentArrayState) != 152: ret 5
+  if alignof(MomentArrayState) != 8 || sizeof(LinkedState) != 16: ret 6
+  if sizeof(BaseState) != 6 || sizeof(DerivedState) != 12 || alignof(DerivedState) != 4: ret 9
+  state:OptimizerState = initialize(3)
+  if state.first.size != 3 || state.second.size != 4:
+    say "FAIL: nested sizes", state.first.size, state.second.size
+    ret 1
+  if state.first.values[0] != 17 || state.first.values[7] != 29: ret 2
+  if state.second.values[0] != 17 || state.second.values[7] != 29: ret 3
+  if state.length != 3 || state.step != 0 || state.rate != 0.9: ret 4
+  array_state:MomentArrayState
+  array_state.moments[0] = moment(5)
+  array_state.moments[1] = moment(6)
+  array_state.sentinel = 41
+  if array_state.moments[0].size != 5 || array_state.moments[1].size != 6 || array_state.sentinel != 41: ret 7
+  linked:LinkedState
+  linked.value = 19
+  unsafe:
+    linked.next = &linked
+    if linked.next.value != 19: ret 8
+  derived:DerivedState
+  derived.base.values[2] = 23 as i16
+  derived.extra = 31 as i32
+  if derived.base.values[2] != 23 || derived.extra != 31: ret 10
+  ret 0

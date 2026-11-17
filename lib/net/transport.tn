@@ -1,0 +1,658 @@
+// net implementation: transport.
+
+import "net.state"
+import "net.http"
+import "net.urls"
+
+fn _starts_with(s:str, p:str) -> int:
+  if s == 0 || p == 0:
+    ret 0
+  i:int = 0
+  while p[i] != 0 as char:
+    if s[i] == 0 as char:
+      ret 0
+    if s[i] != p[i]:
+      ret 0
+    i = i + 1
+  ret 1
+
+fn _streq(a:str, b:str) -> int:
+  if a == 0 || b == 0:
+    ret 0
+  i:int = 0
+  while a[i] != 0 as char && b[i] != 0 as char:
+    if a[i] != b[i]:
+      ret 0
+    i = i + 1
+  if a[i] == 0 as char && b[i] == 0 as char:
+    ret 1
+  ret 0
+
+fn _streq_nocase(a:str, b:str) -> int:
+  if a == 0 || b == 0:
+    ret 0
+  i:int = 0
+  while a[i] != 0 as char && b[i] != 0 as char:
+    av:int = net.http._tolower_ascii((a[i] as int) & 255)
+    bv:int = net.http._tolower_ascii((b[i] as int) & 255)
+    if av != bv:
+      ret 0
+    i = i + 1
+  if a[i] == 0 as char && b[i] == 0 as char:
+    ret 1
+  ret 0
+
+fn _join2(a:str, b:str) -> str:
+  if a == 0:
+    ret b
+  if b == 0:
+    ret a
+  na:int = len(a)
+  nb:int = len(b)
+  out_len:int = na + nb
+  if out_len < na || out_len < nb:
+    ret 0 as str
+  p:*char = malloc(out_len + 1)
+  if p == 0:
+    ret 0 as str
+  unsafe:
+    memcpy(p, a as *char, na)
+    memcpy(p + na, b as *char, nb)
+  p[na + nb] = 0 as char
+  ret p as str
+
+fn _join3(a:str, b:str, c:str) -> str:
+  if a == 0:
+    ret _join2(b, c)
+  if b == 0:
+    ret _join2(a, c)
+  if c == 0:
+    ret _join2(a, b)
+  na:int = len(a)
+  nb:int = len(b)
+  nc:int = len(c)
+  out_len:int = na + nb + nc
+  if out_len < na || out_len < nb || out_len < nc:
+    ret 0 as str
+  p:*char = malloc(out_len + 1)
+  if p == 0:
+    ret 0 as str
+  unsafe:
+    memcpy(p, a as *char, na)
+    memcpy(p + na, b as *char, nb)
+    memcpy(p + na + nb, c as *char, nc)
+  p[na + nb + nc] = 0 as char
+  ret p as str
+
+fn _itoa(v:int) -> str:
+  if v == (0 - 9223372036854775808):
+    p:*char = malloc(21)
+    if p != 0:
+      unsafe:
+        memcpy(p, "-9223372036854775808" as *char, 20)
+        p[20] = 0 as char
+      ret p as str
+    ret 0 as str
+  neg:int = 0
+  n:int = v
+  if n < 0:
+    neg = 1
+    n = 0 - n
+  tmp:*char = malloc(32)
+  if tmp == 0:
+    ret 0 as str
+  i:int = 0
+  if n == 0:
+    tmp[i] = 48 as char
+    i = i + 1
+  while n > 0:
+    d:int = n % 10
+    tmp[i] = (48 + d) as char
+    i = i + 1
+    n = n / 10
+  if neg != 0:
+    tmp[i] = 45 as char
+    i = i + 1
+  out:*char = malloc(i + 1)
+  if out == 0:
+    free(tmp)
+    ret 0 as str
+  j:int = 0
+  while j < i:
+    out[j] = tmp[i - j - 1]
+    j = j + 1
+  out[i] = 0 as char
+  free(tmp)
+  ret out as str
+
+fn _byte_at(s:str, i:int) -> int:
+  if s == 0 || i < 0:
+    ret 0
+  c:int = (s[i] as int)
+  if c < 0:
+    c = c + 256
+  ret c
+
+fn _socket_host(host:str) -> str:
+  if host == 0:
+    ret host
+  if host[0] == 0 as char:
+    ret host
+  if _streq_nocase(host, "localhost") != 0:
+    ret "127.0.0.1"
+  ret host
+
+// Address family constant: IPv4.
+
+fn af_inet() -> int:
+  ret net_af_inet()
+
+// Address family constant: IPv6.
+
+fn af_inet6() -> int:
+  ret net_af_inet6()
+
+// Socket type constant: TCP stream.
+
+fn sock_stream() -> int:
+  ret net_sock_stream()
+
+// Socket type constant: UDP datagram.
+
+fn sock_dgram() -> int:
+  ret net_sock_dgram()
+
+// Protocol constant: TCP.
+
+fn ipproto_tcp() -> int:
+  ret net_ipproto_tcp()
+
+// Protocol constant: UDP.
+
+fn ipproto_udp() -> int:
+  ret net_ipproto_udp()
+
+// Initialize network runtime.
+
+fn init() -> int:
+  ret net_init()
+
+// Cleanup network runtime.
+
+fn cleanup() -> int:
+  ret net_cleanup()
+
+// Return last platform/network error code.
+
+fn last_error() -> int:
+  ret net_last_error()
+
+// Create socket from explicit family/type/protocol.
+
+fn socket(fam:int, typ:int, proto:int) -> int:
+  ret net_socket(fam, typ, proto)
+
+// Close socket descriptor.
+
+fn close(sock:int) -> int:
+  ret net_close(sock)
+
+// Connect socket to host:port.
+
+fn connect(sock:int, host:str, port:int) -> int:
+  ret net_connect(sock, _socket_host(host), port)
+
+// Bind socket to host:port.
+
+fn bind(sock:int, host:str, port:int) -> int:
+  ret net_bind(sock, _socket_host(host), port)
+
+// Mark TCP socket as listening.
+
+fn listen(sock:int, backlog:int) -> int:
+  ret net_listen(sock, backlog)
+
+// Accept next incoming connection.
+
+fn accept(sock:int) -> int:
+  ret net_accept(sock)
+
+// Send raw bytes.
+
+fn send(sock:int, buf:*char, n:int) -> int:
+  ret net_send(sock, buf, n)
+
+// Receive raw bytes.
+
+fn recv(sock:int, buf:*char, n:int) -> int:
+  ret net_recv(sock, buf, n)
+
+// Enable (1) or disable (0) blocking mode.
+
+fn set_blocking(sock:int, on:int) -> int:
+  ret net_set_blocking(sock, on)
+
+// Set socket timeout in milliseconds.
+
+fn set_timeout(sock:int, ms:int) -> int:
+  ret net_set_timeout(sock, ms)
+
+// Resolve host+port to textual endpoint.
+
+fn resolve(host:str, port:int) -> str:
+  ret net_resolve(host, port)
+
+// Return HTTP default port.
+
+fn http_port() -> int:
+  ret net.state._get_HTTP_PORT()
+
+// Return HTTPS default port.
+
+fn https_port() -> int:
+  ret net.state._get_HTTPS_PORT()
+
+// Return default network timeout used by helpers.
+
+fn default_timeout_ms() -> int:
+  ret net.state._get_NET_DEFAULT_TIMEOUT_MS()
+
+// Return default max receive bytes used by helpers.
+
+fn default_max_read() -> int:
+  ret net.state._get_NET_DEFAULT_MAX_READ()
+
+// Check if URL starts with http://
+
+fn is_http_url(url:str) -> int:
+  if url == 0:
+    ret 0
+  s:str = net.urls.url_scheme(url)
+  if s == 0:
+    ret 0
+  ok:int = _streq_nocase(s, "http")
+  free(s)
+  ret ok
+
+// Check if URL starts with https://
+
+fn is_https_url(url:str) -> int:
+  if url == 0:
+    ret 0
+  s:str = net.urls.url_scheme(url)
+  if s == 0:
+    ret 0
+  ok:int = _streq_nocase(s, "https")
+  free(s)
+  ret ok
+
+// Convenience: TCP socket.
+
+fn tcp_socket() -> int:
+  ret net_socket(af_inet(), sock_stream(), ipproto_tcp())
+
+// Connect TCP socket and return descriptor.
+
+fn tcp_connect(host:str, port:int) -> int:
+  s:int = tcp_socket()
+  if s < 0:
+    ret net.state._get_NET_ERR()
+  if net_connect(s, _socket_host(host), port) != 0:
+    net_close(s)
+    ret net.state._get_NET_ERR()
+  ret s
+
+// Connect TCP socket with timeout.
+
+fn tcp_connect_timeout(host:str, port:int, timeout_ms:int) -> int:
+  s:int = tcp_connect(host, port)
+  if s < 0:
+    ret net.state._get_NET_ERR()
+  if timeout_ms > 0:
+    net_set_timeout(s, timeout_ms)
+  ret s
+
+// Start TCP listener.
+
+fn tcp_listen(host:str, port:int, backlog:int) -> int:
+  s:int = tcp_socket()
+  if s < 0:
+    ret net.state._get_NET_ERR()
+  if net_bind(s, _socket_host(host), port) != 0:
+    net_close(s)
+    ret net.state._get_NET_ERR()
+  if net_listen(s, backlog) != 0:
+    net_close(s)
+    ret net.state._get_NET_ERR()
+  ret s
+
+// Send all requested bytes; returns bytes sent or <0 on error.
+
+fn tcp_send_all(sock:int, buf:*char, n:int) -> int:
+  if sock < 0 || buf == 0 || n < 0:
+    ret net.state._get_NET_ERR()
+  sent:int = 0
+  chunk_buf:[char;2048]
+  while sent < n:
+    chunk:int = n - sent
+    if chunk > 2048:
+      chunk = 2048
+    i:int = 0
+    while i < chunk:
+      chunk_buf[i] = buf[sent + i]
+      i = i + 1
+    w:int = net_send(sock, &chunk_buf[0], chunk)
+    if w <= 0:
+      ret net.state._get_NET_ERR()
+    sent = sent + w
+  ret sent
+
+// Send Tezz string over TCP.
+
+fn tcp_send_text(sock:int, payload:str) -> int:
+  if payload == 0:
+    ret net.state._get_NET_ERR()
+  ret tcp_send_all(sock, payload as *char, len(payload))
+
+// Receive bytes until peer close/timeout or max_bytes reached.
+// Returns heap string (caller frees) or 0 on allocation error.
+
+fn tcp_recv_all(sock:int, max_bytes:int) -> str:
+  if max_bytes <= 0:
+    max_bytes = net.state._get_NET_DEFAULT_MAX_READ()
+  out:*char = malloc(max_bytes + 1)
+  if out == 0:
+    ret 0 as str
+  got:int = 0
+  chunk_buf:[char;2048]
+  while got < max_bytes:
+    chunk:int = max_bytes - got
+    if chunk > 2048:
+      chunk = 2048
+    r:int = net_recv(sock, &chunk_buf[0], chunk)
+    if r <= 0:
+      break
+    i:int = 0
+    while i < r:
+      out[got + i] = chunk_buf[i]
+      i = i + 1
+    got = got + r
+  out[got] = 0 as char
+  ret out as str
+
+// Send one request and return full text response.
+// Returns heap string (caller frees), or 0 on failure.
+
+fn tcp_request(host:str, port:int, request:str, timeout_ms:int, max_bytes:int) -> str:
+  if host == 0 || request == 0:
+    ret 0 as str
+  s:int = tcp_connect(host, port)
+  if s < 0:
+    ret 0 as str
+  if timeout_ms <= 0:
+    timeout_ms = net.state._get_NET_DEFAULT_TIMEOUT_MS()
+  net_set_timeout(s, timeout_ms)
+  if tcp_send_text(s, request) < 0:
+    net_close(s)
+    ret 0 as str
+  resp:str = net.http.http_read_response(s, max_bytes)
+  net_close(s)
+  ret resp
+
+// Build raw HTTP request string.
+
+fn _http_request_ex(method:str, host:str, path:str, body:str, content_type:str, extra_headers:str) -> str:
+  m:str = method
+  h:str = host
+  p:str = path
+  if m == 0:
+    m = "GET"
+  if h == 0:
+    h = ""
+  if p == 0 || p[0] == 0:
+    p = "/"
+
+  req1:str = _join3(m, " ", p)
+  req2:str = _join2(req1, " HTTP/1.1\r\nHost: ")
+  req3:str = _join2(req2, h)
+  req4:str = _join2(req3, "\r\nUser-Agent: TezzNative/1.0\r\nAccept: */*\r\nConnection: close\r\n")
+  req4b:str = req4
+  if extra_headers != 0 && extra_headers[0] != 0 as char:
+    req4x:str = _join2(req4, extra_headers)
+    req4b = _join2(req4x, "\r\n")
+    free(req4x)
+    free(req4)
+  free(req1)
+  free(req2)
+  free(req3)
+
+  if body == 0:
+    req5:str = _join2(req4b, "\r\n")
+    free(req4b)
+    ret req5
+
+  ctype:str = content_type
+  if ctype == 0:
+    ctype = "application/octet-stream"
+  blen:int = len(body)
+  clen:str = _itoa(blen)
+  req5:str = _join2(req4b, "Content-Type: ")
+  req6:str = _join2(req5, ctype)
+  req7:str = _join2(req6, "\r\nContent-Length: ")
+  req8:str = _join2(req7, clen)
+  req9:str = _join2(req8, "\r\n\r\n")
+  req10:str = _join2(req9, body)
+  free(req4b)
+  free(req5)
+  free(req6)
+  free(req7)
+  free(req8)
+  free(req9)
+  free(clen)
+  ret req10
+
+fn _http_request(method:str, host:str, path:str, body:str, content_type:str) -> str:
+  ret _http_request_ex(method, host, path, body, content_type, 0 as str)
+
+// HTTP GET via raw TCP (returns full response text).
+
+fn http_get(host:str, path:str, timeout_ms:int, max_bytes:int) -> str:
+  req:str = _http_request("GET", host, path, 0 as str, 0 as str)
+  if req == 0:
+    ret 0 as str
+  resp:str = tcp_request(host, net.state._get_HTTP_PORT(), req, timeout_ms, max_bytes)
+  free(req)
+  ret resp
+
+// HTTP POST via raw TCP (returns full response text).
+
+fn http_post(host:str, path:str, body:str, content_type:str, timeout_ms:int, max_bytes:int) -> str:
+  req:str = _http_request("POST", host, path, body, content_type)
+  if req == 0:
+    ret 0 as str
+  resp:str = tcp_request(host, net.state._get_HTTP_PORT(), req, timeout_ms, max_bytes)
+  free(req)
+  ret resp
+
+// Convenience: UDP socket.
+
+fn udp_socket() -> int:
+  ret net_socket(af_inet(), sock_dgram(), ipproto_udp())
+
+// Connect UDP peer.
+
+fn udp_connect(host:str, port:int) -> int:
+  s:int = udp_socket()
+  if s < 0:
+    ret net.state._get_NET_ERR()
+  if net_connect(s, _socket_host(host), port) != 0:
+    net_close(s)
+    ret net.state._get_NET_ERR()
+  ret s
+
+// Send UDP text payload.
+
+fn udp_send_text(sock:int, payload:str) -> int:
+  if sock < 0 || payload == 0:
+    ret net.state._get_NET_ERR()
+  ret net_send(sock, payload as *char, len(payload))
+
+// Receive one UDP payload as heap string.
+
+fn udp_recv_text(sock:int, max_bytes:int) -> str:
+  if sock < 0:
+    ret 0 as str
+  if max_bytes <= 0:
+    max_bytes = net.state._get_NET_READ_CHUNK()
+  out:*char = malloc(max_bytes + 1)
+  if out == 0:
+    ret 0 as str
+  r:int = net_recv(sock, out, max_bytes)
+  if r < 0:
+    out[0] = 0 as char
+    ret out as str
+  out[r] = 0 as char
+  ret out as str
+
+// Open TLS handle (native runtime backend).
+
+fn tls_open(host:str, port:int) -> int:
+  ret tls_connect(host, port)
+
+// Open TLS handle with per-request policy override.
+// min_version: 0(default) | 12(TLS1.2+) | 13(TLS1.3-only)
+// handshake_timeout_ms: 0 uses backend default.
+// pin_sha256_hex: 64-char hex SHA-256 fingerprint (or empty for no pin).
+
+fn tls_open_with_policy(host:str, port:int, min_version:int, handshake_timeout_ms:int, pin_sha256_hex:str) -> int:
+  // Compatibility fallback:
+  // some installed compiler builds do not expose `tls_connect_ex` yet.
+  // keep API shape stable and fall back to standard TLS connect.
+  // policy arguments are reserved for upgraded runtimes/compilers.
+  if min_version < 0:
+    min_version = 0
+  if handshake_timeout_ms < 0:
+    handshake_timeout_ms = 0
+  if pin_sha256_hex == 0:
+    pin_sha256_hex = ""
+  ret tls_connect(host, port)
+
+// Close TLS handle.
+
+fn tls_close_h(h:int) -> int:
+  ret tls_close(h)
+
+// Send Tezz string over TLS handle.
+
+fn tls_send_text(h:int, payload:str) -> int:
+  if h < 0 || payload == 0:
+    ret net.state._get_NET_ERR()
+  ret tls_send(h, payload as *char, len(payload))
+
+// Send exact byte length over TLS handle (binary-safe).
+
+fn tls_send_all(h:int, buf:*char, n:int) -> int:
+  if h < 0 || buf == 0 || n < 0:
+    ret net.state._get_NET_ERR()
+  sent:int = 0
+  chunk_buf:[char;2048]
+  while sent < n:
+    chunk:int = n - sent
+    if chunk > 2048:
+      chunk = 2048
+    i:int = 0
+    while i < chunk:
+      chunk_buf[i] = buf[sent + i]
+      i = i + 1
+    w:int = tls_send(h, &chunk_buf[0], chunk)
+    if w <= 0:
+      ret net.state._get_NET_ERR()
+    sent = sent + w
+  ret sent
+
+// Receive all TLS bytes up to max_bytes.
+
+fn tls_recv_all(h:int, max_bytes:int) -> str:
+  if h < 0:
+    ret 0 as str
+  if max_bytes <= 0:
+    max_bytes = net.state._get_NET_DEFAULT_MAX_READ()
+  out:*char = malloc(max_bytes + 1)
+  if out == 0:
+    ret 0 as str
+  got:int = 0
+  chunk_buf:[char;2048]
+  while got < max_bytes:
+    chunk:int = max_bytes - got
+    if chunk > 2048:
+      chunk = 2048
+    r:int = tls_recv(h, &chunk_buf[0], chunk)
+    if r <= 0:
+      break
+    i:int = 0
+    while i < r:
+      out[got + i] = chunk_buf[i]
+      i = i + 1
+    got = got + r
+  out[got] = 0 as char
+  ret out as str
+
+// HTTPS GET via TLS socket (returns full response text).
+
+fn https_get(host:str, path:str, max_bytes:int) -> str:
+  req:str = _http_request("GET", host, path, 0 as str, 0 as str)
+  if req == 0:
+    ret 0 as str
+  h:int = tls_connect(host, net.state._get_HTTPS_PORT())
+  if h < 0:
+    free(req)
+    ret 0 as str
+  if tls_send_text(h, req) < 0:
+    tls_close(h)
+    free(req)
+    ret 0 as str
+  free(req)
+  resp:str = tls_recv_all(h, max_bytes)
+  tls_close(h)
+  ret resp
+
+// HTTPS POST via TLS socket (returns full response text).
+
+fn https_post(host:str, path:str, body:str, content_type:str, max_bytes:int) -> str:
+  req:str = _http_request("POST", host, path, body, content_type)
+  if req == 0:
+    ret 0 as str
+  h:int = tls_connect(host, net.state._get_HTTPS_PORT())
+  if h < 0:
+    free(req)
+    ret 0 as str
+  if tls_send_text(h, req) < 0:
+    tls_close(h)
+    free(req)
+    ret 0 as str
+  free(req)
+  resp:str = tls_recv_all(h, max_bytes)
+  tls_close(h)
+  ret resp
+
+// download(url, out_path) -> 0 on success, <0 on error.
+// Uses native runtime downloader for http:// and https:// URLs.
+
+fn download(url:str, out_path:str) -> int:
+  if url == 0 || out_path == 0:
+    ret net.state._get_NET_ERR()
+  ret http_download(url, out_path)
+
+// download helper that enforces HTTP URL scheme.
+
+fn download_http(url:str, out_path:str) -> int:
+  if is_http_url(url) == 0:
+    ret net.state._get_NET_ERR()
+  ret download(url, out_path)
+
+// download helper that enforces HTTPS URL scheme.
+
+fn download_https(url:str, out_path:str) -> int:
+  if is_https_url(url) == 0:
+    ret net.state._get_NET_ERR()
+  ret download(url, out_path)

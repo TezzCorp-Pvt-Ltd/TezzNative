@@ -1,0 +1,802 @@
+// tensor implementation: operators.
+import "simd"
+import "math"
+import "io"
+import "str"
+import "tensor.numeric"
+import "tensor.state"
+import "tensor.storage"
+import "tensor.tape"
+
+fn _tensor_relu_raw(a:Tensor) -> Tensor:
+  c:Tensor = tensor.storage._tensor_clone_raw(a)
+  i:int = 0
+  lim:int = c.size - (c.size % 8)
+  while i < lim:
+    unsafe:
+      v0:float = c.data[i + 0]
+      if v0 < 0.0: v0 = 0.0
+      c.data[i + 0] = v0
+      v1:float = c.data[i + 1]
+      if v1 < 0.0: v1 = 0.0
+      c.data[i + 1] = v1
+      v2:float = c.data[i + 2]
+      if v2 < 0.0: v2 = 0.0
+      c.data[i + 2] = v2
+      v3:float = c.data[i + 3]
+      if v3 < 0.0: v3 = 0.0
+      c.data[i + 3] = v3
+      v4:float = c.data[i + 4]
+      if v4 < 0.0: v4 = 0.0
+      c.data[i + 4] = v4
+      v5:float = c.data[i + 5]
+      if v5 < 0.0: v5 = 0.0
+      c.data[i + 5] = v5
+      v6:float = c.data[i + 6]
+      if v6 < 0.0: v6 = 0.0
+      c.data[i + 6] = v6
+      v7:float = c.data[i + 7]
+      if v7 < 0.0: v7 = 0.0
+      c.data[i + 7] = v7
+    i = i + 8
+  while i < c.size:
+    unsafe:
+      v:float = c.data[i]
+      if v < 0.0: v = 0.0
+      c.data[i] = v
+    i = i + 1
+  ret c
+
+fn tensor_relu_inplace(a:Tensor) -> int:
+  // In-place graph versioning is unsupported; use an out-of-place operation.
+  if (*tensor.state._state__tape_enabled()) != 0 && (a.requires_grad != 0):
+    ret 0 - 1
+  if a.data == 0 as *float || a.size <= 0:
+    ret 0
+  if tensor.storage.tensor_is_contiguous(a) != 0 && a.offset == 0:
+    i:int = 0
+    while i < a.size:
+      unsafe:
+        v:float = a.data[i]
+        if v < 0.0: v = 0.0
+        a.data[i] = v
+      i = i + 1
+    ret 0
+  k:int = 0
+  while k < a.size:
+    off:int = tensor.storage._tensor_unravel_offset(a, k)
+    unsafe:
+      v:float = a.data[off]
+      if v < 0.0: v = 0.0
+      a.data[off] = v
+    k = k + 1
+  ret 0
+
+// GELU: 0.5 * x * (1.0 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+
+fn _tensor_gelu_scalar(x:float) -> float:
+  c:float = 0.7978845608028654
+  inner:float = c * (x + 0.044715 * x * x * x)
+  ret 0.5 * x * (1.0 + math.tanh(inner))
+
+fn _tensor_gelu_raw(a:Tensor) -> Tensor:
+  c:Tensor = tensor.storage._tensor_clone_raw(a)
+  i:int = 0
+  while i < c.size:
+    unsafe:
+      c.data[i] = _tensor_gelu_scalar(c.data[i])
+    i = i + 1
+  ret c
+
+fn tensor_gelu_inplace(a:Tensor) -> int:
+  // In-place graph versioning is unsupported; use an out-of-place operation.
+  if (*tensor.state._state__tape_enabled()) != 0 && (a.requires_grad != 0):
+    ret 0 - 1
+  if a.data == 0 as *float || a.size <= 0:
+    ret 0
+  if tensor.storage.tensor_is_contiguous(a) != 0 && a.offset == 0:
+    i:int = 0
+    while i < a.size:
+      unsafe:
+        a.data[i] = _tensor_gelu_scalar(a.data[i])
+      i = i + 1
+    ret 0
+  k:int = 0
+  while k < a.size:
+    off:int = tensor.storage._tensor_unravel_offset(a, k)
+    unsafe:
+      a.data[off] = _tensor_gelu_scalar(a.data[off])
+    k = k + 1
+  ret 0
+
+// SiLU / Swish: x * sigmoid(x) = x / (1.0 + exp(-x))
+
+fn _tensor_silu_scalar(x:float) -> float:
+  if x < 0.0 - 50.0:
+    ret 0.0
+  if x > 50.0:
+    ret x
+  sig:float = 1.0 / (1.0 + math.exp(0.0 - x))
+  ret x * sig
+
+fn _tensor_silu_raw(a:Tensor) -> Tensor:
+  c:Tensor = tensor.storage._tensor_clone_raw(a)
+  i:int = 0
+  while i < c.size:
+    unsafe:
+      c.data[i] = _tensor_silu_scalar(c.data[i])
+    i = i + 1
+  ret c
+
+fn tensor_silu_inplace(a:Tensor) -> int:
+  // In-place graph versioning is unsupported; use an out-of-place operation.
+  if (*tensor.state._state__tape_enabled()) != 0 && (a.requires_grad != 0):
+    ret 0 - 1
+  if a.data == 0 as *float || a.size <= 0:
+    ret 0
+  if tensor.storage.tensor_is_contiguous(a) != 0 && a.offset == 0:
+    i:int = 0
+    while i < a.size:
+      unsafe:
+        a.data[i] = _tensor_silu_scalar(a.data[i])
+      i = i + 1
+    ret 0
+  k:int = 0
+  while k < a.size:
+    off:int = tensor.storage._tensor_unravel_offset(a, k)
+    unsafe:
+      a.data[off] = _tensor_silu_scalar(a.data[off])
+    k = k + 1
+  ret 0
+
+// Sigmoid: 1.0 / (1.0 + exp(-x))
+
+fn _tensor_sigmoid_scalar(x:float) -> float:
+  if x < 0.0 - 50.0:
+    ret 0.0
+  if x > 50.0:
+    ret 1.0
+  ret 1.0 / (1.0 + math.exp(0.0 - x))
+
+fn _tensor_sigmoid_raw(a:Tensor) -> Tensor:
+  c:Tensor = tensor.storage._tensor_clone_raw(a)
+  i:int = 0
+  while i < c.size:
+    unsafe:
+      c.data[i] = _tensor_sigmoid_scalar(c.data[i])
+    i = i + 1
+  ret c
+
+fn tensor_sigmoid_inplace(a:Tensor) -> int:
+  // In-place graph versioning is unsupported; use an out-of-place operation.
+  if (*tensor.state._state__tape_enabled()) != 0 && (a.requires_grad != 0):
+    ret 0 - 1
+  if a.data == 0 as *float || a.size <= 0:
+    ret 0
+  if tensor.storage.tensor_is_contiguous(a) != 0 && a.offset == 0:
+    i:int = 0
+    while i < a.size:
+      unsafe:
+        a.data[i] = _tensor_sigmoid_scalar(a.data[i])
+      i = i + 1
+    ret 0
+  k:int = 0
+  while k < a.size:
+    off:int = tensor.storage._tensor_unravel_offset(a, k)
+    unsafe:
+      a.data[off] = _tensor_sigmoid_scalar(a.data[off])
+    k = k + 1
+  ret 0
+
+// Tanh
+
+fn _tensor_tanh_raw(a:Tensor) -> Tensor:
+  c:Tensor = tensor.storage._tensor_clone_raw(a)
+  i:int = 0
+  while i < c.size:
+    unsafe:
+      c.data[i] = math.tanh(c.data[i])
+    i = i + 1
+  ret c
+
+fn tensor_tanh_inplace(a:Tensor) -> int:
+  // In-place graph versioning is unsupported; use an out-of-place operation.
+  if (*tensor.state._state__tape_enabled()) != 0 && (a.requires_grad != 0):
+    ret 0 - 1
+  if a.data == 0 as *float || a.size <= 0:
+    ret 0
+  if tensor.storage.tensor_is_contiguous(a) != 0 && a.offset == 0:
+    i:int = 0
+    while i < a.size:
+      unsafe:
+        a.data[i] = math.tanh(a.data[i])
+      i = i + 1
+    ret 0
+  k:int = 0
+  while k < a.size:
+    off:int = tensor.storage._tensor_unravel_offset(a, k)
+    unsafe:
+      a.data[off] = math.tanh(a.data[off])
+    k = k + 1
+  ret 0
+
+// -------------------------------------------------------------
+// Fused RMSNorm & LayerNorm
+// -------------------------------------------------------------
+
+// RMSNorm: y = x / sqrt(mean(x^2) + eps) * weight
+
+fn tensor_rmsnorm(x:Tensor, weight:Tensor, eps:float) -> Tensor:
+  d:int = tensor.storage.tensor_shape(x, x.ndim - 1)
+  if x.data == 0 as *float || d <= 0 || x.size <= 0 || eps < 0.0:
+    ret tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0)
+  if weight.data != 0 as *float && weight.size != d:
+    ret tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0)
+  out:Tensor = tensor.storage._tensor_alloc_shape(x)
+  if out.data == 0 as *float: ret out
+  row:int = 0
+  while row < x.size / d:
+    ss:float = 0.0
+    j:int = 0
+    while j < d:
+      v:float = x.data[tensor.storage._tensor_unravel_offset(x, row * d + j)]
+      ss = ss + v * v
+      j = j + 1
+    inv:float = 1.0 / math.sqrt(ss / (d as float) + eps)
+    j = 0
+    while j < d:
+      w:float = 1.0
+      if weight.data != 0 as *float:
+        w = weight.data[tensor.storage._tensor_unravel_offset(weight, j)]
+      out.data[row * d + j] = x.data[tensor.storage._tensor_unravel_offset(x, row * d + j)] * inv * w
+      j = j + 1
+    row = row + 1
+  if (*tensor.state._state__tape_enabled()) != 0 && (x.requires_grad != 0 || weight.requires_grad != 0):
+    out = tensor.tape.tensor_require_grad(out)
+    tensor.tape.tape_record_binary((*tensor.state._state_AUTOGRAD_OP_RMSNORM()), out, x, weight, eps, 0, 0)
+  ret out
+
+fn tensor_rmsnorm_inplace(x:Tensor, weight:Tensor, eps:float) -> int:
+  // In-place graph versioning is unsupported; use an out-of-place operation.
+  if (*tensor.state._state__tape_enabled()) != 0 && (x.requires_grad != 0 || weight.requires_grad != 0):
+    ret 0 - 1
+  d:int = tensor.storage.tensor_shape(x, x.ndim - 1)
+  if d <= 0 || x.size <= 0:
+    ret 0
+
+  if tensor.storage.tensor_is_contiguous(x) != 0 && x.offset == 0:
+    m:int = x.size / d
+    row:int = 0
+    while row < m:
+      offset:int = row * d
+      ss:float = 0.0
+      j:int = 0
+      while j < d:
+        unsafe:
+          v:float = x.data[offset + j]
+          ss = ss + v * v
+        j = j + 1
+      mean_sq:float = ss / (d as float)
+      inv_rms:float = 1.0 / math.sqrt(mean_sq + eps)
+      j = 0
+      while j < d:
+        w:float = 1.0
+        if weight.data != 0 as *float && j < weight.size:
+          unsafe:
+            w = weight.data[weight.offset + j * weight.stride0]
+        unsafe:
+          x.data[offset + j] = x.data[offset + j] * inv_rms * w
+        j = j + 1
+      row = row + 1
+    ret 0
+
+  normed:Tensor = tensor_rmsnorm(x, weight, eps)
+  k:int = 0
+  while k < x.size:
+    off:int = tensor.storage._tensor_unravel_offset(x, k)
+    unsafe:
+      x.data[off] = normed.data[k]
+    k = k + 1
+  tensor.storage.tensor_free_tensor(normed)
+  ret 0
+
+// LayerNorm: y = (x - mean) / sqrt(var + eps) * gamma + beta
+
+fn tensor_layernorm(x:Tensor, gamma:Tensor, beta:Tensor, eps:float) -> Tensor:
+  d:int = tensor.storage.tensor_shape(x, x.ndim - 1)
+  if x.data == 0 as *float || d <= 0 || x.size <= 0 || eps < 0.0:
+    ret tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0)
+  if (gamma.data != 0 as *float && gamma.size != d) || (beta.data != 0 as *float && beta.size != d):
+    ret tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0)
+  out:Tensor = tensor.storage._tensor_alloc_shape(x)
+  if out.data == 0 as *float: ret out
+  row:int = 0
+  while row < x.size / d:
+    mean:float = 0.0
+    j:int = 0
+    while j < d:
+      mean = mean + x.data[tensor.storage._tensor_unravel_offset(x, row * d + j)]
+      j = j + 1
+    mean = mean / (d as float)
+    ss:float = 0.0
+    j = 0
+    while j < d:
+      centered:float = x.data[tensor.storage._tensor_unravel_offset(x, row * d + j)] - mean
+      ss = ss + centered * centered
+      j = j + 1
+    inv:float = 1.0 / math.sqrt(ss / (d as float) + eps)
+    j = 0
+    while j < d:
+      g:float = 1.0
+      b:float = 0.0
+      if gamma.data != 0 as *float: g = gamma.data[tensor.storage._tensor_unravel_offset(gamma, j)]
+      if beta.data != 0 as *float: b = beta.data[tensor.storage._tensor_unravel_offset(beta, j)]
+      out.data[row * d + j] = (x.data[tensor.storage._tensor_unravel_offset(x, row * d + j)] - mean) * inv * g + b
+      j = j + 1
+    row = row + 1
+  if (*tensor.state._state__tape_enabled()) != 0 && (x.requires_grad != 0 || gamma.requires_grad != 0 || beta.requires_grad != 0):
+    out = tensor.tape.tensor_require_grad(out)
+    tensor.tape._tape_record_ternary((*tensor.state._state_AUTOGRAD_OP_LAYERNORM()), out, x, gamma, beta, eps)
+  ret out
+
+fn tensor_layernorm_inplace(x:Tensor, gamma:Tensor, beta:Tensor, eps:float) -> int:
+  // In-place graph versioning is unsupported; use an out-of-place operation.
+  if (*tensor.state._state__tape_enabled()) != 0 && (x.requires_grad != 0 || gamma.requires_grad != 0 || beta.requires_grad != 0):
+    ret 0 - 1
+  d:int = tensor.storage.tensor_shape(x, x.ndim - 1)
+  if d <= 0 || x.size <= 0:
+    ret 0
+
+  if tensor.storage.tensor_is_contiguous(x) != 0 && x.offset == 0:
+    m:int = x.size / d
+    row:int = 0
+    while row < m:
+      offset:int = row * d
+      sum:float = 0.0
+      j:int = 0
+      while j < d:
+        unsafe:
+          sum = sum + x.data[offset + j]
+        j = j + 1
+      mean:float = sum / (d as float)
+
+      var_sum:float = 0.0
+      j = 0
+      while j < d:
+        unsafe:
+          diff:float = x.data[offset + j] - mean
+          var_sum = var_sum + diff * diff
+        j = j + 1
+      variance:float = var_sum / (d as float)
+      inv_std:float = 1.0 / math.sqrt(variance + eps)
+
+      j = 0
+      while j < d:
+        g:float = 1.0
+        if gamma.data != 0 as *float && j < gamma.size:
+          unsafe:
+            g = gamma.data[gamma.offset + j * gamma.stride0]
+        b:float = 0.0
+        if beta.data != 0 as *float && j < beta.size:
+          unsafe:
+            b = beta.data[beta.offset + j * beta.stride0]
+        unsafe:
+          x.data[offset + j] = (x.data[offset + j] - mean) * inv_std * g + b
+        j = j + 1
+      row = row + 1
+    ret 0
+
+  normed:Tensor = tensor_layernorm(x, gamma, beta, eps)
+  k:int = 0
+  while k < x.size:
+    off:int = tensor.storage._tensor_unravel_offset(x, k)
+    unsafe:
+      x.data[off] = normed.data[k]
+    k = k + 1
+  tensor.storage.tensor_free_tensor(normed)
+  ret 0
+
+// -------------------------------------------------------------
+// Numerically Stable Softmax
+// -------------------------------------------------------------
+
+fn tensor_softmax(t:Tensor, axis:int) -> Tensor:
+  ax:int = tensor.storage._tensor_axis(t, axis)
+  if ax < 0 || t.data == 0 as *float || t.size <= 0:
+    ret tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0)
+  out:Tensor = tensor.storage._tensor_alloc_shape(t)
+  if out.data == 0 as *float: ret out
+  d:int = tensor.storage.tensor_shape(t, ax)
+  inner:int = tensor.numeric._tensor_axis_inner(t, ax)
+  outer:int = 0
+  while outer < t.size / (d * inner):
+    lane:int = 0
+    while lane < inner:
+      base:int = outer * d * inner + lane
+      max_v:float = t.data[tensor.storage._tensor_unravel_offset(t, base)]
+      j:int = 1
+      while j < d:
+        value:float = t.data[tensor.storage._tensor_unravel_offset(t, base + j * inner)]
+        if value > max_v: max_v = value
+        j = j + 1
+      total:float = 0.0
+      j = 0
+      while j < d:
+        value:float = math.exp(t.data[tensor.storage._tensor_unravel_offset(t, base + j * inner)] - max_v)
+        out.data[base + j * inner] = value
+        total = total + value
+        j = j + 1
+      j = 0
+      while j < d:
+        out.data[base + j * inner] = out.data[base + j * inner] / total
+        j = j + 1
+      lane = lane + 1
+    outer = outer + 1
+  if (*tensor.state._state__tape_enabled()) != 0 && t.requires_grad != 0:
+    out = tensor.tape.tensor_require_grad(out)
+    tensor.tape.tape_record_unary((*tensor.state._state_AUTOGRAD_OP_SOFTMAX()), out, t, out, 0.0, ax, 0)
+  ret out
+
+fn tensor_softmax_inplace(t:Tensor, axis:int) -> int:
+  // In-place graph versioning is unsupported; use an out-of-place operation.
+  if (*tensor.state._state__tape_enabled()) != 0 && (t.requires_grad != 0):
+    ret 0 - 1
+  s:Tensor = tensor_softmax(t, axis)
+  if tensor.storage.tensor_is_contiguous(t) != 0 && t.offset == 0:
+    i:int = 0
+    while i < t.size:
+      unsafe:
+        t.data[i] = s.data[i]
+      i = i + 1
+  else:
+    k:int = 0
+    while k < t.size:
+      off:int = tensor.storage._tensor_unravel_offset(t, k)
+      unsafe:
+        t.data[off] = s.data[k]
+      k = k + 1
+  tensor.storage.tensor_free_tensor(s)
+  ret 0
+
+// -------------------------------------------------------------
+// Rotary Position Embeddings (RoPE)
+// -------------------------------------------------------------
+
+fn tensor_rope_2d(q:Tensor, k:Tensor, pos_offset:int, base:float) -> int:
+  // In-place graph versioning is unsupported; use an out-of-place operation.
+  if (*tensor.state._state__tape_enabled()) != 0 && (q.requires_grad != 0 || k.requires_grad != 0):
+    ret 0 - 1
+  seq_len:int = q.shape0
+  dim:int = q.shape1
+  if dim % 2 != 0:
+    ret 0 - 1
+
+  s:int = 0
+  while s < seq_len:
+    pos:int = pos_offset + s
+    i:int = 0
+    half_dim:int = dim / 2
+    while i < half_dim:
+      j0:int = 2 * i
+      j1:int = j0 + 1
+      theta:float = 1.0 / math.pow(base, (2.0 * (i as float)) / (dim as float))
+      alpha:float = (pos as float) * theta
+      cos_v:float = math.cos(alpha)
+      sin_v:float = math.sin(alpha)
+
+      q0:float = tensor.storage.tensor_get2(q, s, j0)
+      q1:float = tensor.storage.tensor_get2(q, s, j1)
+      tensor.storage.tensor_set2(q, s, j0, q0 * cos_v - q1 * sin_v)
+      tensor.storage.tensor_set2(q, s, j1, q0 * sin_v + q1 * cos_v)
+
+      if k.data != 0 as *float:
+        k0:float = tensor.storage.tensor_get2(k, s, j0)
+        k1:float = tensor.storage.tensor_get2(k, s, j1)
+        tensor.storage.tensor_set2(k, s, j0, k0 * cos_v - k1 * sin_v)
+        tensor.storage.tensor_set2(k, s, j1, k0 * sin_v + k1 * cos_v)
+
+      i = i + 1
+    s = s + 1
+  ret 0
+
+fn tensor_rope_4d(q:Tensor, k:Tensor, pos_offset:int, base:float) -> int:
+  // In-place graph versioning is unsupported; use an out-of-place operation.
+  if (*tensor.state._state__tape_enabled()) != 0 && (q.requires_grad != 0 || k.requires_grad != 0):
+    ret 0 - 1
+  batch:int = q.shape0
+  heads_q:int = q.shape1
+  seq_len:int = q.shape2
+  dim:int = q.shape3
+  if dim % 2 != 0:
+    ret 0 - 1
+
+  b:int = 0
+  while b < batch:
+    h:int = 0
+    while h < heads_q:
+      s:int = 0
+      while s < seq_len:
+        pos:int = pos_offset + s
+        i:int = 0
+        half_dim:int = dim / 2
+        while i < half_dim:
+          j0:int = 2 * i
+          j1:int = j0 + 1
+          theta:float = 1.0 / math.pow(base, (2.0 * (i as float)) / (dim as float))
+          alpha:float = (pos as float) * theta
+          cos_v:float = math.cos(alpha)
+          sin_v:float = math.sin(alpha)
+
+          q0:float = tensor.storage.tensor_get4(q, b, h, s, j0)
+          q1:float = tensor.storage.tensor_get4(q, b, h, s, j1)
+          tensor.storage.tensor_set4(q, b, h, s, j0, q0 * cos_v - q1 * sin_v)
+          tensor.storage.tensor_set4(q, b, h, s, j1, q0 * sin_v + q1 * cos_v)
+
+          if k.data != 0 as *float:
+            hk:int = h % k.shape1
+            k0:float = tensor.storage.tensor_get4(k, b, hk, s, j0)
+            k1:float = tensor.storage.tensor_get4(k, b, hk, s, j1)
+            tensor.storage.tensor_set4(k, b, hk, s, j0, k0 * cos_v - k1 * sin_v)
+            tensor.storage.tensor_set4(k, b, hk, s, j1, k0 * sin_v + k1 * cos_v)
+
+          i = i + 1
+        s = s + 1
+      h = h + 1
+    b = b + 1
+  ret 0
+
+fn tensor_rope(q:Tensor, k:Tensor, pos_offset:int, base:float) -> int:
+  // In-place graph versioning is unsupported; use an out-of-place operation.
+  if (*tensor.state._state__tape_enabled()) != 0 && (q.requires_grad != 0 || k.requires_grad != 0):
+    ret 0 - 1
+  if q.ndim == 2:
+    ret tensor_rope_2d(q, k, pos_offset, base)
+  if q.ndim == 4:
+    ret tensor_rope_4d(q, k, pos_offset, base)
+  if q.ndim == 3:
+    batch:int = q.shape0
+    seq_len:int = q.shape1
+    dim:int = q.shape2
+    if dim % 2 != 0:
+      ret 0 - 1
+    b:int = 0
+    while b < batch:
+      s:int = 0
+      while s < seq_len:
+        pos:int = pos_offset + s
+        i:int = 0
+        half_dim:int = dim / 2
+        while i < half_dim:
+          j0:int = 2 * i
+          j1:int = j0 + 1
+          theta:float = 1.0 / math.pow(base, (2.0 * (i as float)) / (dim as float))
+          alpha:float = (pos as float) * theta
+          cos_v:float = math.cos(alpha)
+          sin_v:float = math.sin(alpha)
+
+          q0:float = tensor.storage.tensor_get3(q, b, s, j0)
+          q1:float = tensor.storage.tensor_get3(q, b, s, j1)
+          tensor.storage.tensor_set3(q, b, s, j0, q0 * cos_v - q1 * sin_v)
+          tensor.storage.tensor_set3(q, b, s, j1, q0 * sin_v + q1 * cos_v)
+
+          if k.data != 0 as *float:
+            k0:float = tensor.storage.tensor_get3(k, b, s, j0)
+            k1:float = tensor.storage.tensor_get3(k, b, s, j1)
+            tensor.storage.tensor_set3(k, b, s, j0, k0 * cos_v - k1 * sin_v)
+            tensor.storage.tensor_set3(k, b, s, j1, k0 * sin_v + k1 * cos_v)
+          i = i + 1
+        s = s + 1
+      b = b + 1
+    ret 0
+  ret 0 - 1
+
+// -------------------------------------------------------------
+// Scaled Dot-Product Attention (SDPA)
+// -------------------------------------------------------------
+
+fn tensor_sdpa(q:Tensor, k:Tensor, v:Tensor, is_causal:int) -> Tensor:
+  // 2D Attention: Q: [Sq, D], K: [Sk, D], V: [Sk, Dv] -> Out: [Sq, Dv]
+  if q.ndim == 2:
+    sq:int = q.shape0
+    dk:int = q.shape1
+    sk:int = k.shape0
+    dv:int = v.shape1
+
+    kt:Tensor = tensor.storage.tensor_t(k)
+    scores:Tensor = tensor_matmul(q, kt)
+    tensor.storage.tensor_free_tensor(kt)
+
+    scale:float = 1.0 / math.sqrt(dk as float)
+    scaled_scores:Tensor = tensor_scale(scores, scale)
+    tensor.storage.tensor_free_tensor(scores)
+    scores = scaled_scores
+
+    if is_causal != 0:
+      row:int = 0
+      while row < sq:
+        col:int = 0
+        while col < sk:
+          if col > row:
+            tensor.storage.tensor_set2(scores, row, col, 0.0 - 10000.0)
+          col = col + 1
+        row = row + 1
+
+    attn_probs:Tensor = tensor_softmax(scores, 1)
+    tensor.storage.tensor_free_tensor(scores)
+
+    out:Tensor = tensor_matmul(attn_probs, v)
+    tensor.storage.tensor_free_tensor(attn_probs)
+    ret out
+
+  // 3D Batched Attention: Q: [B, Sq, D], K: [B, Sk, D], V: [B, Sk, Dv] -> Out: [B, Sq, Dv]
+  if q.ndim == 3:
+    batch:int = q.shape0
+    sq:int = q.shape1
+    dk:int = q.shape2
+    sk:int = k.shape1
+    dv:int = v.shape2
+
+    kt:Tensor = tensor.storage.tensor_transpose(k, 1, 2)
+    scores:Tensor = tensor_matmul(q, kt)
+    tensor.storage.tensor_free_tensor(kt)
+
+    scale:float = 1.0 / math.sqrt(dk as float)
+    scaled_scores:Tensor = tensor_scale(scores, scale)
+    tensor.storage.tensor_free_tensor(scores)
+    scores = scaled_scores
+
+    if is_causal != 0:
+      b:int = 0
+      while b < batch:
+        row:int = 0
+        while row < sq:
+          col:int = 0
+          while col < sk:
+            if col > row:
+              tensor.storage.tensor_set3(scores, b, row, col, 0.0 - 10000.0)
+            col = col + 1
+          row = row + 1
+        b = b + 1
+
+    attn_probs:Tensor = tensor_softmax(scores, 2)
+    tensor.storage.tensor_free_tensor(scores)
+
+    out:Tensor = tensor_matmul(attn_probs, v)
+    tensor.storage.tensor_free_tensor(attn_probs)
+    ret out
+
+  // 4D Multi-Head Attention: Q: [B, H, Sq, D], K: [B, H, Sk, D], V: [B, H, Sk, Dv] -> Out: [B, H, Sq, Dv]
+  if q.ndim == 4:
+    batch:int = q.shape0
+    heads:int = q.shape1
+    sq:int = q.shape2
+    dk:int = q.shape3
+    sk:int = k.shape2
+    dv:int = v.shape3
+
+    kt:Tensor = tensor.storage.tensor_transpose(k, 2, 3)
+    scores:Tensor = tensor_matmul(q, kt)
+    tensor.storage.tensor_free_tensor(kt)
+
+    scale:float = 1.0 / math.sqrt(dk as float)
+    scaled_scores:Tensor = tensor_scale(scores, scale)
+    tensor.storage.tensor_free_tensor(scores)
+    scores = scaled_scores
+
+    if is_causal != 0:
+      b:int = 0
+      while b < batch:
+        h:int = 0
+        while h < heads:
+          row:int = 0
+          while row < sq:
+            col:int = 0
+            while col < sk:
+              if col > row:
+                tensor.storage.tensor_set4(scores, b, h, row, col, 0.0 - 10000.0)
+              col = col + 1
+            row = row + 1
+          h = h + 1
+        b = b + 1
+
+    attn_probs:Tensor = tensor_softmax(scores, 3)
+    tensor.storage.tensor_free_tensor(scores)
+
+    out:Tensor = tensor_matmul(attn_probs, v)
+    tensor.storage.tensor_free_tensor(attn_probs)
+    ret out
+
+  say "Error: tensor_sdpa unsupported dimension ", q.ndim
+  ret q
+
+// ============================================================
+// Phase 4: Reverse-Mode Autograd Engine
+// ============================================================
+
+fn tensor_matmul(a:Tensor, b:Tensor) -> Tensor:
+  res:Tensor = tensor.numeric._tensor_matmul_raw(a, b)
+  if (*tensor.state._state__tape_enabled()) != 0 && (a.requires_grad != 0 || b.requires_grad != 0):
+    res = tensor.tape.tensor_require_grad(res)
+    tensor.tape.tape_record_binary((*tensor.state._state_AUTOGRAD_OP_MATMUL()), res, a, b, 0.0, 0, 0)
+  ret res
+
+fn tensor_add(a:Tensor, b:Tensor) -> Tensor:
+  c:Tensor = tensor.numeric._tensor_add_raw(a, b)
+  if (*tensor.state._state__tape_enabled()) != 0 && (a.requires_grad != 0 || b.requires_grad != 0):
+    c = tensor.tape.tensor_require_grad(c)
+    tensor.tape.tape_record_binary((*tensor.state._state_AUTOGRAD_OP_ADD()), c, a, b, 0.0, 0, 0)
+  ret c
+
+fn tensor_sub(a:Tensor, b:Tensor) -> Tensor:
+  c:Tensor = tensor.numeric._tensor_sub_raw(a, b)
+  if (*tensor.state._state__tape_enabled()) != 0 && (a.requires_grad != 0 || b.requires_grad != 0):
+    c = tensor.tape.tensor_require_grad(c)
+    tensor.tape.tape_record_binary((*tensor.state._state_AUTOGRAD_OP_SUB()), c, a, b, 0.0, 0, 0)
+  ret c
+
+fn tensor_mul(a:Tensor, b:Tensor) -> Tensor:
+  c:Tensor = tensor.numeric._tensor_mul_raw(a, b)
+  if (*tensor.state._state__tape_enabled()) != 0 && (a.requires_grad != 0 || b.requires_grad != 0):
+    c = tensor.tape.tensor_require_grad(c)
+    tensor.tape.tape_record_binary((*tensor.state._state_AUTOGRAD_OP_MUL()), c, a, b, 0.0, 0, 0)
+  ret c
+
+fn tensor_div(a:Tensor, b:Tensor) -> Tensor:
+  c:Tensor = tensor.numeric._tensor_div_raw(a, b)
+  if (*tensor.state._state__tape_enabled()) != 0 && (a.requires_grad != 0 || b.requires_grad != 0):
+    c = tensor.tape.tensor_require_grad(c)
+    tensor.tape.tape_record_binary((*tensor.state._state_AUTOGRAD_OP_DIV()), c, a, b, 0.0, 0, 0)
+  ret c
+
+fn tensor_scale(a:Tensor, s:float) -> Tensor:
+  c:Tensor = tensor.numeric._tensor_scale_raw(a, s)
+  if (*tensor.state._state__tape_enabled()) != 0 && a.requires_grad != 0:
+    c = tensor.tape.tensor_require_grad(c)
+    tensor.tape.tape_record_unary((*tensor.state._state_AUTOGRAD_OP_SCALE()), c, a, tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0), s, 0, 0)
+  ret c
+
+fn tensor_neg(a:Tensor) -> Tensor:
+  c:Tensor = tensor.numeric._tensor_neg_raw(a)
+  if (*tensor.state._state__tape_enabled()) != 0 && a.requires_grad != 0:
+    c = tensor.tape.tensor_require_grad(c)
+    tensor.tape.tape_record_unary((*tensor.state._state_AUTOGRAD_OP_NEG()), c, a, tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0), 0.0, 0, 0)
+  ret c
+
+fn tensor_relu(a:Tensor) -> Tensor:
+  c:Tensor = _tensor_relu_raw(a)
+  if (*tensor.state._state__tape_enabled()) != 0 && a.requires_grad != 0:
+    c = tensor.tape.tensor_require_grad(c)
+    tensor.tape.tape_record_unary((*tensor.state._state_AUTOGRAD_OP_RELU()), c, a, tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0), 0.0, 0, 0)
+  ret c
+
+fn tensor_gelu(a:Tensor) -> Tensor:
+  c:Tensor = _tensor_gelu_raw(a)
+  if (*tensor.state._state__tape_enabled()) != 0 && a.requires_grad != 0:
+    c = tensor.tape.tensor_require_grad(c)
+    tensor.tape.tape_record_unary((*tensor.state._state_AUTOGRAD_OP_GELU()), c, a, tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0), 0.0, 0, 0)
+  ret c
+
+fn tensor_silu(a:Tensor) -> Tensor:
+  c:Tensor = _tensor_silu_raw(a)
+  if (*tensor.state._state__tape_enabled()) != 0 && a.requires_grad != 0:
+    c = tensor.tape.tensor_require_grad(c)
+    tensor.tape.tape_record_unary((*tensor.state._state_AUTOGRAD_OP_SILU()), c, a, c, 0.0, 0, 0)
+  ret c
+
+fn tensor_sigmoid(a:Tensor) -> Tensor:
+  c:Tensor = _tensor_sigmoid_raw(a)
+  if (*tensor.state._state__tape_enabled()) != 0 && a.requires_grad != 0:
+    c = tensor.tape.tensor_require_grad(c)
+    tensor.tape.tape_record_unary((*tensor.state._state_AUTOGRAD_OP_SIGMOID()), c, a, c, 0.0, 0, 0)
+  ret c
+
+fn tensor_tanh(a:Tensor) -> Tensor:
+  c:Tensor = _tensor_tanh_raw(a)
+  if (*tensor.state._state__tape_enabled()) != 0 && a.requires_grad != 0:
+    c = tensor.tape.tensor_require_grad(c)
+    tensor.tape.tape_record_unary((*tensor.state._state_AUTOGRAD_OP_TANH()), c, a, c, 0.0, 0, 0)
+  ret c
+
+// ============================================================
+// Phase 5: Optimizers, Schedulers & Training Loop
+// ============================================================

@@ -1,0 +1,7 @@
+import "io"
+
+fn main() -> int:
+  file:*File = io.file_open("branch.tmp", "wb")
+  if args_count() > 1:
+    io.file_close(file)
+  ret io.file_close(file)

@@ -1,0 +1,75 @@
+import "tts"
+
+fn canonical(text:str, expected:str) -> int:
+  actual:str = tts.tts_normalize_text(text)
+  if actual == 0:
+    say "REJECTED", text
+    ret 1
+  failures:int = 0
+  if strcmp(actual, expected) != 0:
+    say "NORMALIZATION", text, actual, expected
+    failures = failures + 1
+  repeated:str = tts.tts_normalize_text(actual)
+  if repeated == 0: failures = failures + 1
+  else if strcmp(actual, repeated) != 0: failures = failures + 1
+  unsafe:
+    labels:[int;448]
+    length:int = tts.tts_encode_text(text, &labels[0], 448)
+    if length != len(expected):
+      failures = failures + 1
+    else:
+      i:int = 0
+      while i < length:
+        value:int = expected[i] as int - 97 + 3
+        if expected[i] == 32 as char: value = 1
+        else if expected[i] == 39 as char: value = 2
+        if labels[i] != value: failures = failures + 1
+        i = i + 1
+    free(actual)
+    if repeated != 0: free(repeated)
+  ret failures
+
+fn rejected(text:str) -> int:
+  unsafe:
+    labels:[int;3] = [91, 92, 93]
+    if tts.tts_encode_text(text, &labels[0], 3) != -1: ret 1
+    if labels[0] != 91 || labels[1] != 92 || labels[2] != 93: ret 1
+  ret 0
+
+fn main() -> int:
+  failures:int = 0
+  failures = failures + canonical(" Mr.\tFox,777!\n", "mister fox seven hundred seventy seven")
+  failures = failures + canonical("mr. Fox; MR. FOX; mR. Fox", "mister fox mister fox mister fox")
+  failures = failures + canonical("Mrs. Fox and DR. Neild", "missus fox and doctor neild")
+  failures = failures + canonical("Ms. Prof. Jr. Sr. etc.", "miz professor junior senior et cetera")
+  failures = failures + canonical("AMr. samr. mr mrs dr", "amr samr mr mrs dr")
+  failures = failures + canonical("0 1000000 -42 3.140", "zero one million negative forty two three point one four zero")
+  failures = failures + canonical("Hello?! \"World\" (again): a-b; [yes]", "hello world again a b yes")
+  failures = failures + canonical("Müller’s “café” — grâce à Noël", "muller's cafe grace a noel")
+  failures = failures + canonical("plain words don't change", "plain words don't change")
+  failures = failures + rejected("four")
+  failures = failures + rejected("42")
+  failures = failures + rejected("")
+  failures = failures + rejected(" \t\n")
+  failures = failures + rejected("a$b")
+  failures = failures + rejected("a/b")
+  failures = failures + rejected("你好")
+  unsafe:
+    malformed:[char;2] = [195 as char, 0 as char]
+    failures = failures + rejected(malformed)
+    labels:[int;449]
+    long_text:[char;450]
+    i:int = 0
+    while i < 449:
+      long_text[i] = 97 as char
+      labels[i] = 91
+      i = i + 1
+    long_text[449] = 0 as char
+    if tts.tts_encode_text(long_text, &labels[0], 449) != -1: failures = failures + 1
+    if labels[0] != 91 || labels[448] != 91: failures = failures + 1
+    long_text[448] = 0 as char
+    if tts.tts_encode_text(long_text, &labels[0], 448) != 448: failures = failures + 1
+    if tts.tts_encode_text("a", 0 as *int, 1) != -1: failures = failures + 1
+    if tts.tts_encode_text("a", &labels[0], 0) != -1: failures = failures + 1
+  say "ASSERTION_FAILURES", failures
+  ret failures

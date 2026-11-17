@@ -1,0 +1,257 @@
+// runtime implementation: memory.
+
+import "runtime.state"
+
+fn memcpy(dst:*char, src:*char, n:int) -> *char:
+  if dst == 0 || src == 0 || n <= 0:
+    ret dst
+  i:int = 0
+  while i < n:
+    unsafe:
+      dst[i] = src[i]
+    i = i + 1
+  ret dst
+
+// Copy n bytes from src to dst (handles overlapping regions via reverse copy)
+
+fn memmove(dst:*char, src:*char, n:int) -> *char:
+  if dst == 0 || src == 0 || n <= 0:
+    ret dst
+  // Check overlap direction
+  dst_addr:int = dst as int
+  src_addr:int = src as int
+  if dst_addr > src_addr && dst_addr < src_addr + n:
+    // Reverse copy to handle overlap
+    i:int = n - 1
+    while i >= 0:
+      unsafe:
+        dst[i] = src[i]
+      i = i - 1
+  else:
+    i:int = 0
+    while i < n:
+      unsafe:
+        dst[i] = src[i]
+      i = i + 1
+  ret dst
+
+// Set n bytes of dst to value c
+
+fn memset(dst:*char, c:int, n:int) -> *char:
+  if dst == 0 || n <= 0:
+    ret dst
+  b:char = c as char
+  i:int = 0
+  while i < n:
+    unsafe:
+      dst[i] = b
+    i = i + 1
+  ret dst
+
+// Compare n bytes of a and b — returns 0 if equal, <0 if a<b, >0 if a>b
+
+fn memcmp(a:*char, b:*char, n:int) -> int:
+  if a == 0 && b == 0:
+    ret 0
+  if a == 0:
+    ret 0 - 1
+  if b == 0:
+    ret 1
+  i:int = 0
+  while i < n:
+    ca:int = 0
+    cb:int = 0
+    unsafe:
+      ca = a[i] as int
+      cb = b[i] as int
+    if ca != cb:
+      ret ca - cb
+    i = i + 1
+  ret 0
+
+// Find byte c in first n bytes of buf — returns index or -1
+
+fn memchr(buf:*char, c:int, n:int) -> int:
+  if buf == 0 || n <= 0:
+    ret 0 - 1
+  b:char = c as char
+  i:int = 0
+  while i < n:
+    unsafe:
+      if buf[i] == b:
+        ret i
+    i = i + 1
+  ret 0 - 1
+
+// ============================================================
+// SECTION 2: String operations
+// ============================================================
+
+// strlen — returns byte length of null-terminated string
+
+fn strlen(s:str) -> int:
+  if s == 0:
+    ret 0
+  i:int = 0
+  while s[i] != 0 as char:
+    i = i + 1
+  ret i
+
+// strncmp — compare at most n characters of a and b
+
+fn strncmp(a:str, b:str, n:int) -> int:
+  if n <= 0:
+    ret 0
+  if a == 0 && b == 0:
+    ret 0
+  if a == 0:
+    ret 0 - 1
+  if b == 0:
+    ret 1
+  i:int = 0
+  while i < n:
+    ca:int = a[i] as int
+    cb:int = b[i] as int
+    if ca == 0 && cb == 0:
+      ret 0
+    if ca == 0:
+      ret 0 - 1
+    if cb == 0:
+      ret 1
+    if ca != cb:
+      ret ca - cb
+    i = i + 1
+  ret 0
+
+// strcpy — copy src into dst (caller ensures dst is large enough)
+
+fn strcpy(dst:*char, src:str) -> *char:
+  if dst == 0:
+    ret dst
+  if src == 0:
+    unsafe:
+      dst[0] = 0 as char
+    ret dst
+  i:int = 0
+  while src[i] != 0 as char:
+    unsafe:
+      dst[i] = src[i]
+    i = i + 1
+  unsafe:
+    dst[i] = 0 as char
+  ret dst
+
+// strncpy — copy at most n characters; zero-pads dst to n bytes
+
+fn strncpy(dst:*char, src:str, n:int) -> *char:
+  if dst == 0 || n <= 0:
+    ret dst
+  i:int = 0
+  while i < n:
+    c:char = 0 as char
+    if src != 0:
+      unsafe:
+        c = src[i]
+    if src == 0 || src[i] == 0 as char:
+      while i < n:
+        unsafe:
+          dst[i] = 0 as char
+        i = i + 1
+      ret dst
+    unsafe:
+      dst[i] = c
+    i = i + 1
+  ret dst
+
+// strcat — append src onto dst (caller ensures dst has space)
+
+fn strcat(dst:*char, src:str) -> *char:
+  if dst == 0:
+    ret dst
+  dlen:int = strlen(dst as str)
+  if src == 0:
+    ret dst
+  slen:int = strlen(src)
+  i:int = 0
+  while i < slen:
+    unsafe:
+      dst[dlen + i] = src[i]
+    i = i + 1
+  unsafe:
+    dst[dlen + slen] = 0 as char
+  ret dst
+
+// strncat — append at most n chars of src onto dst
+
+fn strncat(dst:*char, src:str, n:int) -> *char:
+  if dst == 0 || src == 0 || n <= 0:
+    ret dst
+  dlen:int = strlen(dst as str)
+  i:int = 0
+  while i < n && src[i] != 0 as char:
+    unsafe:
+      dst[dlen + i] = src[i]
+    i = i + 1
+  unsafe:
+    dst[dlen + i] = 0 as char
+  ret dst
+
+// strchr — find first occurrence of character c in s, returns index or -1
+
+fn strchr(s:str, c:int) -> int:
+  if s == 0:
+    ret 0 - 1
+  i:int = 0
+  while s[i] != 0 as char:
+    if s[i] as int == c:
+      ret i
+    i = i + 1
+  if c == 0:
+    ret i
+  ret 0 - 1
+
+// strrchr — find last occurrence of character c in s, returns index or -1
+
+fn strrchr(s:str, c:int) -> int:
+  if s == 0:
+    ret 0 - 1
+  last:int = 0 - 1
+  i:int = 0
+  while s[i] != 0 as char:
+    if s[i] as int == c:
+      last = i
+    i = i + 1
+  if c == 0:
+    ret i
+  ret last
+
+// strstr — find first occurrence of needle in haystack, returns index or -1
+
+fn strstr(haystack:str, needle:str) -> int:
+  if haystack == 0 || needle == 0:
+    ret 0 - 1
+  if needle[0] == 0 as char:
+    ret 0
+  hl:int = strlen(haystack)
+  nl:int = strlen(needle)
+  if nl > hl:
+    ret 0 - 1
+  i:int = 0
+  while i <= hl - nl:
+    match:int = 1
+    j:int = 0
+    while j < nl:
+      if haystack[i + j] as int != needle[j] as int:
+        match = 0
+        break
+      j = j + 1
+    if match != 0:
+      ret i
+    i = i + 1
+  ret 0 - 1
+
+// ============================================================
+// SECTION 3: Integer and float conversion
+// ============================================================
+
+// atoi — convert decimal string to int (leading whitespace ignored)

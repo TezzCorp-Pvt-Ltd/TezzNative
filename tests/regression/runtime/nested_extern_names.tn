@@ -1,0 +1,12 @@
+import "./support/lib/externs.tn"
+import "./support/lib/externs/nested.tn"
+
+fn main() -> int:
+  failures:int = 0
+  if externs.measure("native external") != 15: failures = failures + 1
+  if externs.same("same", "same") == 0: failures = failures + 1
+  if externs.same("same", "other") != 0: failures = failures + 1
+  if externs.nested.len("module direct") != 13: failures = failures + 1
+  if externs.nested.strcmp("equal", "equal") != 0: failures = failures + 1
+  say "NESTED_EXTERN_NAMES", failures
+  ret failures

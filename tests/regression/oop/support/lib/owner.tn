@@ -1,0 +1,9 @@
+struct PrivateRecord:
+  pub tag:int
+  priv balance:int
+
+  fn get(self:*PrivateRecord) -> int:
+    ret self.balance
+
+fn make_record(balance:int) -> PrivateRecord:
+  ret PrivateRecord{tag:1, balance:balance}

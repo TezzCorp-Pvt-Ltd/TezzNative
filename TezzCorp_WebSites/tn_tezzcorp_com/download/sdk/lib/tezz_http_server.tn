@@ -1,33 +1,13 @@
-// tezz_http_server.tn — Enterprise Production HTTP Web Server & Streaming Engine
-//
-// Key Architecture:
-//   • High-Performance Zero-RAM Streamer (`stream_file_response`): Streams GB, TB, PB files
-//     in 64 KB chunks via heap malloc(65536) with constant 64 KB memory overhead.
-//   • 100% Fault-Tolerant Execution: Safe memory model with zero invalid free() operations.
-//   • Erlang/Elixir-style OTP Concurrency & Supervisor Tree Engine (supervisor.tn).
-//   • "Let It Crash" Fault Tolerance with Automatic Worker Recovery.
-//   • Isolated `.log/` Directory Storage for process locks and server status.
-//   • Location-agnostic Any-Directory hosting (CWD bound).
-//   • Dynamic Port Binding via CLI argument (e.g. `tezz serve 8084`).
-//   • Production OTP Authentication REST API (/api/otp).
-//   • Embedded TezzDB REST/JSON API endpoint (/api/db).
-//   • 100% Binary Stream Integrity for JPEG, PNG, WEBP, PDF, ZIP, MP4, WASM, DB.
-//   • Comprehensive 70+ MIME Type Map.
-
+// Local static-file development server. Binds only to loopback.
+// Authentication/enrollment and database authorization belong to the application;
+// the former unauthenticated demonstration endpoints are explicitly unavailable.
 import "net"
 import "str"
 import "io"
 import "runtime"
-import "db"
-import "tezzdb"
-import "otp"
-import "otp_sys"
-import "gen_server"
-import "supervisor"
 
-extern fn path_exists(path:str) -> int
+extern fn tn_security_public_path(root:str, relative:str) -> str
 
-let g_tezz_db:*char = 0 as *char
 let SERVER_MAX_REQUEST_BYTES:int = 16384
 let SERVER_MAX_BODY_BYTES:int = 4096
 
@@ -161,423 +141,339 @@ fn get_mime_type(filename:str) -> str:
 
   ret "application/octet-stream"
 
+// Append consumes only the owned left operand.
+fn _append(owned:str, suffix:str) -> str:
+  if owned == 0: ret 0 as str
+  out:str = str.str_cat(owned, suffix)
+  free(owned)
+  ret out
+
+fn html_escape(value:str) -> str:
+  if value == 0: ret str.str_dup("")
+  n:int = len(value)
+  if n > 1048576: ret 0 as str
+  out:*char = malloc(n * 6 + 1)
+  if out == 0: ret 0 as str
+  i:int = 0
+  used:int = 0
+  while i < n:
+    c:int = value[i] as int
+    replacement:str = ""
+    if c == 38: replacement = "&amp;"
+    else if c == 60: replacement = "&lt;"
+    else if c == 62: replacement = "&gt;"
+    else if c == 34: replacement = "&quot;"
+    else if c == 39: replacement = "&#39;"
+    if replacement[0] != 0 as char:
+      amount:int = len(replacement)
+      unsafe:
+        memcpy(out + used, replacement as *char, amount)
+      used = used + amount
+    else:
+      out[used] = value[i]
+      used = used + 1
+    i = i + 1
+  out[used] = 0 as char
+  ret out as str
+
+fn _hex(c:int) -> int:
+  if c >= 48 && c <= 57: ret c - 48
+  if c >= 65 && c <= 70: ret c - 55
+  if c >= 97 && c <= 102: ret c - 87
+  ret -1
+
+// An owned relative path on success; NULL means malformed or private.
 fn sanitize_request_path(req_path:str) -> str:
-  if req_path == 0 as str || str.str_eq(req_path, "/") != 0 || str.str_eq(req_path, "") != 0:
-    ret "."
+  if req_path == 0 || len(req_path) == 0 || req_path[0] != 47 as char:
+    ret 0 as str
+  n:int = len(req_path)
+  if n > 4096: ret 0 as str
+  out:*char = malloc(n + 1)
+  if out == 0: ret 0 as str
+  i:int = 1
+  used:int = 0
+  component_start:int = 1
+  while i < n:
+    c:int = req_path[i] as int & 255
+    if c == 63: break
+    if c == 37:
+      if i + 2 >= n:
+        free(out)
+        ret 0 as str
+      high:int = _hex(req_path[i + 1] as int)
+      low:int = _hex(req_path[i + 2] as int)
+      if high < 0 || low < 0:
+        free(out)
+        ret 0 as str
+      c = high * 16 + low
+      i = i + 2
+    // Reject NUL/control bytes, Windows path syntax and hidden components.
+    if c < 32 || c == 127 || c == 92 || c == 58 || c == 35:
+      free(out)
+      ret 0 as str
+    if component_start != 0 && c == 46:
+      free(out)
+      ret 0 as str
+    if c == 47:
+      if used == 0 || component_start != 0:
+        free(out)
+        ret 0 as str
+      component_start = 1
+    else:
+      component_start = 0
+    out[used] = c as char
+    used = used + 1
+    i = i + 1
+  if used == 0:
+    out[used] = 46 as char
+    used = used + 1
+  out[used] = 0 as char
+  ret out as str
 
-  // Work on an owned path so query stripping and URL decoding cannot leak
-  // request-owned memory or accidentally return a pointer into the request.
-  qmark:int = str.str_find(req_path, "?")
-  end_path:int = str.str_len(req_path)
-  if qmark > 0:
-    end_path = qmark
-  clean_path:str = str.str_slice(req_path, 0, end_path)
-  if clean_path == 0 as str:
-    ret "."
-
-  decoded:str = net.url_decode_component(clean_path)
-  if decoded != 0 as str:
-    free(clean_path)
-    clean_path = decoded
-  if str.str_contains(clean_path, "..") != 0 || str.str_contains(clean_path, "\\") != 0 || str.str_contains(clean_path, ":") != 0:
-    free(clean_path)
-    ret "."
-
-  // Strip leading '/'
-  slen:int = str.str_len(clean_path)
-  if slen > 0 && (clean_path[0] as int) == 47:
-    out:str = str.str_slice(clean_path, 1, slen)
-    free(clean_path)
-    ret out
-
-  ret clean_path
+fn _private_file(path:str) -> int:
+  lower:str = str.str_lower(path)
+  if lower == 0: ret 1
+  denied:int = str.str_ends_with(lower, ".tdb") || str.str_ends_with(lower, ".db")
+  denied = denied || str.str_ends_with(lower, ".sqlite") || str.str_ends_with(lower, ".sqlite3")
+  denied = denied || str.str_ends_with(lower, ".wal") || str.str_ends_with(lower, "-journal")
+  denied = denied || str.str_ends_with(lower, ".key") || str.str_ends_with(lower, ".pem")
+  denied = denied || str.str_ends_with(lower, ".pfx") || str.str_ends_with(lower, ".p12")
+  free(lower)
+  ret denied
 
 fn render_directory_html(dir_path:str, raw_url:str) -> str:
-  header:str = "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'><meta name='description' content='Production HTTP Web Server'><title>Directory listing for "
-  header = str.str_cat3(header, raw_url, "</title><style>body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 2rem; }.container { max-width: 900px; margin: 0 auto; background: #1e293b; border-radius: 12px; padding: 2rem; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }h1 { font-size: 1.5rem; color: #38bdf8; margin-top: 0; font-weight: 600; border-bottom: 1px solid #334155; padding-bottom: 1rem; }ul { list-style: none; padding: 0; margin: 1rem 0; }li { border-bottom: 1px solid #334155; }a { display: flex; align-items: center; padding: 0.75rem 0.5rem; color: #e2e8f0; text-decoration: none; border-radius: 6px; }a:hover { background: #334155; color: #38bdf8; }.icon { margin-right: 0.75rem; font-size: 1.2rem; }.footer { margin-top: 2rem; font-size: 0.85rem; color: #64748b; text-align: center; }</style></head><body><div class='container'><h1>Directory listing for ")
-  header = str.str_cat3(header, raw_url, "</h1><ul>")
-
-  if str.str_eq(raw_url, "/") == 0 && str.str_eq(raw_url, "") == 0:
-    header = str.str_cat(header, "<li><a href='..'><span class='icon'>📁</span>.. / (Parent Directory)</a></li>")
-
-  // Read directory entries
-  raw_list:str = io.dir_list(dir_path)
-  if raw_list != 0 as str && str.str_len(raw_list) > 0:
-    slen:int = str.str_len(raw_list)
-    pos:int = 0
-    while pos < slen:
-      line_start:int = pos
-      while pos < slen && (raw_list[pos] as int) != 10:
-        pos = pos + 1
-      line_len:int = pos - line_start
-      if pos < slen && (raw_list[pos] as int) == 10:
-        pos = pos + 1
-
-      if line_len > 0:
-        item_name:str = str.str_slice(raw_list, line_start, line_start + line_len)
-        if (item_name[0] as int) != 46:
-          item_path:str = str.str_cat3(dir_path, "/", item_name)
-          is_dir:int = io.dir_exists(item_path)
-          
-          if is_dir != 0:
-            header = str.str_cat3(header, "<li><a href='", item_name)
-            header = str.str_cat3(header, "/'><span class='icon'>📁</span>", item_name)
-            header = str.str_cat(header, "</a></li>")
-          else:
-            header = str.str_cat3(header, "<li><a href='", item_name)
-            header = str.str_cat3(header, "'><span class='icon'>📄</span>", item_name)
-            header = str.str_cat(header, "</a></li>")
-
-  header = str.str_cat(header, "</ul><div class='footer'>TezzNative HTTP Server v2.0 (Erlang OTP Supervised)</div></div></body></html>")
-  ret header
+  safe_url:str = html_escape(raw_url)
+  if safe_url == 0: ret 0 as str
+  page:str = str.str_cat("<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Directory: ", safe_url)
+  page = _append(page, "</title><style>body{font-family:system-ui;margin:2rem;line-height:1.5}main{max-width:60rem;margin:auto}a{display:block;padding:.75rem;overflow-wrap:anywhere}</style></head><body><main><h1>Directory: ")
+  page = _append(page, safe_url)
+  page = _append(page, "</h1><ul>")
+  free(safe_url)
+  base:str = str.str_dup(raw_url)
+  query:int = str.str_find(base, "?")
+  if query >= 0:
+    shorter:str = str.str_slice(base, 0, query)
+    free(base)
+    base = shorter
+  if str.str_ends_with(base, "/") == 0: base = _append(base, "/")
+  entries:str = io.dir_list(dir_path)
+  pos:int = 0
+  n:int = str.str_len(entries)
+  while pos < n:
+    start:int = pos
+    while pos < n && entries[pos] != 10 as char: pos = pos + 1
+    name:str = str.str_slice(entries, start, pos)
+    pos = pos + 1
+    if name != 0 && len(name) > 0 && name[0] != 46 as char && _private_file(name) == 0:
+      child:str = tn_security_public_path(dir_path, name)
+      if child != 0 && _private_file(child) == 0:
+        encoded:str = net.url_encode_component(name)
+        href:str = str.str_cat(base, encoded)
+        if io.dir_exists(child) != 0: href = _append(href, "/")
+        safe_href:str = html_escape(href)
+        safe_name:str = html_escape(name)
+        page = _append(page, "<li><a href='")
+        page = _append(page, safe_href)
+        page = _append(page, "'>")
+        page = _append(page, safe_name)
+        page = _append(page, "</a></li>")
+        if encoded != 0: free(encoded)
+        if href != 0: free(href)
+        if safe_href != 0: free(safe_href)
+        if safe_name != 0: free(safe_name)
+      if child != 0: free(child)
+    if name != 0: free(name)
+  if entries != 0: free(entries)
+  if base != 0: free(base)
+  ret _append(page, "</ul></main></body></html>")
 
 fn render_404_html(raw_path:str) -> str:
-  p1:str = "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'><title>404 Not Found</title><style>body { font-family: system-ui, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 4rem 2rem; text-align: center; }.card { max-width: 500px; margin: 0 auto; background: #1e293b; padding: 3rem; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }h1 { font-size: 3rem; color: #ef4444; margin: 0 0 1rem 0; }p { color: #94a3b8; line-height: 1.6; }code { background: #0f172a; color: #38bdf8; padding: 0.2rem 0.5rem; border-radius: 4px; }</style></head><body><div class='card'><h1>404</h1><h2>File Not Found</h2><p>The requested path <code>"
-  p2:str = "</code> was not found on this server.</p></div></body></html>"
-  ret str.str_cat3(p1, raw_path, p2)
+  safe:str = html_escape(raw_path)
+  if safe == 0: ret 0 as str
+  page:str = str.str_cat3("<!doctype html><html lang='en'><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>404 Not Found</title><h1>404 Not Found</h1><p>Path: <code>", safe, "</code></p></html>")
+  free(safe)
+  ret page
 
 fn handle_health_api(sock:int, active_port:int) -> int:
-  res:str = "{\"status\":\"ACTIVE\",\"server\":\"TezzNative Erlang-OTP HTTP Server v2.0\",\"port\":"
-  res = str.str_cat(res, str.int_to_str(active_port))
-  res = str.str_cat(res, "}")
-
-  net.http_write_response(sock, 200, "application/json; charset=utf-8", res)
-  free(res)
-  ret 0
-
-fn db_identifier_valid(name:str) -> int:
-  if name == 0 || str.str_len(name) == 0:
-    ret 0
-  n:int = str.str_len(name)
-  i:int = 0
-  while i < n:
-    c:int = name[i] as int
-    valid:int = 0
-    if (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95:
-      valid = 1
-    if valid == 0:
-      ret 0
-    i = i + 1
-  ret 1
+  port:str = str.int_to_str(active_port)
+  response:str = str.str_cat3("{\"status\":\"ACTIVE\",\"server\":\"TezzNative local server\",\"port\":", port, "}")
+  if port != 0: free(port)
+  result:int = net.http_respond_json(sock, 200, response)
+  if response != 0: free(response)
+  ret result
 
 fn handle_db_api(sock:int, raw_path:str) -> int:
-  if g_tezz_db == 0 as *char:
-    net.http_respond_json(sock, 503, "{\"error\":\"TezzDB unavailable\"}")
-    ret 0
-
-  table:str = net.query_param(raw_path, "table")
-  owns_table:int = 1
-  if table == 0 || str.str_len(table) == 0:
-    if table != 0: free(table)
-    table = "data"
-    owns_table = 0
-  if db_identifier_valid(table) == 0:
-    if owns_table != 0: free(table)
-    net.http_respond_json(sock, 400, "{\"error\":\"invalid table name\"}")
-    ret 0
-
-  if tezzdb.db_table_exists(g_tezz_db, table) == 0:
-    if tezzdb.db_table_create(g_tezz_db, table) != 0:
-      if owns_table != 0: free(table)
-      net.http_respond_json(sock, 500, "{\"error\":\"unable to create table\"}")
-      ret 0
-
-  res:str = tezzdb.db_query_all(g_tezz_db, table)
-  if res == 0:
-    if owns_table != 0: free(table)
-    net.http_respond_json(sock, 500, "{\"error\":\"TezzDB query failed\"}")
-    ret 0
-
-  net.http_write_response(sock, 200, "application/json; charset=utf-8", res)
-  free(res)
-  say "[200 OK] TezzDB API table: ", table
-  if owns_table != 0: free(table)
-  ret 0
+  ret net.http_respond_json(sock, 403, "{\"error\":\"Database HTTP access requires application authorization\"}")
 
 fn handle_db_api_legacy(sock:int, raw_path:str) -> int:
-  qidx:int = str.str_find(raw_path, "query=")
-  query:str = "SELECT ALL"
-  if qidx > 0:
-    query = str.str_slice(raw_path, qidx + 6, str.str_len(raw_path))
-
-  res:str = db.db_execute_query_raw("tezz_app.db", query)
-
-  say "[200 OK] DB API: ", query
-  net.http_write_response(sock, 200, "application/json; charset=utf-8", res)
-  ret 0
+  ret handle_db_api(sock, raw_path)
 
 fn handle_otp_api(sock:int, raw_path:str) -> int:
-  if str.str_contains(raw_path, "action=generate") != 0:
-    sec:str = otp.generate_secret()
-    totp_code:str = otp.generate_totp(sec)
-    sms_otp:str = otp.generate_numeric(6)
-    qr_uri:str = otp.provisioning_uri(sec, "developer@tezznative.org", "TezzNativeApp")
+  ret net.http_respond_json(sock, 503, "{\"error\":\"OTP HTTP access requires application enrollment and replay protection\"}")
 
-    res:str = "{\"status\":200,\"secret\":\""
-    res = str.str_cat(res, sec)
-    res = str.str_cat(res, "\",\"totp_code\":\"")
-    res = str.str_cat(res, totp_code)
-    res = str.str_cat(res, "\",\"sms_otp\":\"")
-    res = str.str_cat(res, sms_otp)
-    res = str.str_cat(res, "\",\"provisioning_uri\":\"")
-    res = str.str_cat(res, qr_uri)
-    res = str.str_cat(res, "\"}")
-
-    say "[200 OK] OTP API: Generated Secret ", sec, " (TOTP: ", totp_code, ")"
-    net.http_write_response(sock, 200, "application/json; charset=utf-8", res)
-    ret 0
-
-  if str.str_contains(raw_path, "action=verify") != 0:
-    sidx:int = str.str_find(raw_path, "secret=")
-    cidx:int = str.str_find(raw_path, "code=")
-    
-    secret:str = "TEZZNATIVE2FAKEY"
-    code:str = ""
-    if sidx > 0:
-      secret = str.str_slice(raw_path, sidx + 7, sidx + 23)
-    if cidx > 0:
-      code = str.str_slice(raw_path, cidx + 5, cidx + 11)
-
-    is_valid:int = otp.verify_totp(secret, code, 1)
-    res:str = "{\"status\":200,\"valid\":"
-    if is_valid != 0:
-      res = str.str_cat(res, "true}")
-      say "[200 OK] OTP API: Code ", code, " VERIFIED (VALID)"
-    else:
-      res = str.str_cat(res, "false}")
-      say "[200 OK] OTP API: Code ", code, " INVALID"
-
-    net.http_write_response(sock, 200, "application/json; charset=utf-8", res)
-    ret 0
-
-  res:str = "{\"status\":200,\"module\":\"TezzNative Erlang-OTP Supervision & Auth Engine (RFC 6238/4226)\"}"
-  net.http_write_response(sock, 200, "application/json; charset=utf-8", res)
-  ret 0
-
-// Zero-RAM Streaming File Response: Streams files in 64 KB chunks
-// Supports GB, TB, PB files with constant 64 KB RAM consumption!
+// Streams at most 64 KiB at a time; a short read or send reports failure.
 fn stream_file_response(sock:int, file_path:str, mime:str, file_size:int) -> int:
-  if file_size < 0:
-    net.http_respond_not_found(sock)
-    ret 0
-  f:*File = io.file_open(file_path, "rb")
-  if f == 0:
-    say "[404 Not Found] GET ", file_path
-    err_html:str = render_404_html(file_path)
-    net.http_write_response(sock, 404, "text/html; charset=utf-8", err_html)
-    free(err_html)
-    ret 0
-
-  buf:*char = malloc(65536)
-  if buf == 0 as *char:
-    net.http_respond_text(sock, 500, "Unable to allocate response buffer")
-    ret 0
-
-  // Send HTTP 200 OK Headers with Content-Length and Accept-Ranges
-  size_str:str = str.int_to_str(file_size)
-  hdr:str = str.str_cat("HTTP/1.1 200 OK\r\nServer: TezzNative/2.0\r\nConnection: close\r\nAccept-Ranges: bytes\r\nContent-Type: ", mime)
-  hdr = str.str_cat(hdr, "\r\nContent-Length: ")
-  hdr = str.str_cat(hdr, size_str)
-  hdr = str.str_cat(hdr, "\r\n\r\n")
-
-  hw:int = net.tcp_send_all(sock, hdr as *char, str.str_len(hdr))
-  if hw >= 0:
-    // The fixed buffer bounds server-side streaming memory per request.
-    bytes_rem:int = file_size
-    while bytes_rem > 0:
-      to_read:int = 65536
-      if bytes_rem < to_read:
-        to_read = bytes_rem
-
-      r:int = io.file_read(f, buf, to_read)
-      if r <= 0:
-        break
-
-      w:int = net.tcp_send_all(sock, buf, r)
-      if w != r:
-        break
-
-      bytes_rem = bytes_rem - r
-
-  free(buf)
-  free(hdr)
-  io.file_close(f)
-  if hw >= 0:
-    say "[200 OK] GET ", file_path, " (", file_size, " bytes streamed)"
-  ret 0
+  if file_size < 0: ret -1
+  file:*File = io.file_open(file_path, "rb")
+  if file == 0: ret -1
+  buffer:*char = malloc(65536)
+  if buffer == 0:
+    io.file_close(file)
+    ret -1
+  size_text:str = str.int_to_str(file_size)
+  header:str = str.str_cat("HTTP/1.1 200 OK\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\nContent-Type: ", mime)
+  header = _append(header, "\r\nContent-Length: ")
+  header = _append(header, size_text)
+  header = _append(header, "\r\n\r\n")
+  if size_text != 0: free(size_text)
+  remaining:int = file_size
+  status:int = -1
+  if header != 0 && net.tcp_send_all(sock, header as *char, len(header)) == len(header):
+    while remaining > 0:
+      amount:int = 65536
+      if remaining < amount: amount = remaining
+      count:int = io.file_read(file, buffer, amount)
+      if count <= 0: break
+      if net.tcp_send_all(sock, buffer, count) != count: break
+      remaining = remaining - count
+    if remaining == 0: status = 0
+  free(buffer)
+  if header != 0: free(header)
+  if io.file_close(file) != 0: status = -1
+  ret status
 
 fn serve_request(sock:int, raw_path:str, active_port:int) -> int:
-  // API Route: Server Health Monitor
   if str.str_eq(raw_path, "/health") != 0:
     ret handle_health_api(sock, active_port)
-
-  // API Route: TezzDB Query Handler
   if str.str_starts_with(raw_path, "/api/db") != 0:
     ret handle_db_api(sock, raw_path)
-
-  // API Route: Erlang OTP & Auth Handler
   if str.str_starts_with(raw_path, "/api/otp") != 0:
     ret handle_otp_api(sock, raw_path)
-
-  file_path:str = sanitize_request_path(raw_path)
-
-  // 1. Check if path is a directory
+  relative:str = sanitize_request_path(raw_path)
+  if relative == 0: ret net.http_respond_bad_request(sock)
+  file_path:str = tn_security_public_path(".", relative)
+  free(relative)
+  if file_path == 0: ret net.http_respond_not_found(sock)
+  if _private_file(file_path) != 0:
+    free(file_path)
+    ret net.http_respond_not_found(sock)
   if io.dir_exists(file_path) != 0:
-    // Check for index.html or index.htm inside directory
     index_html:str = str.str_cat(file_path, "/index.html")
     index_htm:str = str.str_cat(file_path, "/index.htm")
+    selected:str = 0 as str
     if io.file_exists(index_html) != 0:
-      file_path = index_html
+      selected = tn_security_public_path(file_path, "index.html")
     else if io.file_exists(index_htm) != 0:
-      file_path = index_htm
+      selected = tn_security_public_path(file_path, "index.htm")
+    free(index_html)
+    free(index_htm)
+    if selected != 0:
+      free(file_path)
+      file_path = selected
     else:
-      // Render dynamic HTML directory listing
-      dir_html:str = render_directory_html(file_path, raw_path)
-      say "[200 OK] GET ", raw_path, " (Auto-Index Listing)"
-      net.http_write_response(sock, 200, "text/html; charset=utf-8", dir_html)
-      ret 0
-
-  // 2. Check if file exists
-  if io.file_exists(file_path) == 0:
-    say "[404 Not Found] GET ", raw_path
-    err_html:str = render_404_html(raw_path)
-    net.http_write_response(sock, 404, "text/html; charset=utf-8", err_html)
-    ret 0
-
-  mime:str = get_mime_type(file_path)
-  file_size:int = io.file_size_bytes(file_path)
-
-  // High-Throughput Streamer for GB/TB/PB Files
-  ret stream_file_response(sock, file_path, mime, file_size)
+      page:str = render_directory_html(file_path, raw_path)
+      status:int = net.http_write_response(sock, 200, "text/html; charset=utf-8", page)
+      if page != 0: free(page)
+      free(file_path)
+      ret status
+  status:int = stream_file_response(sock, file_path, get_mime_type(file_path), io.file_size_bytes(file_path))
+  free(file_path)
+  ret status
 
 fn write_server_lockfile(port:int, pid:int, cwd_path:str, base_dir:str) -> int:
-  lock_content:str = "PORT="
-  lock_content = str.str_cat(lock_content, str.int_to_str(port))
-  lock_content = str.str_cat(lock_content, "\nPID=")
-  lock_content = str.str_cat(lock_content, str.int_to_str(pid))
-  lock_content = str.str_cat(lock_content, "\nDIR=")
-  lock_content = str.str_cat(lock_content, base_dir)
-  lock_content = str.str_cat(lock_content, "\nSTATUS=ACTIVE\n")
-
-  // 1. Write to the install-dir path that `tezz.exe status` reads:
-  //    %USERPROFILE%\.tezznative\tezz_server.lock
+  port_text:str = str.int_to_str(port)
+  pid_text:str = str.int_to_str(pid)
+  content:str = str.str_cat("PORT=", port_text)
+  content = _append(content, "\nPID=")
+  content = _append(content, pid_text)
+  content = _append(content, "\nDIR=")
+  content = _append(content, cwd_path)
+  content = _append(content, "\nSTATUS=ACTIVE\n")
+  if port_text != 0: free(port_text)
+  if pid_text != 0: free(pid_text)
+  if content == 0: ret -1
   home_dir:str = runtime.getenv("USERPROFILE")
-  if home_dir != 0 as str && str.str_len(home_dir) > 0:
-    install_lock:str = str.str_cat(home_dir, "\\.tezznative\\tezz_server.lock")
-    io.write_all(install_lock, lock_content)
-    free(install_lock)
-
-  // 2. Also write to the CWD .log/ path (for compatibility with older tooling)
-  if io.dir_exists(".log") == 0:
-    io.dir_make(".log")
-  io.write_all(".log/tezz_server.lock", lock_content)
-
-  ret 0
+  if home_dir != 0 && len(home_dir) > 0:
+    install_lock:str = io.path_join2(home_dir, ".tezznative/tezz_server.lock")
+    io.write_all(install_lock, content)
+    if install_lock != 0: free(install_lock)
+  if home_dir != 0: free(home_dir)
+  if io.dir_exists(".log") == 0: io.dir_make(".log")
+  result:int = io.write_all(".log/tezz_server.lock", content)
+  free(content)
+  ret result
 
 fn server_arg_int(index:int, fallback:int) -> int:
-  if index < 0 || index >= args_count():
-    ret fallback
+  if index < 0 || index >= args_count(): ret fallback
   raw:str = arg(index)
-  if raw == 0 as str || str.str_len(raw) == 0:
-    ret fallback
-  p:int = str.str_to_int(raw)
-  if p >= 0:
-    ret p
-  ret fallback
+  if raw == 0 || len(raw) == 0: ret fallback
+  value:int = 0
+  i:int = 0
+  while i < len(raw):
+    c:int = raw[i] as int
+    if c < 48 || c > 57 || value > 214748364: ret fallback
+    value = value * 10 + c - 48
+    i = i + 1
+  ret value
 
 fn get_server_port() -> int:
-  if args_count() > 1:
-    p:int = server_arg_int(1, 0)
-    if p > 0 && p < 65536:
-      ret p
-  ret 8000
+  ret server_arg_int(0, 8000)
+
+fn _local_host(request:str, port:int) -> int:
+  host:str = net.http_get_header(request, "Host")
+  number:str = str.int_to_str(port)
+  expected_ip:str = str.str_cat("127.0.0.1:", number)
+  expected_name:str = str.str_cat("localhost:", number)
+  valid:int = str.str_eq(host, expected_ip) || str.str_eq(host, expected_name)
+  if port == 80: valid = valid || str.str_eq(host, "127.0.0.1") || str.str_eq(host, "localhost")
+  origin:str = net.http_get_header(request, "Origin")
+  if origin != 0 && len(origin) > 0:
+    origin_ip:str = str.str_cat("http://", expected_ip)
+    origin_name:str = str.str_cat("http://", expected_name)
+    valid = valid && (str.str_eq(origin, origin_ip) || str.str_eq(origin, origin_name))
+    free(origin_ip)
+    free(origin_name)
+  if origin != 0: free(origin)
+  if host != 0: free(host)
+  if number != 0: free(number)
+  if expected_ip != 0: free(expected_ip)
+  if expected_name != 0: free(expected_name)
+  ret valid
 
 fn run_server(port:int) -> int:
-  if port <= 0 || port >= 65536:
-    port = get_server_port()
-  if port <= 0 || port >= 65536:
-    port = 8000
-
-  // Determine base directory: use TEZZ_SDK_ROOT env if set, otherwise current working directory
-  let sdk_root_env:str = runtime.getenv("TEZZ_SDK_ROOT")
-  let base_dir:str = if sdk_root_env != 0 as str && str.str_len(sdk_root_env) > 0 then sdk_root_env else io.cwd()
-  // Construct absolute path to TezzDB using backslash (Windows)
-  let db_path:str = str.str_cat(base_dir, "\\tezz_app.tdb")
-  g_tezz_db = tezzdb.db_open(db_path)
-  if g_tezz_db == 0 as *char:
-    // Fallback: try forward slash (cross-platform)
-    let db_path2:str = str.str_cat(base_dir, "/tezz_app.tdb")
-    g_tezz_db = tezzdb.db_open(db_path2)
-    if g_tezz_db == 0 as *char:
-      say "TezzNative Error: failed to open TezzDB at " + db_path
-      ret 1
-
+  if port <= 0 || port >= 65536: ret 2
+  if net.init() != 0: ret 1
   listener:int = net.http_server_listen("127.0.0.1", port, 128)
-  if listener < 0:
-    say "[ERROR] Failed to bind HTTP server on port ", port
-    ret 1
-
+  if listener < 0: ret 1
   cwd_path:str = io.cwd()
-  my_pid:int = server_arg_int(2, 1000)
-  write_server_lockfile(port, my_pid, cwd_path, base_dir)
-
-  // Initialize Erlang-style OTP Supervisor Tree
-  sup_pid:int = supervisor.start_supervisor("HttpServerSupervisor")
-  worker_pid:int = supervisor.start_worker(sup_pid, "HttpAcceptWorker")
-
-  port_str:str = str.int_to_str(port)
-
-  l1:str = str.str_cat("  |  Local URL   : http://127.0.0.1:", port_str)
-  l1 = str.str_cat(l1, "/")
-  l2:str = str.str_cat("  |  Loopback URL: http://localhost:", port_str)
-  l2 = str.str_cat(l2, "/")
-
-  say "[TezzNative HTTP Server] Starting"
-  say "[TezzNative HTTP Server] Ready"
-  say l1
-  say l2
-  say "  |  Server Mode : LOCAL AUTO-INDEXING, TEZZDB & OTP API"
-  say "  |  Supervision : ACTIVE (single-process event loop)"
-  say "  |  Status      : ACTIVE"
-  say "[TezzNative HTTP Server] Ready for requests"
-  say ""
-
-  // Infinite zero-leak fault-tolerant server loop
-  while 1 != 0:
-    client_sock:int = net.http_server_accept(listener, 2000)
-    if client_sock >= 0:
-      req:str = net.http_read_request(client_sock, SERVER_MAX_REQUEST_BYTES)
-      if req != 0 as str && str.str_len(req) > 0:
-        if net.http_request_start_line_valid(req) == 0:
-          net.http_respond_bad_request(client_sock)
-          free(req)
-          net.close(client_sock)
-          continue
-        method:str = net.http_method(req)
-        raw_path:str = net.http_path(req)
-        
-        body_len:int = net.http_content_length(req)
-        if body_len > SERVER_MAX_BODY_BYTES:
-          net.http_respond_text(client_sock, 413, "Request body too large")
-        else if method != 0 as str && str.str_eq(method, "GET") != 0:
-          serve_request(client_sock, raw_path, port)
-        else:
-          net.http_respond_text(client_sock, 405, "Method Not Allowed")
-
-        if method != 0 as str: free(method)
-        if raw_path != 0 as str: free(raw_path)
-        free(req)
+  write_server_lockfile(port, server_arg_int(1, 0), cwd_path, cwd_path)
+  if cwd_path != 0: free(cwd_path)
+  say "[TezzNative local HTTP server] Ready on 127.0.0.1:", port
+  while 1:
+    client:int = net.http_server_accept(listener, 2000)
+    if client < 0: continue
+    net.set_timeout(client, 5000)
+    request:str = net.http_read_request(client, SERVER_MAX_REQUEST_BYTES)
+    if request != 0:
+      if net.http_request_start_line_valid(request) == 0:
+        net.http_respond_bad_request(client)
+      else if _local_host(request, port) == 0:
+        net.http_respond_text(client, 403, "Local Host and Origin required")
       else:
-        if req != 0 as str: free(req)
-
-      net.close(client_sock)
-
+        method:str = net.http_method(request)
+        path:str = net.http_path(request)
+        body_length:int = net.http_content_length(request)
+        if body_length < 0 || body_length > SERVER_MAX_BODY_BYTES:
+          net.http_respond_text(client, 413, "Request body too large")
+        else if str.str_eq(method, "GET") != 0:
+          serve_request(client, path, port)
+        else:
+          net.http_respond_text(client, 405, "Method Not Allowed")
+        if method != 0: free(method)
+        if path != 0: free(path)
+      free(request)
+    net.close(client)
   ret 0
 
 fn main() -> int:
-  if args_count() > 1:
-    requested_port:int = server_arg_int(1, 0)
-    if requested_port <= 0 || requested_port >= 65536:
-      say "[ERROR] Invalid port. Expected a value from 1 to 65535."
-      ret 2
   ret run_server(get_server_port())

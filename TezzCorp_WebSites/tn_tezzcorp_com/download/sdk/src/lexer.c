@@ -4,6 +4,19 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdint.h>
+#include <limits.h>
+
+static int integer_digit(uint64_t* value,unsigned base,unsigned digit){
+  if(*value>(UINT64_MAX-digit)/base) return 0;
+  *value=*value*base+digit;
+  return 1;
+}
+
+static long long integer_bits(uint64_t value){
+  if(value<=(uint64_t)LLONG_MAX) return (long long)value;
+  return -(long long)(UINT64_MAX-value)-1;
+}
 
 static int is_ident_start(char c){ return isalpha((unsigned char)c) || c=='_'; }
 static int is_ident(char c){ return isalnum((unsigned char)c) || c=='_'; }
@@ -350,44 +363,55 @@ void lex_next(Lexer* L) {
   // number / float (hex 0x, binary 0b, underscore separators)
   if (isdigit((unsigned char)c)) {
     size_t p=L->pos;
-    long long v=0;
+    uint64_t v=0;
     int is_float=0;
+    int overflow=0;
 
     /* hex literal: 0x... */
     if(L->src[p]=='0' && (L->src[p+1]=='x'||L->src[p+1]=='X')){
       p+=2;
+      int digits=0;
       while(isxdigit((unsigned char)L->src[p])||L->src[p]=='_'){
         if(L->src[p]!='_'){
           unsigned char hc=(unsigned char)L->src[p];
           int d = isdigit(hc)? hc-'0' : (tolower(hc)-'a'+10);
-          v = v*16 + d;
+          if(!integer_digit(&v,16,(unsigned)d)) overflow=1;
+          digits++;
         }
         p++;
       }
+      if(!digits) err_at2(L->path,L->src,L->line,L->col,"hexadecimal literal requires digits");
+      if(overflow) err_at2(L->path,L->src,L->line,L->col,"integer literal exceeds 64-bit range");
       L->cur.start=L->src+L->pos;
       L->cur.len=(int)(p-L->pos);
       L->cur.kind=TK_NUMBER;
-      L->cur.num=v;
+      L->cur.num=integer_bits(v);
       while(L->pos<p) bump(L);
       return;
     }
     /* binary literal: 0b... */
     if(L->src[p]=='0' && (L->src[p+1]=='b'||L->src[p+1]=='B')){
       p+=2;
+      int digits=0;
       while(L->src[p]=='0'||L->src[p]=='1'||L->src[p]=='_'){
-        if(L->src[p]!='_') v = v*2 + (L->src[p]-'0');
+        if(L->src[p]!='_'){
+          if(!integer_digit(&v,2,(unsigned)(L->src[p]-'0'))) overflow=1;
+          digits++;
+        }
         p++;
       }
+      if(!digits) err_at2(L->path,L->src,L->line,L->col,"binary literal requires digits");
+      if(overflow) err_at2(L->path,L->src,L->line,L->col,"integer literal exceeds 64-bit range");
       L->cur.start=L->src+L->pos;
       L->cur.len=(int)(p-L->pos);
       L->cur.kind=TK_NUMBER;
-      L->cur.num=v;
+      L->cur.num=integer_bits(v);
       while(L->pos<p) bump(L);
       return;
     }
     /* decimal (with optional _ separators) */
     while (isdigit((unsigned char)L->src[p])||L->src[p]=='_') {
-      if(L->src[p]!='_') v = v*10 + (L->src[p]-'0');
+      if(L->src[p]!='_' && !integer_digit(&v,10,(unsigned)(L->src[p]-'0'))) overflow=1;
       p++;
     }
     if (L->src[p]=='.' && isdigit((unsigned char)L->src[p+1])) {
@@ -401,21 +425,24 @@ void lex_next(Lexer* L) {
       if (isdigit((unsigned char)L->src[ep])) {
         is_float = 1;
         p = ep;
-        while (isdigit((unsigned char)L->src[p])) p++;
+        while (isdigit((unsigned char)L->src[p]) || L->src[p]=='_') p++;
       }
     }
     L->cur.start=L->src+L->pos;
     L->cur.len=(int)(p-L->pos);
     if(is_float){
-      char tmp[128];
-      int n = L->cur.len < (int)(sizeof(tmp)-1) ? L->cur.len : (int)(sizeof(tmp)-1);
-      memcpy(tmp, L->cur.start, (size_t)n);
+      char* tmp=(char*)malloc((size_t)L->cur.len+1);
+      if(!tmp) die("out of memory");
+      int n=0;
+      for(int i=0;i<L->cur.len;i++) if(L->cur.start[i]!='_') tmp[n++]=L->cur.start[i];
       tmp[n]=0;
       L->cur.kind=TK_FLOAT;
       L->cur.f=strtod(tmp, NULL);
+      free(tmp);
     } else {
+      if(overflow) err_at2(L->path,L->src,L->line,L->col,"integer literal exceeds 64-bit range");
       L->cur.kind=TK_NUMBER;
-      L->cur.num=v;
+      L->cur.num=integer_bits(v);
     }
     while (L->pos < p) bump(L);
     return;

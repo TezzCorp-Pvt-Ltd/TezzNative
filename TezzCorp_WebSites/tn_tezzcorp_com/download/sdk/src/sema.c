@@ -1,5 +1,6 @@
 // src/sema.c
 #include "sema.h"
+#include "hardware_target.h"
 #include "util.h"
 #include <string.h>
 #include <stdlib.h>
@@ -1894,11 +1895,50 @@ static void own_check_expr(OwnEnv* E, Expr* e){
 
 static void own_check_stmt(TypeEnv* tenv, Module* M, FnDecl* curF, OwnEnv* E, Stmt* s);
 
+static OwnEnv oenv_clone(const OwnEnv* source){
+  OwnEnv copy; memset(&copy,0,sizeof(copy));
+  for(int i=0;i<source->sn;i++){
+    oenv_push(&copy);
+    for(int j=0;j<source->scopes[i].n;j++){
+      OwnVar v=source->scopes[i].vars[j];
+      oenv_add(&copy,v.name,v.len,v.st);
+    }
+  }
+  return copy;
+}
+
+static void oenv_destroy(OwnEnv* env){
+  while(env->sn>0) oenv_pop(env);
+  free(env->scopes);
+}
+
+/* A returning branch cannot close a handle on the surviving path. */
+static int own_returns(const Stmt* statement){
+  if(!statement) return 0;
+  if(statement->k==ST_RET) return 1;
+  if(statement->k==ST_IF)
+    return own_returns(statement->iff.thenb) && own_returns(statement->iff.elseb);
+  if(statement->k==ST_BLOCK){
+    for(int i=0;i<statement->block.n;i++)
+      if(own_returns(statement->block.items[i])) return 1;
+  }
+  return 0;
+}
+
+static FileOwn own_merge(FileOwn a, FileOwn b){
+  if(a==b) return a;
+  /* Closing is unsafe if either reachable branch already closed or borrowed it. */
+  if(a==FILE_OWN_CLOSED || b==FILE_OWN_CLOSED) return FILE_OWN_CLOSED;
+  if(a==FILE_OWN_BORROWED || b==FILE_OWN_BORROWED) return FILE_OWN_BORROWED;
+  return FILE_OWN_UNKNOWN;
+}
+
 static void own_check_block(TypeEnv* tenv, Module* M, FnDecl* curF, OwnEnv* E, Stmt* block){
   if(!block || block->k!=ST_BLOCK) return;
   oenv_push(E);
   for(int i=0;i<block->block.n;i++){
     own_check_stmt(tenv, M, curF, E, block->block.items[i]);
+    if(own_returns(block->block.items[i])) break;
   }
   oenv_pop(E);
 }
@@ -1932,11 +1972,21 @@ static void own_check_stmt(TypeEnv* tenv, Module* M, FnDecl* curF, OwnEnv* E, St
     case ST_RET:
       if(s->ret.e) own_check_expr(E, s->ret.e);
       return;
-    case ST_IF:
+    case ST_IF: {
       own_check_expr(E, s->iff.cond);
-      own_check_stmt(tenv, M, curF, E, s->iff.thenb);
-      if(s->iff.elseb) own_check_stmt(tenv, M, curF, E, s->iff.elseb);
+      OwnEnv yes=oenv_clone(E), no=oenv_clone(E);
+      own_check_stmt(tenv, M, curF, &yes, s->iff.thenb);
+      if(s->iff.elseb) own_check_stmt(tenv, M, curF, &no, s->iff.elseb);
+      int yes_returns=own_returns(s->iff.thenb), no_returns=own_returns(s->iff.elseb);
+      for(int i=0;i<E->sn;i++){
+        for(int j=0;j<E->scopes[i].n;j++){
+          FileOwn a=yes.scopes[i].vars[j].st, b=no.scopes[i].vars[j].st;
+          E->scopes[i].vars[j].st=yes_returns ? b : (no_returns ? a : own_merge(a,b));
+        }
+      }
+      oenv_destroy(&yes); oenv_destroy(&no);
       return;
+    }
     case ST_WHILE:
       own_check_expr(E, s->wh.cond);
       own_check_stmt(tenv, M, curF, E, s->wh.body);
@@ -2082,6 +2132,18 @@ static void type_un(TypeEnv* tenv, Expr* e){
   else e->ty = tenv->b.ty_i64;
 }
 
+static void check_embedded_field_access(Type* owner,Field* field,Module* current,SrcLoc loc){
+  if(!field || field->is_pub) return;
+  const char* declared=owner ? owner->decl_loc.path : NULL;
+  const char* caller=current ? current->path : NULL;
+  if(!declared || !caller || strcmp(declared,caller)!=0){
+    char message[512];
+    snprintf(message,sizeof(message),"cannot access private field '%.*s' of struct '%.*s' outside its module",
+             field->name_len,field->name,owner->sname_len,owner->sname);
+    err_at(loc,message);
+  }
+}
+
 static void sema_call(ModuleGraph* G, TypeEnv* tenv, Module* curM, FnDecl* curF, TyEnv* venv, PtrEnv* penv, BorrowEnv* benv, Expr* call, int in_unsafe){
   Expr* cal = call->call.callee;
 
@@ -2102,6 +2164,7 @@ static void sema_call(ModuleGraph* G, TypeEnv* tenv, Module* curM, FnDecl* curF,
       for(int i=0;i<fnt->fparam_n;i++){
         require_assignable(tenv, call->call.args[i]->loc, fnt->fparams[i], call->call.args[i]);
       }
+      call->call.fn_ty = fnt;
       call->ty = fnt->fret;
       return;
     }
@@ -2207,6 +2270,8 @@ static void sema_call(ModuleGraph* G, TypeEnv* tenv, Module* curM, FnDecl* curF,
         if(s.argc>=3) require_assignable(tenv, call->call.args[2]->loc, s.a2, call->call.args[2]);
         if(s.argc>=4) require_assignable(tenv, call->call.args[3]->loc, s.a3, call->call.args[3]);
         if(s.argc>=5) require_assignable(tenv, call->call.args[4]->loc, s.a4, call->call.args[4]);
+        Type* params[5] = {s.a0, s.a1, s.a2, s.a3, s.a4};
+        call->call.fn_ty = type_fn(tenv, s.ret, params, s.argc);
       }
 
         if(penv && nlen==4 && strncmp(nm,"free",4)==0 && call->call.argc==1){
@@ -2278,6 +2343,8 @@ static void sema_call(ModuleGraph* G, TypeEnv* tenv, Module* curM, FnDecl* curF,
           }
         }
       }
+      call->call.fn_ty = f->fty;
+      call->call.is_extern = f->is_extern;
       call->ty = f->ret;
       return;
   }
@@ -2344,6 +2411,8 @@ static void sema_call(ModuleGraph* G, TypeEnv* tenv, Module* curM, FnDecl* curF,
                          mangled2, mangled_len2, sf->arity, call->call.argc);
           for(int i=0;i<sf->arity;i++)
             require_assignable(tenv, call->call.args[i]->loc, sf->ptypes[i], call->call.args[i]);
+          call->call.fn_ty = sf->fty;
+          call->call.is_extern = sf->is_extern;
           call->ty = sf->ret;
           return;
         }
@@ -2420,6 +2489,7 @@ static void sema_call(ModuleGraph* G, TypeEnv* tenv, Module* curM, FnDecl* curF,
                 }
               }
               if(pmf && target_mod){
+                check_embedded_field_access(struct_ty,base_field,curM,base->loc);
                 Expr* dot_base = (Expr*)malloc(sizeof(Expr));
                 if(!dot_base) die("out of memory");
                 memset(dot_base, 0, sizeof(Expr));
@@ -2516,6 +2586,8 @@ static void sema_call(ModuleGraph* G, TypeEnv* tenv, Module* curM, FnDecl* curF,
           for(int i=0;i<mf->arity;i++){
             require_assignable(tenv, call->call.args[i]->loc, mf->ptypes[i], call->call.args[i]);
           }
+          call->call.fn_ty = mf->fty;
+          call->call.is_extern = mf->is_extern;
           call->ty = mf->ret;
           return;
         }
@@ -2584,6 +2656,8 @@ static void sema_call(ModuleGraph* G, TypeEnv* tenv, Module* curM, FnDecl* curF,
         }
       }
       free(modnm);
+      call->call.fn_ty = f->fty;
+      call->call.is_extern = f->is_extern;
       call->ty = f->ret;
       return;
   }
@@ -2596,6 +2670,7 @@ static void sema_call(ModuleGraph* G, TypeEnv* tenv, Module* curM, FnDecl* curF,
     for(int i=0;i<fnt->fparam_n;i++){
       require_assignable(tenv, call->call.args[i]->loc, fnt->fparams[i], call->call.args[i]);
     }
+    call->call.fn_ty = fnt;
     call->ty = fnt->fret;
     return;
   }
@@ -2786,6 +2861,7 @@ static void sema_expr(ModuleGraph* G, TypeEnv* tenv, Module* curM, FnDecl* curF,
         if(bf && bf->ty && bf->ty->k == TY_STRUCT){
           Field* pf = type_find_field(bf->ty, e->dot.mem, e->dot.memlen);
           if(pf){
+            check_embedded_field_access(struct_ty,bf,curM,e->loc);
             Expr* sub_base = (Expr*)malloc(sizeof(Expr));
             if(!sub_base) die("out of memory");
             memset(sub_base, 0, sizeof(Expr));
@@ -2851,6 +2927,17 @@ static void sema_expr(ModuleGraph* G, TypeEnv* tenv, Module* curM, FnDecl* curF,
       for(int i=0;i<e->stlit.n;i++){
         Field* f = type_find_field(st, e->stlit.f[i], e->stlit.flen[i]);
         if(!f) err_at(e->loc, "unknown field in struct literal");
+        if(!f->is_pub){
+          const char* owner = st->decl_loc.path;
+          const char* current = curM ? curM->path : NULL;
+          if(!owner || !current || strcmp(owner, current) != 0){
+            char msg[512];
+            snprintf(msg, sizeof(msg),
+              "cannot access private field '%.*s' of struct '%.*s' outside its module",
+              f->name_len, f->name, st->sname_len, st->sname);
+            err_at(e->loc, msg);
+          }
+        }
         sema_expr(G, tenv, curM, curF, venv, penv, benv, e->stlit.v[i], in_unsafe);
         require_assignable(tenv, e->stlit.v[i]->loc, f->ty, e->stlit.v[i]);
       }
@@ -3021,7 +3108,14 @@ static void sema_stmt(ModuleGraph* G, TypeEnv* tenv, Module* curM, FnDecl* curF,
         }
       }
 
-      if(s->asg.lhs) sema_expr(G, tenv, curM, curF, venv, penv, benv, s->asg.lhs, in_unsafe);
+      /* Replacing a local variable does not read its previous pointer value.
+         Preserve moved-value checks on the RHS and on indexed/field lvalues. */
+      Type* replacement_ty = NULL;
+      if(s->asg.op==TK_ASSIGN && s->asg.lhs && s->asg.lhs->k==EX_NAME){
+        replacement_ty=tenv_find_var(venv,s->asg.lhs->name.name,s->asg.lhs->name.len);
+      }
+      if(replacement_ty && replacement_ty->k==TY_PTR) s->asg.lhs->ty=replacement_ty;
+      else if(s->asg.lhs) sema_expr(G, tenv, curM, curF, venv, penv, benv, s->asg.lhs, in_unsafe);
 
       if(!s->asg.lhs || !s->asg.lhs->ty) err_at(s->loc, "assignment lhs has no type");
       if(!is_lvalue(s->asg.lhs)) err_at(s->asg.lhs->loc, "assignment requires lvalue");
@@ -3188,15 +3282,24 @@ static void check_duplicate_fns(Module* M){
 }
 
 static void sema_globals(ModuleGraph* G, TypeEnv* tenv, Module* M){
-  (void)G;
+  TyEnv venv; memset(&venv,0,sizeof(venv));
+  tenv_push(&venv);
+  for(int i=0;i<M->global_n;i++){
+    struct GlobalVar* g = &M->globals[i];
+    SrcLoc loc = {M->path, M->src, 1, 1};
+    if(g->init) loc = g->init->loc;
+    tenv_add_var(&venv, g->name, g->len, g->ty, loc);
+  }
   for(int i=0;i<M->global_n;i++){
     struct GlobalVar* g = &M->globals[i];
     if(g->init){
-      sema_expr(G, tenv, M, NULL, NULL, NULL, NULL, g->init, is_stdlib_module(M));
+      sema_expr(G, tenv, M, NULL, &venv, NULL, NULL, g->init, is_stdlib_module(M));
       if(!g->init->ty) err_at(g->init->loc, "global initializer has no type");
       require_assignable(tenv, g->init->loc, g->ty, g->init);
     }
   }
+  tenv_pop(&venv);
+  free(venv.scopes);
 }
 
 static void sema_fn(ModuleGraph* G, TypeEnv* tenv, Module* M, FnDecl* fn){
@@ -3239,6 +3342,37 @@ static void sema_fn(ModuleGraph* G, TypeEnv* tenv, Module* M, FnDecl* fn){
 }
 
 void sema_check_module(ModuleGraph* G, TypeEnv* tenv, Module* M){
+  /* Distributed experimental APIs opt in through an exact source marker.
+     A user module that happens to have the same name remains unrestricted. */
+  if(M && M->src){
+    const char* source=M->src;
+    for(const char* line=source; *line; ){
+      const char* end=strchr(line,'\n');
+      size_t length=end ? (size_t)(end-line) : strlen(line);
+      if(length && line[length-1]=='\r') length--;
+      const char* hardware="// tezz-hardware-module: ";
+      size_t prefix=strlen(hardware);
+      if(length>prefix && !memcmp(line,hardware,prefix)){
+        const char* profile=line+prefix;
+        size_t profile_length=length-prefix;
+        int common=profile_length==6 && !memcmp(profile,"common",6);
+        if(!g_sema_freestanding || !tn_is_hardware_target(g_sema_target) ||
+           (!common && (strlen(g_sema_target)!=profile_length || memcmp(profile,g_sema_target,profile_length))))
+          err_at2(M->path,M->src,1,1,"hardware module requires its matching --target profile and --freestanding");
+      }
+      const char* arduino="// tezz-unavailable-module: arduino";
+      const char* kernel="// tezz-unavailable-module: kernel";
+      const char* raspi="// tezz-unavailable-module: raspi";
+      if(length==strlen(arduino) && !memcmp(line,arduino,length))
+        err_at2(M->path,M->src,1,1,"module 'arduino' is unavailable: its legacy API is not implemented; use arduino.uno with --target arduino-uno --freestanding");
+      if(length==strlen(kernel) && !memcmp(line,kernel,length))
+        err_at2(M->path,M->src,1,1,"module 'kernel' is unavailable: its legacy API is not implemented; use hardware with an explicit freestanding target");
+      if(length==strlen(raspi) && !memcmp(line,raspi,length))
+        err_at2(M->path,M->src,1,1,"module 'raspi' is unavailable: its legacy API is not implemented; use raspi.pi3 with --target raspi3b --freestanding");
+      if(!end) break;
+      line=end+1;
+    }
+  }
   check_duplicate_fns(M);
   for(int i=0;i<M->typedef_n;i++){
     TypedefDecl* td = M->typedefs[i];
@@ -3274,6 +3408,8 @@ void sema_check_graph(ModuleGraph* G, TypeEnv* tenv, Module* entry_mod, int requ
       err_at(t->decl_loc, "incomplete struct type");
     }
   }
+
+  tenv_finalize_layouts(tenv);
 
   for(int i=0;i<G->mod_n;i++){
     Module* M = G->mods[i];

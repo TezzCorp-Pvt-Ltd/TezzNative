@@ -1,0 +1,29 @@
+import "nn"
+
+fn main() -> int:
+  logits:[float;4]
+  seed:int = 0
+  i:int = 0
+  while i < 64:
+    logits[0] = 0.0
+    logits[1] = 0.0
+    logits[2] = 1.0
+    logits[3] = -1.0
+    unsafe:
+      if nn.nn_sample_topk(&logits[0], 4, 1.0, 1, &seed) != 2:
+        say "FAIL top-k=1 selected a lower-ranked token"
+        ret 1
+    i += 1
+  i = 0
+  while i < 64:
+    logits[0] = 1.0
+    logits[1] = 2.0
+    logits[2] = 2.0
+    logits[3] = 0.0
+    unsafe:
+      selected:int = nn.nn_sample_topk(&logits[0], 4, 0.5, 2, &seed)
+      if selected != 1 && selected != 2:
+        say "FAIL tied top-k selection"
+        ret 2
+    i += 1
+  ret 0

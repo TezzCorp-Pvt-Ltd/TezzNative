@@ -1,0 +1,173 @@
+// tnx implementation: buffers.
+import "io"
+import "tnx.state"
+
+fn sb_init(sb:*TnxSb) -> int:
+  (*sb).cap = 256
+  (*sb).len = 0
+  (*sb).buf = (*char)malloc((*sb).cap)
+  if (*sb).buf == 0:
+    (*sb).cap = 0
+    ret 0 - 1
+  (*sb).buf[0] = 0 as char
+  ret 0
+
+fn sb_reserve(sb:*TnxSb, add:int) -> int:
+  if sb == 0:
+    ret 0 - 1
+  need:int = (*sb).len + add + 1
+  if need <= (*sb).cap:
+    ret 0
+  ncap:int = (*sb).cap
+  if ncap < 1:
+    ncap = 1
+  while ncap < need:
+    ncap = ncap * 2
+  nbuf:*char = (*char)malloc(ncap)
+  if nbuf == 0:
+    ret 0 - 1
+  if (*sb).buf != 0 && (*sb).len > 0:
+    unsafe:
+      memcpy(nbuf, (*sb).buf, (*sb).len)
+  if (*sb).buf != 0:
+    free((*sb).buf)
+  (*sb).buf = nbuf
+  (*sb).cap = ncap
+  ret 0
+
+fn sb_putc(sb:*TnxSb, c:int) -> int:
+  if sb_reserve(sb, 1) != 0:
+    ret 0 - 1
+  (*sb).buf[(*sb).len] = c as char
+  (*sb).len = (*sb).len + 1
+  (*sb).buf[(*sb).len] = 0 as char
+  ret 0
+
+fn sb_puts(sb:*TnxSb, s:str) -> int:
+  if s == 0:
+    ret 0
+  n:int = len(s)
+  if sb_reserve(sb, n) != 0:
+    ret 0 - 1
+  unsafe:
+    memcpy((*sb).buf + (*sb).len, s, n)
+  (*sb).len = (*sb).len + n
+  (*sb).buf[(*sb).len] = 0 as char
+  ret 0
+
+fn tnx_hex_digit(d:int) -> int:
+  if d < 10:
+    ret 48 + d
+  ret 55 + d
+
+fn tnx_hex4(sb:*TnxSb, v:int) -> int:
+  // v expected 0..65535
+  n:int = v & 65535
+  d1:int = (n >> 12) & 15
+  d2:int = (n >> 8) & 15
+  d3:int = (n >> 4) & 15
+  d4:int = n & 15
+  h1:int = tnx_hex_digit(d1)
+  h2:int = tnx_hex_digit(d2)
+  h3:int = tnx_hex_digit(d3)
+  h4:int = tnx_hex_digit(d4)
+  sb_putc(sb, h1)
+  sb_putc(sb, h2)
+  sb_putc(sb, h3)
+  sb_putc(sb, h4)
+  ret 0
+
+fn sb_take(sb:*TnxSb) -> str:
+  if sb == 0:
+    ret 0 as str
+  out:*char = (*sb).buf
+  (*sb).buf = 0 as *char
+  (*sb).len = 0
+  (*sb).cap = 0
+  ret out
+
+// --- Binary builder ---
+
+fn bb_init(bb:*TnxBb) -> int:
+  (*bb).cap = 256
+  (*bb).len = 0
+  (*bb).buf = (*char)malloc((*bb).cap)
+  if (*bb).buf == 0:
+    (*bb).cap = 0
+    ret 0 - 1
+  ret 0
+
+fn bb_reserve(bb:*TnxBb, add:int) -> int:
+  need:int = (*bb).len + add
+  if need <= (*bb).cap:
+    ret 0
+  ncap:int = (*bb).cap
+  if ncap < 1:
+    ncap = 1
+  while ncap < need:
+    ncap = ncap * 2
+  nbuf:*char = (*char)malloc(ncap)
+  if nbuf == 0:
+    ret 0 - 1
+  if (*bb).buf != 0 && (*bb).len > 0:
+    unsafe:
+      memcpy(nbuf, (*bb).buf, (*bb).len)
+  if (*bb).buf != 0:
+    free((*bb).buf)
+  (*bb).buf = nbuf
+  (*bb).cap = ncap
+  ret 0
+
+fn bb_put_u8(bb:*TnxBb, v:int) -> int:
+  if bb_reserve(bb, 1) != 0:
+    ret 0 - 1
+  (*bb).buf[(*bb).len] = (v & 255) as char
+  (*bb).len = (*bb).len + 1
+  ret 0
+
+fn bb_put_bytes(bb:*TnxBb, p:*char, n:int) -> int:
+  if n <= 0:
+    ret 0
+  if bb_reserve(bb, n) != 0:
+    ret 0 - 1
+  unsafe:
+    memcpy((*bb).buf + (*bb).len, p, n)
+  (*bb).len = (*bb).len + n
+  ret 0
+
+fn bb_put_uvarint(bb:*TnxBb, v:int) -> int:
+  x:int = v
+  if x < 0:
+    x = 0 - x
+  while x >= 128:
+    bb_put_u8(bb, (x & 127) | 128)
+    x = x >> 7
+  bb_put_u8(bb, x & 127)
+  ret 0
+
+fn bb_put_i64(bb:*TnxBb, v:int) -> int:
+  if v < 0:
+    bb_put_u8(bb, 1)
+    bb_put_uvarint(bb, 0 - v)
+  else:
+    bb_put_u8(bb, 0)
+    bb_put_uvarint(bb, v)
+  ret 0
+
+fn bb_put_f64(bb:*TnxBb, v:float) -> int:
+  tmp:[char;8]
+  unsafe:
+    memcpy(&tmp[0], &v, 8)
+  bb_put_bytes(bb, &tmp[0], 8)
+  ret 0
+
+fn bb_take(bb:*TnxBb) -> *TnxBytes:
+  out:*TnxBytes = (*TnxBytes)malloc(sizeof(TnxBytes))
+  (*out).buf = (*bb).buf
+  (*out).len = (*bb).len
+  (*bb).buf = 0 as *char
+  (*bb).len = 0
+  (*bb).cap = 0
+  ret out
+
+// --- Stringify ---

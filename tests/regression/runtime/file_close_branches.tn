@@ -1,0 +1,23 @@
+import "io"
+
+fn close_once(flag:int) -> int:
+  file:*File = io.file_open("branch.tmp", "wb")
+  if file == 0: ret 1
+  if flag != 0:
+    io.file_close(file)
+    ret 0
+  ret io.file_close(file)
+
+fn close_alternatives(flag:int) -> int:
+  file:*File = io.file_open("branch.tmp", "wb")
+  if file == 0: ret 1
+  if flag != 0:
+    io.file_close(file)
+  else:
+    io.file_close(file)
+  ret 0
+
+fn main() -> int:
+  if close_once(0) != 0 || close_once(1) != 0: ret 1
+  if close_alternatives(0) != 0 || close_alternatives(1) != 0: ret 2
+  ret 0

@@ -1,0 +1,24 @@
+import "tensor"
+
+fn main() -> int:
+  tensor.tape_init()
+  x:Tensor = tensor.tensor_zeros_2d(2, 2)
+  x = tensor.tensor_require_grad(x)
+  y:Tensor = tensor.tensor_softmax(x, 0)
+  weights:Tensor = tensor.tensor_zeros_2d(2, 2)
+  tensor.tensor_set2(weights, 0, 0, 1.0)
+  weighted:Tensor = tensor.tensor_mul(y, weights)
+  loss:Tensor = tensor.tensor_sum_all_t(weighted)
+  tensor.tensor_backward(loss)
+  failed:int = 0
+  if tensor.tensor_grad_item(x, 0) != 0.25 || tensor.tensor_grad_item(x, 1) != 0.0 || tensor.tensor_grad_item(x, 2) != 0.0 - 0.25 || tensor.tensor_grad_item(x, 3) != 0.0:
+    failed = 1
+  tensor.tape_reset()
+  tensor.tensor_free_tensor(loss)
+  tensor.tensor_free_tensor(weighted)
+  tensor.tensor_free_tensor(weights)
+  tensor.tensor_free_tensor(y)
+  tensor.tensor_free_tensor(x)
+  if failed != 0:
+    say "FAIL: softmax gradient along a non-final axis"
+  ret failed

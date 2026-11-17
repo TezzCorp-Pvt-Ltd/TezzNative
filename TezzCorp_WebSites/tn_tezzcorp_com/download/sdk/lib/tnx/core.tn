@@ -1,0 +1,273 @@
+// tnx implementation: core.
+import "io"
+import "tnx.state"
+
+fn tnx_is_space(c:int) -> int:
+  ret c == 32 || c == 9 || c == 10 || c == 13
+
+fn tnx_hex_val(c:int) -> int:
+  if c >= 48 && c <= 57:
+    ret c - 48
+  if c >= 65 && c <= 70:
+    ret c - 55
+  if c >= 97 && c <= 102:
+    ret c - 87
+  ret 0 - 1
+
+fn tnx_strdup(s:str) -> str:
+  if s == 0:
+    ret 0 as str
+  n:int = len(s)
+  out:*char = (*char)malloc(n + 1)
+  i:int = 0
+  while i < n:
+    out[i] = s[i]
+    i = i + 1
+  out[n] = 0 as char
+  ret out
+
+fn tnx_substr(s:str, a:int, b:int) -> str:
+  if s == 0:
+    ret 0 as str
+  if b < a:
+    ret 0 as str
+  n:int = b - a
+  out:*char = (*char)malloc(n + 1)
+  i:int = 0
+  while i < n:
+    out[i] = s[a + i]
+    i = i + 1
+  out[n] = 0 as char
+  ret out
+
+fn tnx_int_to_str(x:int) -> str:
+  neg:int = 0
+  v:int = x
+  if v < 0:
+    neg = 1
+    v = 0 - v
+  buf:[char;32]
+  i:int = 0
+  if v == 0:
+    buf[i] = 48 as char
+    i = i + 1
+  else:
+    while v > 0:
+      d:int = v % 10
+      buf[i] = (48 + d) as char
+      i = i + 1
+      v = v / 10
+  if neg != 0:
+    buf[i] = 45 as char
+    i = i + 1
+  out:*char = (*char)malloc(i + 1)
+  j:int = 0
+  while j < i:
+    out[j] = buf[i - 1 - j]
+    j = j + 1
+  out[i] = 0 as char
+  ret out
+
+fn tnx_new(kind:int) -> *TnxValue:
+  v:*TnxValue = (*TnxValue)malloc(sizeof(TnxValue))
+  (*v).kind = kind
+  (*v).i = 0
+  (*v).f = 0.0
+  (*v).s = 0 as *char
+  (*v).head = 0 as *TnxNode
+  ret v
+
+fn tnx_null() -> *TnxValue:
+  ret tnx_new(tnx.state._get_TNX_NULL())
+
+fn tnx_bool(b:int) -> *TnxValue:
+  v:*TnxValue = tnx_new(tnx.state._get_TNX_BOOL())
+  (*v).i = b != 0
+  ret v
+
+fn tnx_int(x:int) -> *TnxValue:
+  v:*TnxValue = tnx_new(tnx.state._get_TNX_INT())
+  (*v).i = x
+  ret v
+
+fn tnx_float(x:float) -> *TnxValue:
+  v:*TnxValue = tnx_new(tnx.state._get_TNX_FLOAT())
+  (*v).f = x
+  ret v
+
+fn tnx_str(s:str) -> *TnxValue:
+  v:*TnxValue = tnx_new(tnx.state._get_TNX_STR())
+  (*v).s = tnx_strdup(s)
+  ret v
+
+fn tnx_arr() -> *TnxValue:
+  k:int = 5
+  v:*TnxValue = tnx_new(k)
+  ret v
+
+fn tnx_obj() -> *TnxValue:
+  k:int = 6
+  v:*TnxValue = tnx_new(k)
+  ret v
+
+fn tnx_arr_push_take(arr:*TnxValue, v:*TnxValue) -> int:
+  if arr == 0 || (*arr).kind != 5:
+    ret 0 - 1
+  n:*TnxNode = (*TnxNode)malloc(sizeof(TnxNode))
+  if n == 0:
+    ret 0 - 1
+  (*n).key = 0 as *char
+  (*n).val = v
+  (*n).next = 0 as *TnxNode
+  if (*arr).head == 0:
+    (*arr).head = n
+    ret 0
+  cur:*TnxNode = (*arr).head
+  while (*cur).next != 0:
+    cur = (*cur).next
+  (*cur).next = n
+  ret 0
+
+fn tnx_obj_set_take(obj:*TnxValue, key:str, v:*TnxValue) -> int:
+  if obj == 0 || (*obj).kind != 6 || key == 0:
+    ret 0 - 1
+  n:*TnxNode = (*TnxNode)malloc(sizeof(TnxNode))
+  if n == 0:
+    ret 0 - 1
+  (*n).key = tnx_strdup(key)
+  if (*n).key == 0:
+    free(n)
+    ret 0 - 1
+  (*n).val = v
+  (*n).next = 0 as *TnxNode
+  if (*obj).head == 0:
+    (*obj).head = n
+  else:
+    cur:*TnxNode = (*obj).head
+    while (*cur).next != 0:
+      cur = (*cur).next
+    (*cur).next = n
+  ret 0
+
+fn tnx_obj_get(obj:*TnxValue, key:str) -> *TnxValue:
+  if obj == 0 || (*obj).kind != 6 || key == 0:
+    ret 0 as *TnxValue
+  cur:*TnxNode = (*obj).head
+  while cur != 0:
+    if (*cur).key != 0 && strcmp((*cur).key, key) == 0:
+      ret (*cur).val
+    cur = (*cur).next
+  ret 0 as *TnxValue
+
+fn tnx_arr_get(arr:*TnxValue, idx:int) -> *TnxValue:
+  if arr == 0 || (*arr).kind != 5 || idx < 0:
+    ret 0 as *TnxValue
+  cur:*TnxNode = (*arr).head
+  i:int = 0
+  while cur != 0:
+    if i == idx:
+      ret (*cur).val
+    i = i + 1
+    cur = (*cur).next
+  ret 0 as *TnxValue
+
+fn tnx_clone(v:*TnxValue) -> *TnxValue:
+  if v == 0:
+    ret 0 as *TnxValue
+  if (*v).kind == tnx.state._get_TNX_NULL():
+    ret tnx_null()
+  if (*v).kind == tnx.state._get_TNX_BOOL():
+    ret tnx_bool((*v).i)
+  if (*v).kind == tnx.state._get_TNX_INT():
+    ret tnx_int((*v).i)
+  if (*v).kind == tnx.state._get_TNX_FLOAT():
+    ret tnx_float((*v).f)
+  if (*v).kind == tnx.state._get_TNX_STR():
+    ret tnx_str((*v).s)
+  if (*v).kind == tnx.state._get_TNX_ARR():
+    outa:*TnxValue = tnx_arr()
+    if outa == 0:
+      ret 0 as *TnxValue
+    cura:*TnxNode = (*v).head
+    while cura != 0:
+      cv:*TnxValue = tnx_clone((*cura).val)
+      if (*cura).val != 0 && cv == 0:
+        tnx_free(outa)
+        ret 0 as *TnxValue
+      if tnx_arr_push_take(outa, cv) != 0:
+        if cv != 0:
+          tnx_free(cv)
+        tnx_free(outa)
+        ret 0 as *TnxValue
+      cura = (*cura).next
+    ret outa
+  if (*v).kind == tnx.state._get_TNX_OBJ():
+    outo:*TnxValue = tnx_obj()
+    if outo == 0:
+      ret 0 as *TnxValue
+    curo:*TnxNode = (*v).head
+    while curo != 0:
+      cv2:*TnxValue = tnx_clone((*curo).val)
+      if (*curo).val != 0 && cv2 == 0:
+        tnx_free(outo)
+        ret 0 as *TnxValue
+      if tnx_obj_set_take(outo, (*curo).key, cv2) != 0:
+        if cv2 != 0:
+          tnx_free(cv2)
+        tnx_free(outo)
+        ret 0 as *TnxValue
+      curo = (*curo).next
+    ret outo
+  ret tnx_null()
+
+fn tnx_arr_push(arr:*TnxValue, v:*TnxValue) -> int:
+  ret tnx_arr_push_take(arr, v)
+
+fn tnx_obj_set(obj:*TnxValue, key:str, v:*TnxValue) -> int:
+  ret tnx_obj_set_take(obj, key, v)
+
+fn tnx_as_int(v:*TnxValue) -> int:
+  if v == 0:
+    ret 0
+  if (*v).kind == tnx.state._get_TNX_INT() || (*v).kind == tnx.state._get_TNX_BOOL():
+    ret (*v).i
+  if (*v).kind == tnx.state._get_TNX_FLOAT():
+    ret (*v).f as int
+  ret 0
+
+fn tnx_as_float(v:*TnxValue) -> float:
+  if v == 0:
+    ret 0.0
+  if (*v).kind == tnx.state._get_TNX_FLOAT():
+    ret (*v).f
+  if (*v).kind == tnx.state._get_TNX_INT() || (*v).kind == tnx.state._get_TNX_BOOL():
+    ret (*v).i as float
+  ret 0.0
+
+fn tnx_as_str(v:*TnxValue) -> str:
+  if v == 0:
+    ret 0 as str
+  if (*v).kind == tnx.state._get_TNX_STR():
+    ret (*v).s
+  ret 0 as str
+
+fn tnx_free(v:*TnxValue) -> int:
+  if v == 0:
+    ret 0
+  if (*v).kind == tnx.state._get_TNX_STR():
+    if (*v).s != 0:
+      free((*v).s)
+  if (*v).kind == 5 || (*v).kind == 6:
+    cur:*TnxNode = (*v).head
+    while cur != 0:
+      nxt:*TnxNode = (*cur).next
+      if (*cur).key != 0:
+        free((*cur).key)
+      if (*cur).val != 0:
+        tnx_free((*cur).val)
+      free(cur)
+      cur = nxt
+  free(v)
+  ret 0
+
+// --- String builder ---

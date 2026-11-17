@@ -1,0 +1,18 @@
+import "ml"
+import "math"
+
+fn main() -> int:
+  logits:[float;2]
+  probs:[float;2]
+  gradients:[float;2]
+  labels:[int;1]
+  loss:float = 0.0
+  logits[0] = 0.0
+  logits[1] = 0.0 - 40.0
+  labels[0] = 1
+  unsafe:
+    status:int = ml.softmax_nll_loss_grad_f32(&loss, &gradients[0], &probs[0], &logits[0], &labels[0], 1, 2)
+    if status != 0 || loss != loss || math.absf(loss - 40.0) > 0.00001 || math.absf(probs[0] - 1.0) > 0.00001 || probs[1] < 0.0 || math.absf(gradients[1] + 1.0) > 0.00001:
+      say "FAIL: legacy ML loss must use stable exponential/log-sum-exp; got ", loss
+      ret 1
+  ret 0

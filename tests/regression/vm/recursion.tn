@@ -1,0 +1,11 @@
+fn descend(n:int) -> int:
+  if n <= 0:
+    ret 0
+  next:int = descend(n - 1)
+  ret next + 1
+
+fn main() -> int:
+  if descend(200) != 200:
+    say "FAIL recursive return"
+    ret 1
+  ret 0

@@ -1,0 +1,17 @@
+import "tztensor"
+import "./support/lib/values.tn"
+
+fn main() -> int:
+  x:int = tztensor.tensor_new_1d(1, 1)
+  values.write(x, 0, 2.0)
+  square:int = tztensor.tensor_mul_infix(x, x)
+  out:int = tztensor.tensor_add_infix(square, x)
+  status:int = tztensor.tensor_backward(out)
+  failed:int = 0
+  if status != 0 || values.gradient(x, 0) != 5.0:
+    failed = 1
+  tztensor.tensor_free(out)
+  tztensor.tensor_free(square)
+  tztensor.tensor_free(x)
+  if failed != 0: say "FAIL: SDK branched gradients must accumulate"
+  ret failed

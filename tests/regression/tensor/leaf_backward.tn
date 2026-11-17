@@ -1,0 +1,14 @@
+import "tensor"
+
+fn main() -> int:
+  tensor.tape_init()
+  x:Tensor = tensor.tensor_ones_1d(1)
+  x = tensor.tensor_require_grad(x)
+  tensor.tensor_backward(x)
+  actual:float = tensor.tensor_grad_item(x, 0)
+  tensor.tape_reset()
+  tensor.tensor_free_tensor(x)
+  if actual != 1.0:
+    say "FAIL: direct leaf backward must seed its gradient"
+    ret 1
+  ret 0

@@ -39,6 +39,17 @@ run_tezz() {
   "$TEZZC" "$@" 2>&1
 }
 
+same_source() {
+  # A Windows checkout may have CRLF fixtures while the Linux formatter emits LF.
+  # Preserve all other bytes so formatting differences still fail the gate.
+  python3 - "$1" "$2" <<'PY'
+from pathlib import Path
+import sys
+left, right = (Path(path).read_bytes().replace(b"\r\n", b"\n") for path in sys.argv[1:])
+raise SystemExit(left != right)
+PY
+}
+
 require_contains() {
   local name="$1"
   local text="$2"
@@ -106,7 +117,7 @@ fmt_output="$(run_tezz fmt "$tmp_root/control_flow.tn")"
 rc=$?
 if [[ "$rc" -ne 0 ]]; then
   dx_fail "fmt-control-flow" "exit=${rc}" "$fmt_output"
-elif ! cmp -s "$tmp_root/control_flow.tn" tests/conformance/dx/fmt/control_flow.formatted.tn; then
+elif ! same_source "$tmp_root/control_flow.tn" tests/conformance/dx/fmt/control_flow.formatted.tn; then
   dx_fail "fmt-control-flow" "formatted output mismatch" "$(cat "$tmp_root/control_flow.tn")"
 else
   dx_pass "fmt-control-flow"
@@ -116,7 +127,7 @@ fmt_again="$(run_tezz fmt "$tmp_root/control_flow.tn")"
 rc=$?
 if [[ "$rc" -ne 0 ]]; then
   dx_fail "fmt-idempotent" "exit=${rc}" "$fmt_again"
-elif ! cmp -s "$tmp_root/control_flow.tn" tests/conformance/dx/fmt/control_flow.formatted.tn; then
+elif ! same_source "$tmp_root/control_flow.tn" tests/conformance/dx/fmt/control_flow.formatted.tn; then
   dx_fail "fmt-idempotent" "second format changed output" "$(cat "$tmp_root/control_flow.tn")"
 else
   dx_pass "fmt-idempotent"

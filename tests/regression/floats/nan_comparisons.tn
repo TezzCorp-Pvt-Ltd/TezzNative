@@ -1,0 +1,27 @@
+fn main() -> int:
+  zero:f64 = 0.0
+  value:f64 = zero / zero
+  if (value != value) != 1: ret 1
+  if value == value: ret 2
+  if value < 1.0: ret 3
+  if value <= 1.0: ret 4
+  if value > 1.0: ret 5
+  if value >= 1.0: ret 6
+  if 1.0 < value: ret 7
+  if 1.0 <= value: ret 8
+  if 1.0 > value: ret 9
+  if 1.0 >= value: ret 10
+  narrow_zero:f32 = 0.0
+  narrow:f32 = narrow_zero / narrow_zero
+  one:f32 = 1.0
+  if (narrow != narrow) != 1: ret 11
+  if narrow == narrow: ret 12
+  if narrow < one: ret 13
+  if narrow <= one: ret 14
+  if narrow > one: ret 15
+  if narrow >= one: ret 16
+  if (one != one) != 0: ret 17
+  if (one == one) != 1: ret 18
+  if (one < one) != 0: ret 19
+  if (one <= one) != 1: ret 20
+  ret 0

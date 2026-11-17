@@ -1,0 +1,54 @@
+import "tezzdb"
+
+fn main() -> int:
+  unsafe:
+    remove("cursor_splits.tdb")
+    remove("cursor_splits.tdb.wal")
+    db:*TezzDb = tezzdb.open("cursor_splits.tdb")
+    if db == 0: ret 1
+    tezzdb.table_create(db, "items")
+    data:*char = malloc(513)
+    i:int = 0
+    while i < 512:
+      data[i] = 120 as char
+      i = i + 1
+    data[512] = 0 as char
+    tezzdb.begin(db)
+    i = 40
+    while i > 0:
+      if tezzdb.insert_pk(db, "items", i, data as str) != i: ret 2
+      i = i - 1
+    tezzdb.commit(db)
+    free(data)
+    failed:int = 0
+    cursor:*DbCursor = tezzdb.cursor_open(db, "items")
+    if cursor == 0: ret 3
+    expected:int = 1
+    while 1:
+      row:*DbRow = tezzdb.cursor_next(cursor)
+      if row == 0: break
+      if (*row).pk != expected || (*row).data_len != 512: failed = 1
+      expected = expected + 1
+      tezzdb.row_free(row)
+    if expected != 41: failed = 1
+    tezzdb.cursor_close(cursor)
+    cursor = tezzdb.cursor_range(db, "items", 15, 25)
+    expected = 15
+    while 1:
+      row:*DbRow = tezzdb.cursor_next(cursor)
+      if row == 0: break
+      if (*row).pk != expected: failed = 1
+      expected = expected + 1
+      tezzdb.row_free(row)
+    if expected != 26: failed = 1
+    tezzdb.cursor_close(cursor)
+    tezzdb.table_create(db, "json_rows")
+    tezzdb.insert(db, "json_rows", "{\"name\":\"one\"}")
+    opaque:*char = tezzdb.db_cursor_open(db as *char, "json_rows")
+    value:str = tezzdb.db_cursor_next(opaque)
+    if value == 0 || strcmp(value, "{\"_pk\":1,\"name\":\"one\"}") != 0: failed = 1
+    free(value)
+    tezzdb.db_cursor_close(opaque)
+    tezzdb.close(db)
+    if failed != 0: say "FAIL: database cursors must traverse leaf pages and return valid JSON"
+    ret failed

@@ -1,0 +1,4 @@
+import "raspi"
+
+fn main() -> int:
+  ret 0

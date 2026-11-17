@@ -1,0 +1,7 @@
+fn main() -> int:
+  pointer:*char
+  unsafe:
+    pointer = malloc(8)
+    free(pointer)
+  if pointer != 0: ret 1
+  ret 0

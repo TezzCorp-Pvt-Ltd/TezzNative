@@ -1,0 +1,16 @@
+import "optim"
+import "tensor"
+import "math"
+
+fn main() -> int:
+  unsafe:
+    p:Tensor = tensor.tensor_ones_1d(1)
+    p = tensor.tensor_require_grad(p)
+    p.grad.data[0] = 1.0e200
+    norm:float = optim.clip_grad_tensor(p, 2.0)
+    failed:int = 0
+    if norm != 1.0e200 || math.absf(p.grad.data[0] - 2.0) > 0.000001:
+      say "FAIL: tensor clipping must preserve finite large f64 norms; got ", norm, ", ", p.grad.data[0]
+      failed = 1
+    tensor.tensor_free_tensor(p)
+    ret failed

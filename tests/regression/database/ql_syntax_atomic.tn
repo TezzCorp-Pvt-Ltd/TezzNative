@@ -1,0 +1,46 @@
+import "tezzdb"
+import "tezzdbql"
+
+fn rejected(db:*TezzDb, query:str) -> int:
+  unsafe:
+    result:*TzQueryResult = tezzdbql.db_query0(db as *char, query)
+    if result == 0: ret 0
+    invalid:int = tezzdbql.db_result_error(result) != 0
+    tezzdbql.db_result_free(result)
+    ret invalid
+
+fn main() -> int:
+  unsafe:
+    remove("ql_atomic.tdb")
+    remove("ql_atomic.tdb.wal")
+    db:*TezzDb = tezzdb.open("ql_atomic.tdb")
+    if db == 0: ret 1
+    tezzdb.table_create(db, "items")
+    tezzdb.insert(db, "items", "{\"name\":\"original\"}")
+    if rejected(db, "INSERT INTO items (@) VALUES ('x')") == 0: ret 2
+    if rejected(db, "INSERT INTO items (a,b) VALUES ('x')") == 0: ret 3
+    if rejected(db, "INSERT INTO items (a,a) VALUES ('x','y')") == 0: ret 4
+    if rejected(db, "INSERT INTO items (a) VALUES ('unterminated)") == 0: ret 5
+    if rejected(db, "UPDATE items SET name = 'changed' WHERE id = ?") == 0: ret 6
+    if rejected(db, "UPDATE items SET name = 'one', name = 'two'") == 0: ret 7
+    if rejected(db, "DELETE FROM items WHERE name = ?") == 0: ret 8
+    if rejected(db, "SELECT * FROM items LIMIT 9223372036854775808") == 0: ret 9
+    if rejected(db, "SELECT * FROM items; DELETE FROM items") == 0: ret 10
+    if rejected(db, "INSERT INTO items (a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,aa,ab,ac,ad,ae,af,ag) VALUES ()") == 0: ret 11
+    result:*TzQueryResult = tezzdbql.db_query1(db as *char, "SELECT * FROM items", "unused")
+    if tezzdbql.db_result_error(result) == 0: ret 12
+    tezzdbql.db_result_free(result)
+    if tezzdb.table_row_count(db, "items") != 1: ret 13
+    row:str = tezzdb.get(db, "items", 1)
+    name:str = tezzdb.row_get_str(row, "name")
+    if name == 0 || strcmp(name, "original") != 0: ret 14
+    free(name)
+    free(row)
+    if tezzdbql.db_exec0(db as *char, "INSERT INTO items (name) VALUES ('it''s')") != 1: ret 15
+    row = tezzdb.get(db, "items", 2)
+    name = tezzdb.row_get_str(row, "name")
+    if name == 0 || strcmp(name, "it's") != 0: ret 16
+    free(name)
+    free(row)
+    tezzdb.close(db)
+  ret 0

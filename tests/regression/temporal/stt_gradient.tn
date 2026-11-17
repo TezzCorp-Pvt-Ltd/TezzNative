@@ -1,0 +1,63 @@
+import "stt_temporal"
+import "stt_temporal.state"
+
+fn main():
+  unsafe:
+    let model:*TemporalStt = stt_temporal.create(8, 0, 73)
+    if model == 0:
+      ret 1
+    let mel:[f64;3440]
+    let i = 0
+    while i < 3440:
+      mel[i] = ((i * 17 + i / 80 * 11) % 71) as f64 / 10 - 10
+      i = i + 1
+    let labels:[i64;3] = [3, 4, 3]
+    let value:f64 = 0
+    if stt_temporal.backward(model, &mel[0], 43, &labels[0], 3, &value) != 0:
+      ret 2
+    if stt_temporal.steps(model) != 0:
+      ret 3
+    let p:*f32 = (*model).params as *f32
+    let g:*f32 = (*model).gradient as *f32
+    let starts:[i64;8] = [(*model).w0, (*model).b0, (*model).w1, (*model).b1, (*model).w2, (*model).b2, (*model).w3, (*model).b3]
+    let ends:[i64;8] = [(*model).b0, (*model).w1, (*model).b1, (*model).w2, (*model).b2, (*model).w3, (*model).b3, (*model).count]
+    let block = 0
+    while block < 8:
+      let selected = starts[block]
+      let maximum:f64 = 0
+      i = starts[block]
+      while i < ends[block]:
+        let magnitude:f64 = g[i] as f64
+        if magnitude < 0:
+          magnitude = -magnitude
+        if magnitude > maximum:
+          maximum = magnitude
+          selected = i
+        i = i + 1
+      if maximum < 1.0000000000000001e-05:
+        ret 4
+      let analytic:f64 = g[selected] as f64
+      let original:f32 = p[selected]
+      p[selected] = (original as f64 + 0.001) as f32
+      let upper:f32 = p[selected]
+      let plus:f64 = 0
+      let minus:f64 = 0
+      if stt_temporal.loss(model, &mel[0], 43, &labels[0], 3, &plus) != 0:
+        ret 5
+      p[selected] = (original as f64 - 0.001) as f32
+      let lower:f32 = p[selected]
+      if stt_temporal.loss(model, &mel[0], 43, &labels[0], 3, &minus) != 0:
+        ret 6
+      p[selected] = original
+      let numerical:f64 = (plus - minus) / (upper as f64 - lower as f64)
+      let difference:f64 = numerical - analytic
+      if difference < 0:
+        difference = -difference
+      if difference > 0.002 + maximum * 0.040000000000000001:
+        say("TEMPORAL_GRADIENT_ERROR", block, analytic, numerical)
+        ret 7
+      block = block + 1
+    stt_temporal.free_model(model)
+    say("temporal_stt_eight_gradient_blocks_pass")
+    ret 0
+

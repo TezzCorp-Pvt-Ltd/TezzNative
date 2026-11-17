@@ -1,0 +1,25 @@
+import "tezzdb"
+import "tezzdbql"
+
+fn main() -> int:
+  unsafe:
+    remove("ql_predicate.tdb")
+    remove("ql_predicate.tdb.wal")
+    db:*TezzDb = tezzdb.open("ql_predicate.tdb")
+    if db == 0: ret 1
+    tezzdb.table_create(db, "users")
+    row:str = tezzdb.row_json2("name", "alice", "role", "user")
+    tezzdb.insert_pk(db, "users", 7, row)
+    free(row)
+    row = tezzdb.row_json2("name", "bob", "role", "user")
+    tezzdb.insert_pk(db, "users", 12, row)
+    free(row)
+    if tezzdbql.db_exec1(db as *char, "UPDATE users SET role = 'admin' WHERE name = ?", "alice") != 1: ret 2
+    if tezzdbql.db_exec1(db as *char, "DELETE FROM users WHERE role = ?", "admin") != 1: ret 3
+    if tezzdb.get(db, "users", 7) != 0 as str: ret 4
+    row = tezzdb.get(db, "users", 12)
+    if row == 0: ret 5
+    free(row)
+    if tezzdb.table_row_count(db, "users") != 1: ret 6
+    tezzdb.close(db)
+  ret 0

@@ -1,0 +1,8 @@
+extern fn tz_cpu_zeros(n:int) -> int
+extern fn tz_cpu_free(p:int) -> int
+
+fn main() -> int:
+  p:int = tz_cpu_zeros(1)
+  if p == 0: ret 9
+  tz_cpu_free(p)
+  ret 37

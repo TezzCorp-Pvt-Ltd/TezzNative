@@ -1,0 +1,34 @@
+import "tensor"
+
+fn main() -> int:
+  tensor.tape_init()
+  x:Tensor = tensor.tensor_ones_2d(1, 2)
+  tensor.tensor_set2(x, 0, 0, 0.0 - 2.0)
+  x = tensor.tensor_require_grad(x)
+  weight:Tensor = tensor.tensor_ones_1d(2)
+  bias:Tensor = tensor.tensor_zeros_1d(2)
+  empty:Tensor = tensor.tensor_empty_raw(0, 0, 0, 0, 0)
+  failed:int = 0
+  if tensor.tensor_scale_inplace(x, 2.0) == 0: failed = 1
+  if tensor.tensor_relu_inplace(x) == 0: failed = 1
+  if tensor.tensor_gelu_inplace(x) == 0: failed = 1
+  if tensor.tensor_silu_inplace(x) == 0: failed = 1
+  if tensor.tensor_sigmoid_inplace(x) == 0: failed = 1
+  if tensor.tensor_tanh_inplace(x) == 0: failed = 1
+  if tensor.tensor_rmsnorm_inplace(x, weight, 0.000001) == 0: failed = 1
+  if tensor.tensor_layernorm_inplace(x, weight, bias, 0.000001) == 0: failed = 1
+  if tensor.tensor_softmax_inplace(x, 1) == 0: failed = 1
+  if tensor.tensor_rope(x, empty, 1, 10000.0) == 0: failed = 1
+  if tensor.tensor_get2(x, 0, 0) != 0.0 - 2.0 || tensor.tensor_get2(x, 0, 1) != 1.0:
+    failed = 1
+  tensor.tape_set_enabled(0)
+  if tensor.tensor_scale_inplace(x, 2.0) != 0 || tensor.tensor_get2(x, 0, 0) != 0.0 - 4.0:
+    failed = 1
+  tensor.tape_set_enabled(1)
+  tensor.tape_reset()
+  tensor.tensor_free_tensor(bias)
+  tensor.tensor_free_tensor(weight)
+  tensor.tensor_free_tensor(x)
+  if failed != 0:
+    say "FAIL: tracked in-place operations must reject without mutation while recording"
+  ret failed

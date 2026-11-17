@@ -124,24 +124,35 @@ fn signf(x:float) -> float:
 
 // Square root (Newton-Raphson fallback — runtime provides fast path)
 fn sqrt(x:float) -> float:
+  if x != x:
+    ret x
   if x < 0.0:
     ret 0.0
   if x == 0.0:
-    ret 0.0
-  // Initial estimate via bit trick
-  guess:float = x * 0.5
-  prev:float = 0.0
+    ret x
+  if x > 1.7976931348623157e308:
+    ret x
+  m:float = x
+  scale:float = 1.0
   i:int = 0
-  while i < 64:
-    prev = guess
-    guess = (guess + x / guess) * 0.5
-    diff:float = guess - prev
-    if diff < 0.0:
-      diff = 0.0 - diff
-    if diff < 1.0e-15:
-      break
+  while m >= 4.0 && i < 512:
+    m = m * 0.25
+    scale = scale * 2.0
     i = i + 1
-  ret guess
+  i = 0
+  while m < 1.0 && i < 538:
+    m = m * 4.0
+    scale = scale * 0.5
+    i = i + 1
+  guess:float = (m + 1.0) * 0.5
+  i = 0
+  while i < 10:
+    next:float = (guess + m / guess) * 0.5
+    if next == guess:
+      break
+    guess = next
+    i = i + 1
+  ret guess * scale
 
 // Fast inverse sqrt (Quake trick for normalized vectors)
 fn rsqrt(x:float) -> float:
@@ -151,6 +162,10 @@ fn rsqrt(x:float) -> float:
 
 // Floor (round toward -infinity)
 fn floor(x:float) -> float:
+  if x != x || x == 0.0:
+    ret x
+  if x >= 4503599627370496.0 || x <= -4503599627370496.0:
+    ret x
   n:int = x as int
   fn2:float = n as float
   if fn2 > x:
@@ -159,6 +174,10 @@ fn floor(x:float) -> float:
 
 // Ceiling (round toward +infinity)
 fn ceil(x:float) -> float:
+  if x != x || x == 0.0:
+    ret x
+  if x >= 4503599627370496.0 || x <= -4503599627370496.0:
+    ret x
   n:int = x as int
   fn2:float = n as float
   if fn2 < x:
@@ -173,6 +192,10 @@ fn round(x:float) -> float:
 
 // Truncate toward zero
 fn trunc(x:float) -> float:
+  if x != x || x == 0.0:
+    ret x
+  if x >= 4503599627370496.0 || x <= -4503599627370496.0:
+    ret x
   ret (x as int) as float
 
 // Fractional part (always non-negative)
@@ -246,22 +269,52 @@ fn tan(x:float) -> float:
 
 fn _atan_poly_unit(r:float) -> float:
   r2:float = r * r
-  ret r * (1.0 - r2 * (0.333333333 - r2 * (0.2 - r2 * (0.142857142 - r2 * 0.111111111))))
+  term:float = r
+  result:float = r
+  n:int = 3
+  while n <= 41:
+    term = 0.0 - term * r2
+    add:float = term / (n as float)
+    result = result + add
+    if absf(add) < 1.0e-18:
+      break
+    n = n + 2
+  ret result
 
 fn _atan_ratio(r:float) -> float:
-  a:float = r
-  if a < 0.0:
-    a = 0.0 - a
-  if a <= 1.0:
-    ret _atan_poly_unit(r)
-  inv:float = 1.0 / r
-  reduced:float = _atan_poly_unit(inv)
-  if r > 0.0:
-    ret PI() * 0.5 - reduced
-  ret (0.0 - PI() * 0.5) - reduced
+  if r != r:
+    ret r
+  a:float = absf(r)
+  inverted:int = 0
+  if a > 1.0:
+    a = 1.0 / a
+    inverted = 1
+  result:float = 0.0
+  if a > 0.41421356237309504880:
+    result = PI() * 0.25 + _atan_poly_unit((a - 1.0) / (a + 1.0))
+  else:
+    result = _atan_poly_unit(a)
+  if inverted != 0:
+    result = PI() * 0.5 - result
+  if r < 0.0:
+    ret 0.0 - result
+  ret result
 
 // Atan2 via polynomial approximation with quadrant-correct output.
 fn atan2(y:float, x:float) -> float:
+  if y != y:
+    ret y
+  if x != x:
+    ret x
+  if absf(y) > 1.7976931348623157e308:
+    result:float = PI() * 0.5
+    if absf(x) > 1.7976931348623157e308:
+      result = PI() * 0.25
+      if x < 0.0:
+        result = PI() * 0.75
+    if y < 0.0:
+      ret 0.0 - result
+    ret result
   if x > 0.0:
     ret _atan_ratio(y / x)
   if x < 0.0:
@@ -307,34 +360,66 @@ fn _exp_core(x:float) -> float:
 
 // exp(x) with range reduction: exp(x) = 2^k * exp(r) where r in [-0.5*ln2, 0.5*ln2]
 fn exp(x:float) -> float:
-  if x < 0.0 - 700.0:
+  if x != x:
+    ret x
+  if x > 709.782712893384:
+    ret INF()
+  if x < -745.1332191019411:
     ret 0.0
-  k:int = (x / LN2()) as int
-  r:float = x - (k as float) * LN2()
+  q:float = x / LN2()
+  k:int = 0
+  if q >= 0.0:
+    k = (q + 0.5) as int
+  else:
+    k = (q - 0.5) as int
+  // Split ln(2) avoids cancellation for inputs near the range limits.
+  r:float = (x - (k as float) * 0.6931471803691238) - (k as float) * 1.9082149292705877e-10
   base:float = _exp_core(r)
-  // Multiply by 2^k using successive squaring
-  ret base * pow(2.0, k as float)
+  i:int = 0
+  while k > 0 && i < 1024:
+    base = base * 2.0
+    k = k - 1
+    i = i + 1
+  i = 0
+  while k < 0 && i < 1075:
+    base = base * 0.5
+    k = k + 1
+    i = i + 1
+  ret base
 
 // Natural logarithm via Newton's method: ln(x) = 2*atanh((x-1)/(x+1))
 fn log(x:float) -> float:
+  if x != x:
+    ret x
   if x <= 0.0:
     ret 0.0 - 1.0e15
+  if x > 1.7976931348623157e308:
+    ret x
   if x == 1.0:
     ret 0.0
   // Reduce to [sqrt(2)/2, sqrt(2)]
   m:float = x
   k:int = 0
-  while m > SQRT2():
+  while m > SQRT2() && k < 1024:
     m = m * 0.5
     k = k + 1
-  while m < 0.70710678118:
+  while m < 0.70710678118654752440 && k > -1074:
     m = m * 2.0
     k = k - 1
   // ln(m) via series: 2*atanh((m-1)/(m+1))
   y:float = (m - 1.0) / (m + 1.0)
   y2:float = y * y
-  series:float = y * (2.0 + y2 * (0.666666666 + y2 * (0.4 + y2 * (0.285714285 + y2 * 0.222222222))))
-  ret series + (k as float) * LN2()
+  term:float = y
+  series:float = y
+  n:int = 3
+  while n <= 39:
+    term = term * y2
+    add:float = term / (n as float)
+    series = series + add
+    if absf(add) < 1.0e-18:
+      break
+    n = n + 2
+  ret 2.0 * series + (k as float) * LN2()
 
 fn log2(x:float) -> float:
   ret log(x) / LN2()
@@ -344,20 +429,31 @@ fn log10(x:float) -> float:
 
 // General power: a^b = exp(b * ln(a))
 fn pow(base:float, exp2:float) -> float:
+  if exp2 == 0.0 || base == 1.0:
+    ret 1.0
+  if base != base:
+    ret base
+  if exp2 != exp2:
+    ret exp2
   if base == 0.0:
     if exp2 <= 0.0:
       ret 1.0
     ret 0.0
-  if base < 0.0:
+  magnitude:float = base
+  negative:int = 0
+  if magnitude < 0.0:
     // Only valid for integer exponents
-    n:int = exp2 as int
-    if (n as float) != exp2:
+    if trunc(exp2) != exp2:
       ret 0.0
-    result:float = pow(0.0 - base, exp2)
-    if (n & 1) != 0:
-      ret 0.0 - result
-    ret result
-  ret _exp_core(exp2 * log(base))
+    magnitude = 0.0 - magnitude
+    // Above 2^53 every representable finite exponent is an even integer.
+    if absf(exp2) < 9007199254740992.0:
+      n:int = exp2 as int
+      negative = n & 1
+  result:float = exp(exp2 * log(magnitude))
+  if negative != 0:
+    ret 0.0 - result
+  ret result
 
 // Hyperbolic functions
 fn sinh(x:float) -> float:

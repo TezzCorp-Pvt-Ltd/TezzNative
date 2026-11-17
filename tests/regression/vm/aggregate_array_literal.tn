@@ -1,0 +1,31 @@
+struct Pair:
+  left:int
+  right:int
+
+struct Box:
+  pair:Pair
+  values:[int;2]
+
+fn sum(pair:Pair) -> int:
+  ret pair.left + pair.right
+
+fn main() -> int:
+  unsafe:
+    pairs:[Pair;2] = [Pair{left:11, right:22}, Pair{left:33, right:44}]
+    failures:int = 0
+    if pairs[0].left != 11 || pairs[0].right != 22: failures = failures + 1
+    if pairs[1].left != 33 || pairs[1].right != 44: failures = failures + 1
+    matrix:[[int;2];2] = [[1,2],[3,4]]
+    if matrix[0][0] != 1 || matrix[0][1] != 2 || matrix[1][0] != 3 || matrix[1][1] != 4:
+      failures = failures + 1
+    box:Box = Box{pair:Pair{left:55, right:66}, values:[7,8]}
+    pair:Pair = box.pair
+    values:[int;2] = box.values
+    pointer:*Pair = &box.pair
+    dereferenced:Pair = *pointer
+    if pair.left != 55 || pair.right != 66 || values[0] != 7 || values[1] != 8:
+      failures = failures + 1
+    if dereferenced.left != 55 || dereferenced.right != 66: failures = failures + 1
+    if sum(pairs[1]) != 77: failures = failures + 1
+    say "AGGREGATE_ARRAY_LITERAL", failures
+    ret failures

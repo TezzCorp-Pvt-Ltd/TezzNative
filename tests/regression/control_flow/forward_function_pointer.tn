@@ -1,0 +1,7 @@
+fn main() -> int:
+  callback:fn(int) -> int = later
+  if callback(7) != 22: ret 1
+  ret 0
+
+fn later(value:int) -> int:
+  ret value * 3 + 1

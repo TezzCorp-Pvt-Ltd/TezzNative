@@ -1,0 +1,224 @@
+// tezzapi implementation: text.
+import "net"
+import "time"
+import "tls"
+import "tezzapi.state"
+
+fn _api_strdup(s:str) -> str:
+  if s == 0: ret 0 as str
+  n:int = len(s)
+  p:*char = malloc(n + 1)
+  if p == 0: ret 0 as str
+  unsafe:
+    memcpy(p, s as *char, n)
+  p[n] = 0 as char
+  ret p as str
+
+fn _api_strcasecmp(a:str, b:str) -> int:
+  if a == 0 && b == 0: ret 0
+  if a == 0: ret 0 - 1
+  if b == 0: ret 1
+  i:int = 0
+  while 1:
+    ca:int = (a as *char)[i] as int
+    cb:int = (b as *char)[i] as int
+    if ca == 0 && cb == 0: ret 0
+    if ca == 0: ret 0 - 1
+    if cb == 0: ret 1
+    if ca >= 65 && ca <= 90: ca = ca + 32
+    if cb >= 65 && cb <= 90: cb = cb + 32
+    if ca != cb:
+      if ca < cb: ret 0 - 1
+      ret 1
+    i = i + 1
+
+fn _api_join2(a:str, b:str) -> str:
+  if a == 0: ret _api_strdup(b)
+  if b == 0: ret _api_strdup(a)
+  na:int = len(a)
+  nb:int = len(b)
+  p:*char = malloc(na + nb + 1)
+  if p == 0: ret 0 as str
+  unsafe:
+    memcpy(p, a as *char, na)
+    memcpy(p + na, b as *char, nb)
+  p[na+nb] = 0 as char
+  ret p as str
+
+fn _api_join3(a:str, b:str, c:str) -> str:
+  ab:str = _api_join2(a, b)
+  out:str = _api_join2(ab, c)
+  if ab != 0: free(ab)
+  ret out
+
+fn _api_itoa(v:int) -> str:
+  if v == (0 - 9223372036854775808):
+    ret _api_strdup("-9223372036854775808")
+  if v < 0:
+    s:str = _api_itoa(0 - v)
+    out:str = _api_join2("-", s)
+    free(s)
+    ret out
+  tmp:[char;24]
+  i:int = 0
+  n:int = v
+  if n == 0:
+    tmp[i] = 48 as char
+    i = i + 1
+  while n > 0:
+    tmp[i] = (48 + n % 10) as char
+    i = i + 1
+    n = n / 10
+  p:*char = malloc(i + 1)
+  if p == 0: ret 0 as str
+  j:int = 0
+  while j < i:
+    p[j] = tmp[i - j - 1]
+    j = j + 1
+  p[i] = 0 as char
+  ret p as str
+
+fn _api_streq(a:str, b:str) -> int:
+  if a == 0 && b == 0: ret 1
+  if a == 0 || b == 0: ret 0
+  ret strcmp(a, b) == 0
+
+fn _api_starts_with(s:str, prefix:str) -> int:
+  if s == 0 || prefix == 0: ret 0
+  sn:int = len(s)
+  pn:int = len(prefix)
+  if pn > sn: ret 0
+  i:int = 0
+  while i < pn:
+    if (s as *char)[i] != (prefix as *char)[i]: ret 0
+    i = i + 1
+  ret 1
+
+fn _api_find_char(s:str, ch:int) -> int:
+  if s == 0: ret 0 - 1
+  i:int = 0
+  while (s as *char)[i] != 0 as char:
+    if (s as *char)[i] as int == ch: ret i
+    i = i + 1
+  ret 0 - 1
+
+fn _api_slice(s:str, a:int, b:int) -> str:
+  if s == 0: ret 0 as str
+  n:int = len(s)
+  if a < 0: a = 0
+  if b < 0 || b > n: b = n
+  if b < a: b = a
+  sz:int = b - a
+  p:*char = malloc(sz + 1)
+  if p == 0: ret 0 as str
+  if sz > 0:
+    unsafe:
+      memcpy(p, (s as *char) + a, sz)
+  p[sz] = 0 as char
+  ret p as str
+
+fn _api_url_decode(s:str) -> str:
+  if s == 0: ret 0 as str
+  n:int = len(s)
+  out:*char = malloc(n + 1)
+  if out == 0: ret 0 as str
+  si:int = 0
+  di:int = 0
+  while si < n:
+    c:int = (s as *char)[si] as int
+    if c == 37 && si + 2 < n:  // '%'
+      h1:int = (s as *char)[si+1] as int
+      h2:int = (s as *char)[si+2] as int
+      // hex decode
+      v1:int = 0
+      v2:int = 0
+      if h1 >= 48 && h1 <= 57: v1 = h1 - 48
+      else if h1 >= 65 && h1 <= 70: v1 = h1 - 55
+      else if h1 >= 97 && h1 <= 102: v1 = h1 - 87
+      else: v1 = 0 - 1
+      if h2 >= 48 && h2 <= 57: v2 = h2 - 48
+      else if h2 >= 65 && h2 <= 70: v2 = h2 - 55
+      else if h2 >= 97 && h2 <= 102: v2 = h2 - 87
+      else: v2 = 0 - 1
+      if v1 < 0 || v2 < 0 || (v1 == 0 && v2 == 0):
+        out[di] = 37 as char
+        out[di+1] = h1 as char
+        out[di+2] = h2 as char
+        si = si + 3
+        di = di + 3
+      else:
+        out[di] = (v1 * 16 + v2) as char
+        si = si + 3
+        di = di + 1
+    else if c == 43:  // '+' → space
+      out[di] = 32 as char
+      si = si + 1
+      di = di + 1
+    else:
+      out[di] = c as char
+      si = si + 1
+      di = di + 1
+  out[di] = 0 as char
+  ret out as str
+
+// ─────────────────────────────────────────────────────────────
+// Path pattern matching (e.g., "/users/:id/posts/:pid")
+// Returns 1 on match. Populates param buffer.
+// ─────────────────────────────────────────────────────────────
+
+fn json_str(key:str, val:str) -> str:
+  p1:str = _api_join3("{\"", key, "\":\"")
+  out:str = _api_join3(p1, val, "\"}")
+  free(p1)
+  ret out
+
+fn json_int(key:str, val:int) -> str:
+  p1:str = _api_join3("{\"", key, "\":")
+  vs:str = _api_itoa(val)
+  out:str = _api_join3(p1, vs, "}")
+  free(p1); free(vs)
+  ret out
+
+fn json_bool(key:str, val:int) -> str:
+  boolstr:str = "false"
+  if val != 0: boolstr = "true"
+  p1:str = _api_join3("{\"", key, "\":")
+  out:str = _api_join3(p1, boolstr, "}")
+  free(p1)
+  ret out
+
+fn json_null(key:str) -> str:
+  p1:str = _api_join3("{\"", key, "\":null}")
+  ret p1
+
+fn json_err(msg:str) -> str:
+  p1:str = _api_join3("{\"error\":\"", msg, "\"}")
+  ret p1
+
+fn json_ok(msg:str) -> str:
+  p1:str = _api_join3("{\"ok\":\"", msg, "\"}")
+  ret p1
+
+fn json_ok_data(key:str, val:str) -> str:
+  p1:str = _api_join3("{\"ok\":true,\"", key, "\":\"")
+  out:str = _api_join3(p1, val, "\"}")
+  free(p1)
+  ret out
+
+fn json_array(items:*str, count:int) -> str:
+  out:str = _api_strdup("[")
+  i:int = 0
+  while i < count:
+    if i > 0:
+      t0:str = _api_join2(out, ",")
+      free(out); out = t0
+    t1:str = _api_join2(out, items[i])
+    free(out); out = t1
+    i = i + 1
+  t2:str = _api_join2(out, "]")
+  free(out)
+  ret t2
+
+// ─────────────────────────────────────────────────────────────
+// Paginated query helper
+// ─────────────────────────────────────────────────────────────

@@ -1,0 +1,20 @@
+struct Pair:
+  x:f64
+  y:f64
+
+  fn new(x:f64, y:f64) -> Pair:
+    ret Pair{x:x, y:y}
+
+fn combine(a:Pair, b:Pair) -> float:
+  ret a.x + a.y * 2.0 + b.x * 3.0 + b.y * 4.0
+
+fn main() -> int:
+  p:Pair = Pair.new(3.0, 4.0)
+  if p.x != 3.0 || p.y != 4.0:
+    say "FAIL aggregate return representation"
+    ret 1
+  result:float = combine(Pair.new(1.0, 2.0), Pair.new(3.0, 4.0))
+  if result != 30.0:
+    say "FAIL independent aggregate call results", result
+    ret 2
+  ret 0

@@ -1,0 +1,45 @@
+// tezz-hardware-module: common
+// Bare-metal services. Use an explicit hardware profile and --freestanding.
+// UART counts and negative errors come from the selected board runtime.
+
+extern fn tn_hw_target_id() -> int
+extern fn tn_hw_uart_write(address:int, length:int) -> int
+extern fn tn_hw_uart_read(address:int, capacity:int) -> int
+extern fn tn_hw_micros() -> int
+extern fn tn_hw_delay_us(microseconds:int) -> int
+extern fn tn_hw_irq_enable() -> int
+extern fn tn_hw_irq_disable() -> int
+extern fn tn_hw_irq_state() -> int
+
+fn target_id() -> int:
+  ret tn_hw_target_id()
+
+fn uart_write(data:*char, length:int) -> int:
+  ret tn_hw_uart_write(data as int, length)
+
+fn uart_read(data:*char, capacity:int) -> int:
+  ret tn_hw_uart_read(data as int, capacity)
+
+fn write(text:str) -> int:
+  if text == 0: ret -1
+  unsafe:
+    count:int = 0
+    data:*char = text as *char
+    while data[count] != 0:
+      count = count + 1
+    ret tn_hw_uart_write(data as int, count)
+
+fn micros() -> int:
+  ret tn_hw_micros()
+
+fn delay_us(microseconds:int) -> int:
+  ret tn_hw_delay_us(microseconds)
+
+fn irq_enable() -> int:
+  ret tn_hw_irq_enable()
+
+fn irq_disable() -> int:
+  ret tn_hw_irq_disable()
+
+fn irq_state() -> int:
+  ret tn_hw_irq_state()

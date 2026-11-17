@@ -1,0 +1,20 @@
+import "tezzdb"
+import "tezzdbql"
+
+fn main() -> int:
+  unsafe:
+    expected:str = "a\"b\\c\nline"
+    columns:[str;1]
+    values:[str;1]
+    columns[0] = "field"
+    values[0] = expected
+    row:str = tezzdbql._ql_build_json(&columns[0], &values[0], 1)
+    actual:str = tezzdb.row_get_str(row, "field")
+    if actual == 0 || strcmp(actual, expected) != 0: ret 1
+    free(actual)
+    actual = tezzdbql._ql_json_get_str(row, "field")
+    if actual == 0 || strcmp(actual, expected) != 0: ret 2
+    free(actual)
+    free(row)
+    if tezzdbql._ql_json_get_int("{\"n\":\"42\"}", "n") != 42: ret 3
+  ret 0

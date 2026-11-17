@@ -1,0 +1,50 @@
+import "tensor"
+import "math"
+
+fn objective(x_value:float, y_value:float) -> float:
+  x:Tensor = tensor.tensor_1d(1)
+  y:Tensor = tensor.tensor_1d(1)
+  tensor.tensor_set1(x, 0, x_value)
+  tensor.tensor_set1(y, 0, y_value)
+  xy:Tensor = tensor.tensor_mul(x, y)
+  sum:Tensor = tensor.tensor_add(xy, x)
+  squared:Tensor = tensor.tensor_mul(sum, sum)
+  result:float = tensor.tensor_mean_all(squared)
+  tensor.tensor_free_tensor(squared)
+  tensor.tensor_free_tensor(sum)
+  tensor.tensor_free_tensor(xy)
+  tensor.tensor_free_tensor(y)
+  tensor.tensor_free_tensor(x)
+  ret result
+
+fn main() -> int:
+  tensor.tape_init()
+  x:Tensor = tensor.tensor_1d(1)
+  y:Tensor = tensor.tensor_1d(1)
+  tensor.tensor_set1(x, 0, 1.25)
+  tensor.tensor_set1(y, 0, 0.0 - 0.75)
+  x = tensor.tensor_require_grad(x)
+  y = tensor.tensor_require_grad(y)
+  xy:Tensor = tensor.tensor_mul(x, y)
+  sum:Tensor = tensor.tensor_add(xy, x)
+  squared:Tensor = tensor.tensor_mul(sum, sum)
+  loss:Tensor = tensor.tensor_mean_all_t(squared)
+  tensor.tensor_backward(loss)
+  gx:float = tensor.tensor_grad_item(x, 0)
+  gy:float = tensor.tensor_grad_item(y, 0)
+  tensor.tape_set_enabled(0)
+  h:float = 0.0001
+  numeric_x:float = (objective(1.25 + h, 0.0 - 0.75) - objective(1.25 - h, 0.0 - 0.75)) / (2.0 * h)
+  numeric_y:float = (objective(1.25, 0.0 - 0.75 + h) - objective(1.25, 0.0 - 0.75 - h)) / (2.0 * h)
+  tensor.tape_set_enabled(1)
+  tensor.tape_reset()
+  tensor.tensor_free_tensor(loss)
+  tensor.tensor_free_tensor(squared)
+  tensor.tensor_free_tensor(sum)
+  tensor.tensor_free_tensor(xy)
+  tensor.tensor_free_tensor(y)
+  tensor.tensor_free_tensor(x)
+  if math.absf(gx - numeric_x) > 0.000001 || math.absf(gy - numeric_y) > 0.000001:
+    say "FAIL: autograd versus central finite difference; got ", gx, ", ", gy, " expected ", numeric_x, ", ", numeric_y
+    ret 1
+  ret 0

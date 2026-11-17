@@ -1,0 +1,58 @@
+import "tzcpu"
+
+fn text_from_handle(handle:int) -> str:
+  unsafe:
+    ret handle as str
+
+fn main() -> int:
+  unsafe:
+    source:int = tzcpu.tz_cpu_zeros(8)
+    target:int = tzcpu.tz_cpu_zeros(8)
+    allocation:*char = malloc(8)
+    if source == 0 || target == 0 || allocation == 0: ret 1
+    bytes:*char = source as *char
+    bytes[0] = 97 as char
+    bytes[1] = 98 as char
+    bytes[2] = 99 as char
+    file:*char = fopen("pointer_cast_io.tmp", "w+b")
+    if file == 0: ret 2
+    failures:int = 0
+    if bit_popcnt(allocation as int) <= 0:
+      say "FAIL: pointer cast passed to integer builtin"
+      failures = failures + 1
+    // The external allocation returns V_I64; the inline cast must produce V_PTR.
+    if fwrite(source as *char, 1, 4, file) != 4:
+      say "FAIL: integer handle cast passed to fwrite"
+      failures = failures + 1
+    file_handle:int = file as int
+    if fseek(file_handle as *char, 0, 0) != 0 || fread(target as *char, 1, 4, file_handle as *char) != 4:
+      say "FAIL: integer handle casts passed to fread/fseek"
+      failures = failures + 1
+    if strcmp(target as str, "abc") != 0 || len(text_from_handle(source)) != 3:
+      say "FAIL: integer handle cast passed to string builtins"
+      failures = failures + 1
+    // Arithmetic forces an integer value, independently of allocation origin.
+    handle:int = allocation as int
+    handle = handle + 1
+    handle = handle - 1
+    copy:*char = handle as *char
+    copy[0] = 120 as char
+    copy[1] = 121 as char
+    copy[2] = 0 as char
+    if strcmp(handle as str, "xy") != 0 || (copy as int) != handle:
+      say "FAIL: malloc integer pointer roundtrip"
+      failures = failures + 1
+    // Constant casts must survive optimizer folding and preserve narrowing.
+    low:u8 = ((74565 as *char) as u8)
+    signed:i8 = ((255 as *char) as i8)
+    if low != 69 as u8 || signed != -1 as i8 || ((0 as *char) as int) != 0:
+      say "FAIL: pointer integer narrowing"
+      failures = failures + 1
+    if fclose(file_handle as *char) != 0: failures = failures + 1
+    remove("pointer_cast_io.tmp")
+    free(handle as *char)
+    tzcpu.tz_cpu_free(source)
+    tzcpu.tz_cpu_free(target)
+    if failures != 0: ret failures
+    say "POINTER_CAST_IO_PASS"
+    ret 0

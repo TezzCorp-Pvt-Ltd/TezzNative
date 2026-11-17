@@ -1,0 +1,94 @@
+// Shared types and module constants for net.
+
+
+let NET_OK:int = 0
+
+let NET_ERR:int = 0 - 1
+
+let HTTP_PORT:int = 80
+
+let HTTPS_PORT:int = 443
+
+let NET_DEFAULT_TIMEOUT_MS:int = 5000
+
+let NET_DEFAULT_MAX_READ:int = 262144
+
+let NET_READ_CHUNK:int = 2048
+
+let HTTP_ROUTE_TABLE_DEFAULT_CAP:int = 16
+
+let HTTP_ROUTE_MATCH_NONE:int = 0
+
+let HTTP_ROUTE_MATCH_OK:int = 1
+
+let HTTP_ROUTE_MATCH_METHOD_MISMATCH:int = 2
+
+let HTTP_SERVER_SESSION_DEFAULT_MAX_ERRORS:int = 8
+
+struct HttpRouteEntry:
+  method:str
+  pattern:str
+  handler:*char
+
+struct HttpRouteTable:
+  entries:*HttpRouteEntry
+  count:int
+  cap:int
+
+struct HttpServerSession:
+  listener:int
+  routes:*HttpRouteTable
+  timeout_ms:int
+  max_req_bytes:int
+  max_clients:int
+  max_errors:int
+  served:int
+  errors:int
+
+@inline
+fn _get_NET_OK() -> int:
+  ret NET_OK
+
+@inline
+fn _get_NET_ERR() -> int:
+  ret NET_ERR
+
+@inline
+fn _get_HTTP_PORT() -> int:
+  ret HTTP_PORT
+
+@inline
+fn _get_HTTPS_PORT() -> int:
+  ret HTTPS_PORT
+
+@inline
+fn _get_NET_DEFAULT_TIMEOUT_MS() -> int:
+  ret NET_DEFAULT_TIMEOUT_MS
+
+@inline
+fn _get_NET_DEFAULT_MAX_READ() -> int:
+  ret NET_DEFAULT_MAX_READ
+
+@inline
+fn _get_NET_READ_CHUNK() -> int:
+  ret NET_READ_CHUNK
+
+@inline
+fn _get_HTTP_ROUTE_TABLE_DEFAULT_CAP() -> int:
+  ret HTTP_ROUTE_TABLE_DEFAULT_CAP
+
+@inline
+fn _get_HTTP_ROUTE_MATCH_NONE() -> int:
+  ret HTTP_ROUTE_MATCH_NONE
+
+@inline
+fn _get_HTTP_ROUTE_MATCH_OK() -> int:
+  ret HTTP_ROUTE_MATCH_OK
+
+@inline
+fn _get_HTTP_ROUTE_MATCH_METHOD_MISMATCH() -> int:
+  ret HTTP_ROUTE_MATCH_METHOD_MISMATCH
+
+@inline
+fn _get_HTTP_SERVER_SESSION_DEFAULT_MAX_ERRORS() -> int:
+  ret HTTP_SERVER_SESSION_DEFAULT_MAX_ERRORS

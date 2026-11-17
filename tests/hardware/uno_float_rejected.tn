@@ -1,0 +1,6 @@
+import "arduino.uno"
+
+fn main() -> int:
+  value:float = arduino.uno.analog_read(0) as float
+  if value * 2.0 == 2.5: ret 0
+  ret 1

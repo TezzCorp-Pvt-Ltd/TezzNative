@@ -1,29 +1,24 @@
-// stt module — TezzNative 2.0 Native Speech-to-Text Engine
-//
-// Bundled Whisper-style inference engine for speech recognition.
-// No OS API dependencies. Uses nn.tn for model inference.
-//
-// Architecture:
-//   1. Audio capture from microphone (WAV input or raw PCM)
-//   2. Mel spectrogram extraction (80-channel mel filterbank)
-//   3. Log-mel feature normalization
-//   4. Encoder: Conv + Transformer (via nn.tn)
-//   5. Decoder: autoregressive token prediction
-//   6. Token → text via tokenizer
-//
-// Usage:
-//   stt:*SttEngine = stt_new()
-//   stt_load_model(stt, "whisper-tiny.tnw")  // TezzNative weight format
-//   text:str = stt_from_file(stt, "audio.wav")
-//   text2:str = stt_from_mic(stt, 5000)  // record 5 seconds
-//   stt_free(stt)
+// Native speech audio frontend: validated PCM WAV input, FFT and log-mel features.
+// Native trainable character CTC baseline; strict architecture/CRC checkpoints.
+// An untrained state cannot decode. Quality depends on training and must be
+// measured on held-out audio. No external model or placeholder transcript.
 
 import "io"
 import "math"
-import "nn"
 import "tokenizer"
 
 extern fn stt_capture_mic(pcm:*int, n_samples:int, rate:int) -> int
+extern fn speech_stt_create(hidden:int, context:int, seed:int) -> int
+extern fn speech_stt_free(handle:int) -> int
+extern fn speech_stt_train(handle:int, mel:*float, frames:int, labels:*int, count:int, rate_ppm:int, loss:*float) -> int
+extern fn speech_stt_predict(handle:int, mel:*float, frames:int, text:*char, capacity:int) -> int
+extern fn speech_stt_load(path:str) -> int
+extern fn speech_stt_save(handle:int, path:str) -> int
+extern fn speech_stt_steps(handle:int) -> int
+extern fn speech_stt_text_reset(handle:int) -> int
+extern fn speech_stt_text_train(handle:int, labels:*int, count:int) -> int
+extern fn speech_stt_decoder(handle:int, width:int, lm_weight_ppm:int, insertion_ppm:int) -> int
+extern fn speech_stt_align(handle:int, mel:*float, frames:int, labels:*int, count:int, alignment:*int, loss:*float) -> int
 
 // ─────────────────────────────────────────────────────────────
 // Constants
@@ -32,13 +27,13 @@ extern fn stt_capture_mic(pcm:*int, n_samples:int, rate:int) -> int
 let STT_OK:int  = 0
 let STT_ERR:int = 0 - 1
 
-let STT_SAMPLE_RATE:int = 16000   // Whisper expects 16kHz
+let STT_SAMPLE_RATE:int = 16000   // frontend PCM rate
 let STT_N_MELS:int      = 80
 let STT_HOP_LEN:int     = 160     // 10ms hops at 16kHz
 let STT_WIN_LEN:int     = 400     // 25ms window
 let STT_N_FFT:int       = 512
 let STT_MAX_AUDIO_MS:int = 30000  // 30 seconds max chunk
-let STT_MAX_TOKENS:int  = 448     // Whisper context length
+let STT_MAX_TOKENS:int  = 448     // future native decoder bound
 
 // ─────────────────────────────────────────────────────────────
 // Core structs
@@ -56,6 +51,7 @@ struct SttEngine:
   tok:*Tokenizer  // tokenizer for output
   use_nn:int           // 1 if neural model available
   last_text:str        // last recognition result
+  model_handle:int     // validated native CTC checkpoint or training state
 
 // ─────────────────────────────────────────────────────────────
 // Mel filterbank computation
@@ -114,6 +110,7 @@ fn _stt_init_mel_filters(stt:*SttEngine) -> int:
 // ─────────────────────────────────────────────────────────────
 
 fn _stt_fft_bit_rev(n:int) -> *int:
+  if n <= 0 || n > STT_N_FFT || (n & (n - 1)) != 0: ret 0 as *int
   bits:int = 0
   m:int = n
   while m > 1:
@@ -135,6 +132,7 @@ fn _stt_fft_bit_rev(n:int) -> *int:
   ret out
 
 fn _stt_fft(re:*float, im:*float, n:int) -> int:
+  if re == 0 || im == 0 || n <= 0 || n > STT_N_FFT || (n & (n - 1)) != 0: ret STT_ERR
   // In-place FFT
   br:*int = _stt_fft_bit_rev(n)
   if br == 0: ret STT_ERR
@@ -181,7 +179,10 @@ fn _stt_fft(re:*float, im:*float, n:int) -> int:
 // ─────────────────────────────────────────────────────────────
 
 fn _stt_compute_mel(stt:*SttEngine) -> int:
-  if stt == 0 || (*stt).pcm_len <= 0: ret STT_ERR
+  if stt == 0: ret STT_ERR
+  (*stt).mel_frames = 0
+  if (*stt).pcm_buf == 0 || (*stt).mel_filters == 0 || (*stt).pcm_len < STT_WIN_LEN: ret STT_ERR
+  if (*stt).pcm_len > STT_SAMPLE_RATE * (STT_MAX_AUDIO_MS / 1000): ret STT_ERR
   n_fft:int = STT_N_FFT
   hop:int = STT_HOP_LEN
   win:int = STT_WIN_LEN
@@ -222,7 +223,9 @@ fn _stt_compute_mel(stt:*SttEngine) -> int:
         re_buf[k] = 0.0
       im_buf[k] = 0.0
       k = k + 1
-    _stt_fft(re_buf, im_buf, n_fft)
+    if _stt_fft(re_buf, im_buf, n_fft) != STT_OK:
+      free(re_buf as *char); free(im_buf as *char)
+      ret STT_ERR
     // Compute power spectrum
     ps:[float;257]
     p:int = 0
@@ -248,113 +251,174 @@ fn _stt_compute_mel(stt:*SttEngine) -> int:
   ret STT_OK
 
 // ─────────────────────────────────────────────────────────────
-// Rule-based CTC decoder (no neural model)
-// Maps mel frames to approximate text via energy thresholding
+// Decoder boundary: unavailable until native trained-model integration
 // ─────────────────────────────────────────────────────────────
 
 fn _stt_rule_decode(stt:*SttEngine) -> str:
-  // Simple energy-based voice activity detection
-  // Returns placeholder transcript for non-neural mode
-  if stt == 0 || (*stt).mel_frames <= 0: ret _stt_strdup("[no speech detected]")
-  // Compute mean energy
-  total:float = 0.0
-  i:int = 0
-  while i < (*stt).mel_frames * STT_N_MELS:
-    v:float = (*stt).mel_buf[i]
-    total = total + v
-    i = i + 1
-  mean_e:float = total / ((*stt).mel_frames * STT_N_MELS) as float
-  if mean_e < 0.0 - 20.0:
-    ret _stt_strdup("[silence]")
-  ret _stt_strdup("[speech detected — load whisper model for transcription]")
+  // Legacy helper name: only the trained native CTC model produces text.
+  if stt == 0 || (*stt).model_handle <= 0 || (*stt).model_loaded == 0: ret 0 as str
+  if (*stt).mel_buf == 0 || (*stt).mel_frames <= 0: ret 0 as str
+  capacity:int = (*stt).mel_frames + 1
+  text:*char = malloc(capacity)
+  if text == 0: ret 0 as str
+  if speech_stt_predict((*stt).model_handle, (*stt).mel_buf, (*stt).mel_frames, text, capacity) < 0:
+    free(text)
+    ret 0 as str
+  ret text as str
 
-fn _stt_strdup(s:str) -> str:
-  if s == 0: ret 0 as str
-  n:int = len(s)
-  p:*char = malloc(n + 1)
-  if p == 0: ret 0 as str
-  unsafe:
-    memcpy(p, s as *char, n)
-  p[n] = 0 as char
-  ret p as str
+
 
 // ─────────────────────────────────────────────────────────────
 // WAV file reader
 // ─────────────────────────────────────────────────────────────
 
+fn _stt_u16(bytes:*char, offset:int) -> int:
+  ret (bytes[offset] as int & 255) | ((bytes[offset + 1] as int & 255) << 8)
+
+fn _stt_u32(bytes:*char, offset:int) -> int:
+  ret _stt_u16(bytes, offset) | (_stt_u16(bytes, offset + 2) << 16)
+
+fn _stt_pcm_value(raw:*char, frame:int, channels:int, bits:int) -> int:
+  total:int = 0
+  ch:int = 0
+  while ch < channels:
+    offset:int = (frame * channels + ch) * (bits / 8)
+    value:int = 0
+    if bits == 16:
+      value = _stt_u16(raw, offset)
+      if value >= 32768: value = value - 65536
+    else:
+      value = ((raw[offset] as int & 255) - 128) * 256
+    total = total + value
+    ch = ch + 1
+  ret total / channels
+
 fn _stt_read_wav(stt:*SttEngine, path:str) -> int:
   if stt == 0 || path == 0: ret STT_ERR
+  (*stt).pcm_len = 0
+  (*stt).mel_frames = 0
   h:*char = fopen(path, "rb")
   if h == 0 as *char: ret STT_ERR
-  // Read 44-byte WAV header
-  hdr:[char;44]
-  if fread(&hdr[0], 1, 44, h) < 44:
+  if fseek(h, 0, 2) != 0:
     fclose(h)
     ret STT_ERR
-  // Parse header fields
-  channels:int = (hdr[22] as int & 255) | ((hdr[23] as int & 255) << 8)
-  sample_rate:int = (hdr[24] as int & 255) | ((hdr[25] as int & 255) << 8) | ((hdr[26] as int & 255) << 16) | ((hdr[27] as int & 255) << 24)
-  bits_per_sample:int = (hdr[34] as int & 255) | ((hdr[35] as int & 255) << 8)
-  data_bytes:int = (hdr[40] as int & 255) | ((hdr[41] as int & 255) << 8) | ((hdr[42] as int & 255) << 16) | ((hdr[43] as int & 255) << 24)
-  if data_bytes <= 0 || data_bytes > 100000000:
+  file_bytes:int = ftell(h)
+  if file_bytes < 12 || file_bytes > 100000000 || fseek(h, 0, 0) != 0:
     fclose(h)
     ret STT_ERR
-  n_samples:int = data_bytes / (bits_per_sample / 8) / channels
-  // Resample to 16kHz if needed (simple linear interpolation)
-  resample_ratio:float = (STT_SAMPLE_RATE as float) / (sample_rate as float)
-  out_samples:int = (n_samples as float * resample_ratio) as int
-  if out_samples > (*stt).pcm_cap:
-    nc:int = out_samples + 1024
-    nb:*int = (*int)malloc(sizeof(int) * nc)
-    if nb == 0:
-      fclose(h)
-      ret STT_ERR
-    if (*stt).pcm_buf != 0: free((*stt).pcm_buf as *char)
-    (*stt).pcm_buf = nb
-    (*stt).pcm_cap = nc
-  // Read and convert to i16
-  raw_bytes:int = data_bytes
-  raw:*char = malloc(raw_bytes)
+  header:[char;12]
+  if fread(&header[0], 1, 12, h) != 12:
+    fclose(h)
+    ret STT_ERR
+  if header[0] != 82 as char || header[1] != 73 as char || header[2] != 70 as char || header[3] != 70 as char:
+    fclose(h)
+    ret STT_ERR
+  if header[8] != 87 as char || header[9] != 65 as char || header[10] != 86 as char || header[11] != 69 as char:
+    fclose(h)
+    ret STT_ERR
+  riff_end:int = _stt_u32(&header[0], 4) + 8
+  if riff_end < 12 || riff_end > file_bytes:
+    fclose(h)
+    ret STT_ERR
+  channels:int = 0
+  sample_rate:int = 0
+  bits:int = 0
+  block_align:int = 0
+  found_fmt:int = 0
+  found_data:int = 0
+  data_offset:int = 0
+  data_bytes:int = 0
+  position:int = 12
+  chunks:int = 0
+  invalid:int = 0
+  while position + 8 <= riff_end && chunks < 1024:
+    chunk:[char;8]
+    if fread(&chunk[0], 1, 8, h) != 8:
+      invalid = 1
+      break
+    size:int = _stt_u32(&chunk[0], 4)
+    next:int = position + 8 + size + (size & 1)
+    if next > riff_end:
+      invalid = 1
+      break
+    if chunk[0] == 102 as char && chunk[1] == 109 as char && chunk[2] == 116 as char && chunk[3] == 32 as char:
+      if found_fmt != 0 || size < 16:
+        invalid = 1
+        break
+      format:[char;16]
+      if fread(&format[0], 1, 16, h) != 16:
+        invalid = 1
+        break
+      channels = _stt_u16(&format[0], 2)
+      sample_rate = _stt_u32(&format[0], 4)
+      bits = _stt_u16(&format[0], 14)
+      block_align = _stt_u16(&format[0], 12)
+      if _stt_u16(&format[0], 0) != 1 || channels < 1 || channels > 2:
+        invalid = 1
+        break
+      if sample_rate < 8000 || sample_rate > 192000 || (bits != 8 && bits != 16):
+        invalid = 1
+        break
+      if block_align != channels * (bits / 8) || _stt_u32(&format[0], 8) != sample_rate * block_align:
+        invalid = 1
+        break
+      found_fmt = 1
+    else if chunk[0] == 100 as char && chunk[1] == 97 as char && chunk[2] == 116 as char && chunk[3] == 97 as char:
+      if found_data != 0:
+        invalid = 1
+        break
+      found_data = 1
+      data_offset = position + 8
+      data_bytes = size
+    if fseek(h, next, 0) != 0:
+      invalid = 1
+      break
+    position = next
+    chunks = chunks + 1
+  if invalid != 0 || position != riff_end || found_fmt == 0 || found_data == 0 || data_bytes <= 0:
+    fclose(h)
+    ret STT_ERR
+  if data_bytes % block_align != 0:
+    fclose(h)
+    ret STT_ERR
+  n_samples:int = data_bytes / block_align
+  if n_samples > sample_rate * (STT_MAX_AUDIO_MS / 1000):
+    fclose(h)
+    ret STT_ERR
+  out_samples:int = (n_samples * STT_SAMPLE_RATE) / sample_rate
+  if out_samples <= 0 || out_samples > STT_SAMPLE_RATE * (STT_MAX_AUDIO_MS / 1000):
+    fclose(h)
+    ret STT_ERR
+  raw:*char = malloc(data_bytes)
   if raw == 0:
     fclose(h)
     ret STT_ERR
-  fread(raw, 1, raw_bytes, h)
-  fclose(h)
-  // Convert to i32 mono normalized samples
-  raw_n:int = n_samples * channels
-  converted:*int = (*int)malloc(sizeof(int) * n_samples)
-  if converted == 0:
+  if fseek(h, data_offset, 0) != 0 || fread(raw, 1, data_bytes, h) != data_bytes:
+    free(raw); fclose(h)
+    ret STT_ERR
+  if fclose(h) != 0:
     free(raw)
     ret STT_ERR
+  output:*int = (*int)malloc(sizeof(int) * out_samples)
+  if output == 0:
+    free(raw)
+    ret STT_ERR
+  // Linear interpolation, stereo mean, and a clamped last source sample.
   i:int = 0
-  while i < n_samples:
-    // Read first channel only (mono downmix)
-    byte_off:int = i * channels * (bits_per_sample / 8)
-    v:int = 0
-    if bits_per_sample == 16:
-      lo:int = raw[byte_off] as int & 255
-      hi:int = raw[byte_off + 1] as int & 255
-      v = lo | (hi << 8)
-      if v >= 32768: v = v - 65536  // sign extend
-    else if bits_per_sample == 8:
-      v = (raw[byte_off] as int & 255) - 128
-      v = v * 256
-    converted[i] = v
+  while i < out_samples:
+    numerator:int = i * sample_rate
+    source:int = numerator / STT_SAMPLE_RATE
+    fraction:int = numerator % STT_SAMPLE_RATE
+    v0:int = _stt_pcm_value(raw, source, channels, bits)
+    v1:int = v0
+    if source + 1 < n_samples:
+      v1 = _stt_pcm_value(raw, source + 1, channels, bits)
+    output[i] = (v0 * (STT_SAMPLE_RATE - fraction) + v1 * fraction) / STT_SAMPLE_RATE
     i = i + 1
   free(raw)
-  // Resample to STT_SAMPLE_RATE
-  i = 0
-  while i < out_samples:
-    src_f:float = (i as float) / resample_ratio
-    src_i:int = src_f as int
-    frac:float = src_f - (src_i as float)
-    v0:int = 0
-    v1:int = 0
-    if src_i < n_samples: v0 = converted[src_i]
-    if src_i + 1 < n_samples: v1 = converted[src_i + 1]
-    (*stt).pcm_buf[i] = (v0 as float + frac * ((v1 - v0) as float)) as int
-    i = i + 1
-  free(converted as *char)
+  if (*stt).pcm_buf != 0: free((*stt).pcm_buf as *char)
+  (*stt).pcm_buf = output
+  (*stt).pcm_cap = out_samples
   (*stt).pcm_len = out_samples
   ret STT_OK
 
@@ -376,30 +440,86 @@ fn stt_new() -> *SttEngine:
   (*stt).tok = 0 as *Tokenizer
   (*stt).use_nn = 0
   (*stt).last_text = 0 as str
+  (*stt).model_handle = 0
   if (*stt).pcm_buf == 0:
     free(stt)
     ret 0 as *SttEngine
-  _stt_init_mel_filters(stt)
+  if _stt_init_mel_filters(stt) != STT_OK:
+    free((*stt).pcm_buf as *char); free(stt)
+    ret 0 as *SttEngine
   ret stt
 
 fn stt_load_model(stt:*SttEngine, model_path:str) -> int:
-  if stt == 0 || model_path == 0: ret STT_ERR
-  // Load tokenizer alongside model (look for vocab.json in same dir)
-  dir:str = io.path_dir(model_path)
-  vocab_path:str = io.path_join_portable(dir, "vocab.json")
-  merges_path:str = io.path_join_portable(dir, "merges.txt")
-  free(dir)
-  if io.file_exists(vocab_path) != 0:
-    tok:*Tokenizer = tokenizer.tokenizer_load(vocab_path, merges_path)
-    (*stt).tok = tok
-  free(vocab_path)
-  free(merges_path)
+  if stt == 0: ret STT_ERR
+  (*stt).model_loaded = 0
+  (*stt).use_nn = 0
+  if (*stt).tok != 0: tokenizer.tokenizer_free((*stt).tok)
+  (*stt).tok = 0 as *Tokenizer
+  if (*stt).last_text != 0: free((*stt).last_text)
+  (*stt).last_text = 0 as str
+  if (*stt).model_handle > 0: speech_stt_free((*stt).model_handle)
+  (*stt).model_handle = 0
+  if model_path == 0: ret STT_ERR
+  handle:int = speech_stt_load(model_path)
+  if handle <= 0: ret STT_ERR
+  (*stt).model_handle = handle
   (*stt).model_loaded = 1
-  (*stt).use_nn = 1  // Would load weights here in full implementation
+  (*stt).use_nn = 1
   ret STT_OK
+
+fn stt_create_trainable(stt:*SttEngine, hidden:int, context:int, seed:int) -> int:
+  if stt == 0: ret STT_ERR
+  if (*stt).last_text != 0: free((*stt).last_text)
+  (*stt).last_text = 0 as str
+  if (*stt).model_handle > 0: speech_stt_free((*stt).model_handle)
+  (*stt).model_loaded = 0
+  (*stt).use_nn = 0
+  (*stt).model_handle = speech_stt_create(hidden, context, seed)
+  if (*stt).model_handle <= 0: ret STT_ERR
+  // Random initialization is a training state, not a loaded trained model.
+  ret STT_OK
+
+fn stt_train_file(stt:*SttEngine, path:str, labels:*int, count:int, rate_ppm:int, loss:*float) -> int:
+  if stt == 0 || path == 0 || labels == 0 || loss == 0: ret STT_ERR
+  if (*stt).model_handle <= 0 || count <= 0 || count > STT_MAX_TOKENS: ret STT_ERR
+  if _stt_read_wav(stt, path) != STT_OK || _stt_compute_mel(stt) != STT_OK: ret STT_ERR
+  if speech_stt_train((*stt).model_handle, (*stt).mel_buf, (*stt).mel_frames, labels, count, rate_ppm, loss) != 0: ret STT_ERR
+  (*stt).model_loaded = 1
+  (*stt).use_nn = 1
+  ret STT_OK
+
+fn stt_save_model(stt:*SttEngine, path:str) -> int:
+  if stt == 0 || path == 0 || (*stt).model_handle <= 0: ret STT_ERR
+  ret speech_stt_save((*stt).model_handle, path)
+
+fn stt_align_file(stt:*SttEngine, path:str, labels:*int, count:int, alignment:*int, capacity:int, loss:*float) -> int:
+  if stt == 0 || path == 0 || labels == 0 || alignment == 0 || loss == 0: ret STT_ERR
+  if (*stt).model_loaded == 0 || (*stt).model_handle <= 0 || count <= 0 || count > STT_MAX_TOKENS: ret STT_ERR
+  if _stt_read_wav(stt, path) != STT_OK || _stt_compute_mel(stt) != STT_OK: ret STT_ERR
+  if capacity < (*stt).mel_frames: ret STT_ERR
+  ret speech_stt_align((*stt).model_handle, (*stt).mel_buf, (*stt).mel_frames, labels, count, alignment, loss)
+
+fn stt_training_steps(stt:*SttEngine) -> int:
+  if stt == 0 || (*stt).model_handle <= 0: ret 0
+  ret speech_stt_steps((*stt).model_handle)
+
+// Train aggregate character counts from training transcripts only. No audio or
+// transcript strings are retained in the model, and inference needs neither.
+fn stt_reset_text_model(stt:*SttEngine) -> int:
+  if stt == 0 || (*stt).model_handle <= 0: ret STT_ERR
+  ret speech_stt_text_reset((*stt).model_handle)
+
+fn stt_train_text(stt:*SttEngine, labels:*int, count:int) -> int:
+  if stt == 0 || (*stt).model_handle <= 0 || labels == 0: ret STT_ERR
+  ret speech_stt_text_train((*stt).model_handle, labels, count)
+
+fn stt_set_decoder(stt:*SttEngine, width:int, lm_weight_ppm:int, insertion_ppm:int) -> int:
+  if stt == 0 || (*stt).model_handle <= 0: ret STT_ERR
+  ret speech_stt_decoder((*stt).model_handle, width, lm_weight_ppm, insertion_ppm)
 
 fn stt_free(stt:*SttEngine) -> int:
   if stt == 0: ret STT_ERR
+  if (*stt).model_handle > 0: speech_stt_free((*stt).model_handle)
   if (*stt).mel_filters != 0: free((*stt).mel_filters as *char)
   if (*stt).pcm_buf != 0: free((*stt).pcm_buf as *char)
   if (*stt).mel_buf != 0: free((*stt).mel_buf as *char)
@@ -409,7 +529,9 @@ fn stt_free(stt:*SttEngine) -> int:
   ret STT_OK
 
 fn stt_from_pcm(stt:*SttEngine, pcm:*int, n_samples:int) -> str:
-  if stt == 0 || pcm == 0 || n_samples <= 0: ret 0 as str
+  if stt == 0 || pcm == 0 || n_samples < STT_WIN_LEN: ret 0 as str
+  if n_samples > STT_SAMPLE_RATE * (STT_MAX_AUDIO_MS / 1000): ret 0 as str
+  if (*stt).model_loaded == 0 || (*stt).use_nn == 0: ret 0 as str
   // Copy PCM into buffer
   if n_samples > (*stt).pcm_cap:
     nb:*int = (*int)malloc(sizeof(int) * (n_samples + 1024))
@@ -427,6 +549,7 @@ fn stt_from_pcm(stt:*SttEngine, pcm:*int, n_samples:int) -> str:
 
 fn stt_from_file(stt:*SttEngine, wav_path:str) -> str:
   if stt == 0 || wav_path == 0: ret 0 as str
+  if (*stt).model_loaded == 0 || (*stt).use_nn == 0: ret 0 as str
   if _stt_read_wav(stt, wav_path) != STT_OK: ret 0 as str
   if _stt_compute_mel(stt) != STT_OK: ret 0 as str
   if (*stt).last_text != 0: free((*stt).last_text)
@@ -434,7 +557,8 @@ fn stt_from_file(stt:*SttEngine, wav_path:str) -> str:
   ret (*stt).last_text
 
 fn stt_from_mic(stt:*SttEngine, duration_ms:int) -> str:
-  if stt == 0 || duration_ms <= 0: ret 0 as str
+  if stt == 0 || duration_ms <= 0 || duration_ms > STT_MAX_AUDIO_MS: ret 0 as str
+  if (*stt).model_loaded == 0 || (*stt).use_nn == 0: ret 0 as str
   n_samples:int = (STT_SAMPLE_RATE * duration_ms) / 1000
   if n_samples > (*stt).pcm_cap:
     nb:*int = (*int)malloc(sizeof(int) * (n_samples + 1024))
@@ -444,7 +568,7 @@ fn stt_from_mic(stt:*SttEngine, duration_ms:int) -> str:
     (*stt).pcm_cap = n_samples + 1024
   // Capture from microphone via runtime
   actual:int = stt_capture_mic((*stt).pcm_buf, n_samples, STT_SAMPLE_RATE)
-  if actual <= 0: ret _stt_strdup("[microphone capture failed]")
+  if actual <= 0 || actual > n_samples: ret 0 as str
   (*stt).pcm_len = actual
   if _stt_compute_mel(stt) != STT_OK: ret 0 as str
   if (*stt).last_text != 0: free((*stt).last_text)

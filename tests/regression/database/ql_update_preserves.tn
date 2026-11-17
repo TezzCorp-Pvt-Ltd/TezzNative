@@ -1,0 +1,24 @@
+import "tezzdb"
+import "tezzdbql"
+
+fn main() -> int:
+  unsafe:
+    remove("ql_update.tdb")
+    remove("ql_update.tdb.wal")
+    db:*TezzDb = tezzdb.open("ql_update.tdb")
+    if db == 0: ret 1
+    if tezzdb.table_create(db, "users") != 0: ret 2
+    row:str = tezzdb.row_json2("name", "alice", "role", "admin")
+    if tezzdb.insert(db, "users", row) != 1: ret 3
+    free(row)
+    if tezzdbql.db_exec1(db as *char, "UPDATE users SET name = ? WHERE id = 1", "renamed") != 1: ret 4
+    row = tezzdb.get(db, "users", 1)
+    role:str = tezzdb.row_get_str(row, "role")
+    name:str = tezzdb.row_get_str(row, "name")
+    if role == 0 || strcmp(role, "admin") != 0: ret 5
+    if name == 0 || strcmp(name, "renamed") != 0: ret 6
+    free(role)
+    free(name)
+    free(row)
+    tezzdb.close(db)
+  ret 0

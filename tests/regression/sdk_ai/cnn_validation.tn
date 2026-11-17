@@ -1,0 +1,33 @@
+import "tztensor"
+import "./support/lib/values.tn"
+
+fn main() -> int:
+  x:int = tztensor.tensor_new_4d(1, 1, 2, 2, 1)
+  w:int = tztensor.tensor_new_4d(1, 1, 1, 1, 1)
+  b:int = tztensor.tensor_new_1d(1, 1)
+  out:int = tztensor.tensor_new_4d(1, 1, 2, 2, 0)
+  bad:int = tztensor.tensor_new_4d(1, 1, 2, 3, 0)
+  values.write(x, 0, 1.0)
+  values.write(x, 1, 2.0)
+  values.write(x, 2, 3.0)
+  values.write(x, 3, 4.0)
+  values.write(w, 0, 3.0)
+  values.write(b, 0, 1.0)
+  tztensor.tensor_fill(out, 17.0 as f32)
+  if tztensor.tensor_conv2d(x, w, b, out, 0, 0) >= 0: ret 1
+  if tztensor.tensor_conv2d(x, w, b, out, -1, 1) >= 0: ret 2
+  if tztensor.tensor_conv2d(x, w, b, out, 9223372036854775807, 1) >= 0: ret 3
+  if values.read(out, 0) != 17.0: ret 4
+  if tztensor.tensor_conv2d(x, w, b, bad, 0, 1) >= 0: ret 5
+  if tztensor.tensor_conv2d(x, w, b, x, 0, 1) >= 0: ret 6
+  if tztensor.tensor_conv2d(x, w, b, out, 0, 1) != 0: ret 7
+  if values.read(out, 0) != 4.0 || values.read(out, 3) != 13.0: ret 8
+  if tztensor.tensor_backward(out) != 0: ret 9
+  if values.gradient(x, 0) != 3.0 || values.gradient(x, 3) != 3.0: ret 10
+  if values.gradient(w, 0) != 10.0 || values.gradient(b, 0) != 4.0: ret 11
+  tztensor.tensor_free(out)
+  tztensor.tensor_free(bad)
+  tztensor.tensor_free(b)
+  tztensor.tensor_free(w)
+  tztensor.tensor_free(x)
+  ret 0

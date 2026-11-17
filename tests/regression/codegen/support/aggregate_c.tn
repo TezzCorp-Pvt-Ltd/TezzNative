@@ -1,0 +1,24 @@
+struct Pair:
+  first:int
+  second:int
+
+fn make_pair(first:int, second:int) -> Pair:
+  ret Pair{first:first, second:second}
+
+fn weighted(value:Pair, factor:int) -> int:
+  ret value.first + value.second * factor
+
+fn main() -> int:
+  value:Pair = make_pair(7, 11)
+  if value.first != 7 || value.second != 11: ret 1
+  if weighted(value, 3) != 40: ret 2
+  values:[Pair;2] = [make_pair(2, 5), make_pair(13, 17)]
+  copied:Pair = values[1]
+  if weighted(values[0], 7) != 37: ret 3
+  if copied.first != 13 || weighted(copied, 2) != 47: ret 4
+  text:str = "éA"
+  unsafe:
+    bytes:*char = text as *char
+    if bytes[0] != 195 as char || bytes[1] != 169 as char: ret 5
+    if bytes[2] != 65 as char || bytes[3] != 0 as char: ret 6
+  ret 0

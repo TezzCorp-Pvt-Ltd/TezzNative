@@ -1,0 +1,96 @@
+// Shared types and module constants for io.
+
+
+let SEEK_SET:int = 0
+
+let SEEK_CUR:int = 1
+
+let SEEK_END:int = 2
+
+// Default BigFile chunk size: 4 MB — good for most pipelines
+
+let IO_CHUNK_DEFAULT:int = 4194304
+// Maximum single allocation for read-all: 2 GB
+
+let IO_READ_ALL_MAX:int = 2147483647
+// StreamWriter internal buffer size
+
+let IO_STREAM_BUF:int = 65536
+
+struct File:
+  h:*char
+  owned:int
+
+struct BigFile:
+  h:*char      // FILE* handle (raw)
+  size:int     // total file size in bytes (64-bit)
+  pos:int      // current logical byte position
+  chunk:int    // configured chunk size in bytes
+  last_read:int // bytes read in last bigfile_read_chunk call
+  eof:int      // 1 when EOF reached
+  path:str     // owned copy of path
+
+struct StreamWriter:
+  h:*char        // FILE* handle
+  buf:*char      // internal buffer
+  buf_cap:int    // buffer capacity
+  buf_len:int    // bytes currently in buffer
+  total:int      // total bytes flushed so far
+  error:int      // 1 if write error occurred
+
+struct MmapFile:
+  data:*char   // pointer to mapped bytes
+  size:int     // size in bytes
+  os_handle:int // OS handle (HANDLE on Win, fd on Linux) or -1 if software
+  owned:int    // 1 if data is malloc'd (software fallback)
+
+struct PipePair:
+  read_fd:int
+  write_fd:int
+  ok:int
+
+struct AioReq:
+  fd:int
+  buf:*char
+  n:int
+  off:int
+  kind:int   // 0=read, 1=write
+  done:int
+  result:int
+  handle:int // OS handle for completion
+
+let AIO_READ:int = 0
+
+let AIO_WRITE:int = 1
+
+@inline
+fn _get_SEEK_SET() -> int:
+  ret SEEK_SET
+
+@inline
+fn _get_SEEK_CUR() -> int:
+  ret SEEK_CUR
+
+@inline
+fn _get_SEEK_END() -> int:
+  ret SEEK_END
+
+@inline
+fn _get_IO_CHUNK_DEFAULT() -> int:
+  ret IO_CHUNK_DEFAULT
+
+@inline
+fn _get_IO_READ_ALL_MAX() -> int:
+  ret IO_READ_ALL_MAX
+
+@inline
+fn _get_IO_STREAM_BUF() -> int:
+  ret IO_STREAM_BUF
+
+@inline
+fn _get_AIO_READ() -> int:
+  ret AIO_READ
+
+@inline
+fn _get_AIO_WRITE() -> int:
+  ret AIO_WRITE

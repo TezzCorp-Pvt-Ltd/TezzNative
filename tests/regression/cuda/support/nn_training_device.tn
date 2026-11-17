@@ -1,0 +1,101 @@
+import "tznn"
+import "tzcpu"
+import "tzgpu"
+import "math"
+
+fn put(p:int, index:int, value:float) -> int:
+  host:int = tzcpu.tz_cpu_zeros(1)
+  unsafe:
+    values:*f32 = host as *f32
+    values[0] = value as f32
+  status:int = tzgpu.tz_cuda_memcpy(p + index * 4, host, 4, 1)
+  tzcpu.tz_cpu_free(host)
+  ret status
+
+fn get(p:int, index:int) -> float:
+  host:int = tzcpu.tz_cpu_zeros(1)
+  status:int = tzgpu.tz_cuda_memcpy(host, p + index * 4, 4, 2)
+  value:float = 0.0
+  unsafe:
+    values:*f32 = host as *f32
+    value = values[0] as float
+  tzcpu.tz_cpu_free(host)
+  if status != 0: ret 0.0 / 0.0
+  ret value
+
+fn near(actual:float, expected:float) -> int:
+  if actual != actual || math.absf(actual - expected) > 0.00001: ret 0
+  ret 1
+
+fn training(full:int) -> int:
+  x:int = tzgpu.gpu_zeros_f32(4)
+  labels:int = tzgpu.gpu_zeros_f32(2)
+  w1:int = tzgpu.gpu_zeros_f32(6)
+  b1:int = tzgpu.gpu_zeros_f32(3)
+  w2:int = tzgpu.gpu_zeros_f32(6)
+  b2:int = tzgpu.gpu_zeros_f32(2)
+  mw1:int = tzgpu.gpu_zeros_f32(6)
+  vw1:int = tzgpu.gpu_zeros_f32(6)
+  mw2:int = tzgpu.gpu_zeros_f32(6)
+  vw2:int = tzgpu.gpu_zeros_f32(6)
+  mb1:int = tzgpu.gpu_zeros_f32(3)
+  vb1:int = tzgpu.gpu_zeros_f32(3)
+  mb2:int = tzgpu.gpu_zeros_f32(2)
+  vb2:int = tzgpu.gpu_zeros_f32(2)
+  put(x, 0, 1.0)
+  put(x, 1, 2.0)
+  put(x, 2, 3.0)
+  put(x, 3, 4.0)
+  host_labels:int = tzcpu.tz_cpu_zeros(2)
+  unsafe:
+    ids:*i32 = host_labels as *i32
+    ids[1] = 1 as i32
+  if tzgpu.tz_cuda_memcpy(labels, host_labels, 8, 1) != 0: ret 90
+  tzcpu.tz_cpu_free(host_labels)
+  put(w1, 0, 1.0)
+  put(w1, 3, 1.0)
+  put(w1, 4, 1.0)
+  put(w1, 5, 1.0)
+  put(w2, 0, 1.0)
+  put(w2, 4, 1.0)
+  loss:int = 0
+  if full != 0:
+    loss = tznn.nn_mlp2_train_step(x, labels, w1, b1, w2, b2, mw1, vw1, mw2, vw2, mb1, vb1, mb2, vb2, 2, 2, 3, 2, 0.1, 0.9, 0.999)
+  else:
+    loss = tznn.nn_mlp_train_step(x, labels, w1, b1, 2, 3, w2, b2, 2, mw1, vw1, mw2, vw2, 2, 0.1, 0.9, 0.999)
+  failed:int = 0
+  if loss == 0:
+    failed = 1
+  else:
+    if near(tznn.nn_sum_loss(loss, 2), 1.626523375) == 0:
+      failed = 1
+    tzgpu.gpu_free(loss)
+  if near(get(w1, 0), 0.9) == 0 || near(get(w1, 1), 0.1) == 0 || get(w1, 4) != 1.0 || get(w1, 5) != 1.0:
+    failed = 1
+  if near(get(w2, 0), 0.9) == 0 || near(get(w2, 2), 0.1) == 0 || near(get(w2, 5), 0.0 - 0.1) == 0:
+    failed = 1
+  expected_bias:float = 0.023105858
+  if full != 0: expected_bias = 0.1
+  if near(get(b1, 0), expected_bias) == 0 || near(get(b2, 0), expected_bias) == 0:
+    failed = 1
+  tzgpu.gpu_free(x)
+  tzgpu.gpu_free(labels)
+  tzgpu.gpu_free(w1)
+  tzgpu.gpu_free(b1)
+  tzgpu.gpu_free(w2)
+  tzgpu.gpu_free(b2)
+  tzgpu.gpu_free(mw1)
+  tzgpu.gpu_free(vw1)
+  tzgpu.gpu_free(mw2)
+  tzgpu.gpu_free(vw2)
+  tzgpu.gpu_free(mb1)
+  tzgpu.gpu_free(vb1)
+  tzgpu.gpu_free(mb2)
+  tzgpu.gpu_free(vb2)
+  if failed != 0:
+    say "FAIL: SDK training gradient/update/loss oracle, full=", full
+  ret failed
+
+fn main() -> int:
+  if tzgpu.tz_cuda_device_count() <= 0: ret 99
+  ret training(0) + training(1)

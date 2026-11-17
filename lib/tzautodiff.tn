@@ -1,0 +1,339 @@
+// Dynamic f32 reverse-mode tape. Backward consumes the recorded graph.
+// Keep tensor handles and externally supplied pool masks alive until backward.
+import "tzcpu"
+import "tztensor"
+
+let OP_NONE:int = 0
+let OP_LINEAR:int = 1
+let OP_RELU:int = 2
+let OP_GELU:int = 3
+let OP_CROSS_ENTROPY:int = 4
+let OP_ADD:int = 5
+let OP_MUL:int = 6
+let OP_MATMUL:int = 7
+let OP_RMSNORM:int = 8
+let OP_CONV2D:int = 9
+let OP_MAXPOOL2D:int = 10
+let OP_SLICE:int = 11
+let OP_SUB:int = 12
+let OP_SOFTMAX:int = 13
+let OP_COPY:int = 14
+
+let MAX_TAPE_NODES:int = 2048
+let NODE_WORDS:int = 18
+// State: tape pointer, length, enabled, initialized, error.
+let g_autodiff_state:int = 0
+
+fn autodiff_ensure_init() -> int:
+  if g_autodiff_state != 0:
+    ret 0
+  state:int = tzcpu.tz_cpu_malloc(64)
+  tape:int = tzcpu.tz_cpu_malloc(MAX_TAPE_NODES * NODE_WORDS * 8)
+  if state == 0 || tape == 0:
+    tzcpu.tz_cpu_free(state)
+    tzcpu.tz_cpu_free(tape)
+    ret 0 - 1
+  unsafe:
+    (state as *int)[0] = tape
+    (state as *int)[1] = 0
+    (state as *int)[2] = 1
+    (state as *int)[3] = 1
+    (state as *int)[4] = 0
+  g_autodiff_state = state
+  ret 0
+
+fn autodiff_set_grad_enabled(enabled:int) -> int:
+  if autodiff_ensure_init() != 0: ret 0 - 1
+  unsafe:
+    (g_autodiff_state as *int)[2] = enabled
+  ret 0
+
+fn autodiff_is_grad_enabled() -> int:
+  if autodiff_ensure_init() != 0: ret 0
+  unsafe:
+    ret (g_autodiff_state as *int)[2]
+
+fn autodiff_reset() -> int:
+  if autodiff_ensure_init() != 0: ret 0 - 1
+  unsafe:
+    tape:*int = (g_autodiff_state as *int)[0] as *int
+    index:int = 0
+    while index < (g_autodiff_state as *int)[1]:
+      offset:int = index * NODE_WORDS
+      if tape[offset] == OP_CROSS_ENTROPY && tape[offset + 7] != 0:
+        tzcpu.tz_cpu_free(tape[offset + 6])
+      index = index + 1
+    (g_autodiff_state as *int)[1] = 0
+    (g_autodiff_state as *int)[4] = 0
+  ret 0
+
+fn _autodiff_fail() -> int:
+  if g_autodiff_state != 0:
+    unsafe:
+      (g_autodiff_state as *int)[4] = 1
+  ret 0 - 1
+
+fn _autodiff_grad(t:int) -> int:
+  if t == 0: ret 0
+  if tztensor.tensor_requires_grad(t) == 0: ret 0
+  ret tztensor.tensor_grad(t)
+
+fn autodiff_record(op_id:int, out_t:int, in0:int, in1:int, in2:int, in3:int, saved0:int, saved1:int) -> int:
+  if autodiff_ensure_init() != 0: ret 0 - 1
+  if autodiff_is_grad_enabled() == 0: ret 0
+  if _autodiff_grad(in0) == 0 && _autodiff_grad(in1) == 0 && _autodiff_grad(in2) == 0 && _autodiff_grad(in3) == 0:
+    ret 0
+  if out_t == 0: ret _autodiff_fail()
+  if out_t == in0 || out_t == in1 || out_t == in2 || out_t == in3:
+    ret _autodiff_fail()
+  if tztensor.tensor_set_requires_grad(out_t, 1) != 0:
+    ret _autodiff_fail()
+  if tztensor.tensor_grad(out_t) == 0:
+    ret _autodiff_fail()
+  unsafe:
+    idx:int = (g_autodiff_state as *int)[1]
+    if idx >= MAX_TAPE_NODES: ret _autodiff_fail()
+    tape:*int = (g_autodiff_state as *int)[0] as *int
+    offset:int = idx * NODE_WORDS
+    j:int = 0
+    while j < NODE_WORDS:
+      tape[offset + j] = 0
+      j = j + 1
+    tape[offset] = op_id
+    tape[offset + 1] = out_t
+    tape[offset + 2] = in0
+    tape[offset + 3] = in1
+    tape[offset + 4] = in2
+    tape[offset + 5] = in3
+    tape[offset + 6] = saved0
+    tape[offset + 7] = saved1
+    (g_autodiff_state as *int)[1] = idx + 1
+  ret 0
+
+fn autodiff_record_slice(out_t:int, in0:int, s0:int, e0:int, s1:int, e1:int, s2:int, e2:int, s3:int, e3:int) -> int:
+  if autodiff_is_grad_enabled() == 0 || _autodiff_grad(in0) == 0:
+    ret 0
+  if autodiff_record(OP_SLICE, out_t, in0, 0, 0, 0, 0, 0) != 0:
+    ret 0 - 1
+  unsafe:
+    idx:int = (g_autodiff_state as *int)[1] - 1
+    tape:*int = (g_autodiff_state as *int)[0] as *int
+    offset:int = idx * NODE_WORDS
+    tape[offset + 8] = s0
+    tape[offset + 9] = e0
+    tape[offset + 10] = s1
+    tape[offset + 11] = e1
+    tape[offset + 12] = s2
+    tape[offset + 13] = e2
+    tape[offset + 14] = s3
+    tape[offset + 15] = e3
+  ret 0
+
+fn _autodiff_producer(t:int, before:int) -> int:
+  unsafe:
+    tape:*int = (g_autodiff_state as *int)[0] as *int
+    index:int = before - 1
+    while index >= 0:
+      if tape[index * NODE_WORDS + 1] == t:
+        ret index
+      index = index - 1
+  ret 0 - 1
+
+fn _autodiff_accumulate(t:int, derivative:int, scale:float) -> int:
+  target:int = _autodiff_grad(t)
+  if target != 0 && derivative != 0:
+    tzcpu.tz_cpu_axpy_f32(target, derivative, scale, tztensor.tensor_numel(t))
+  ret 0
+
+fn _autodiff_activation(op:int, input:int, out:int) -> int:
+  target:int = _autodiff_grad(input)
+  if target == 0: ret 0
+  n:int = tztensor.tensor_numel(input)
+  temporary:int = tzcpu.tz_cpu_zeros(n)
+  if temporary == 0: ret _autodiff_fail()
+  if op == OP_RELU:
+    tzcpu.tz_cpu_relu_bwd_f32(tztensor.tensor_grad(out), tztensor.tensor_data(input), temporary, n)
+  else:
+    tzcpu.tz_cpu_gelu_bwd_f32(tztensor.tensor_grad(out), tztensor.tensor_data(input), temporary, n)
+  _autodiff_accumulate(input, temporary, 1.0)
+  tzcpu.tz_cpu_free(temporary)
+  ret 0
+
+fn _autodiff_multiply(input:int, other:int, out:int) -> int:
+  if _autodiff_grad(input) == 0: ret 0
+  n:int = tztensor.tensor_numel(input)
+  temporary:int = tzcpu.tz_cpu_zeros(n)
+  if temporary == 0: ret _autodiff_fail()
+  tzcpu.tz_cpu_mul_f32(tztensor.tensor_grad(out), tztensor.tensor_data(other), temporary, n)
+  _autodiff_accumulate(input, temporary, 1.0)
+  tzcpu.tz_cpu_free(temporary)
+  ret 0
+
+fn _autodiff_softmax(input:int, out:int) -> int:
+  target:int = _autodiff_grad(input)
+  if target == 0: ret 0
+  cols:int = tztensor.tensor_d0(input)
+  rank:int = tztensor.tensor_ndim(input)
+  if rank == 2: cols = tztensor.tensor_d1(input)
+  if rank == 3: cols = tztensor.tensor_d2(input)
+  if rank == 4: cols = tztensor.tensor_d3(input)
+  if cols <= 0: ret _autodiff_fail()
+  rows:int = tztensor.tensor_numel(input) / cols
+  unsafe:
+    probabilities:*f32 = tztensor.tensor_data(out) as *f32
+    upstream:*f32 = tztensor.tensor_grad(out) as *f32
+    gradient:*f32 = target as *f32
+    row:int = 0
+    while row < rows:
+      dot:float = 0.0
+      col:int = 0
+      while col < cols:
+        index:int = row * cols + col
+        dot = dot + (upstream[index] as float) * (probabilities[index] as float)
+        col = col + 1
+      col = 0
+      while col < cols:
+        index:int = row * cols + col
+        derivative:float = (probabilities[index] as float) * ((upstream[index] as float) - dot)
+        gradient[index] = ((gradient[index] as float) + derivative) as f32
+        col = col + 1
+      row = row + 1
+  ret 0
+
+// CPU kernels implement every operation currently recorded by this module.
+// GPU inputs are explicitly rejected until a device-specific VJP is available.
+fn autodiff_backward(root_loss:int) -> int:
+  if autodiff_ensure_init() != 0: ret 0 - 1
+  if root_loss == 0 || _autodiff_grad(root_loss) == 0:
+    ret 0 - 1
+  unsafe:
+    if (g_autodiff_state as *int)[4] != 0: ret 0 - 1
+    tape_len:int = (g_autodiff_state as *int)[1]
+    tape:*int = (g_autodiff_state as *int)[0] as *int
+    index:int = 0
+    while index < tape_len:
+      tape[index * NODE_WORDS + 16] = 0
+      index = index + 1
+    root_index:int = _autodiff_producer(root_loss, tape_len)
+    if root_index < 0:
+      if tztensor.tensor_device(root_loss) != 0: ret 0 - 1
+      gradient:*f32 = tztensor.tensor_grad(root_loss) as *f32
+      index = 0
+      while index < tztensor.tensor_numel(root_loss):
+        gradient[index] = gradient[index] + (1.0 as f32)
+        index = index + 1
+      autodiff_reset()
+      ret 0
+    tape[root_index * NODE_WORDS + 16] = 1
+    index = root_index
+    while index >= 0:
+      offset:int = index * NODE_WORDS
+      if tape[offset + 16] != 0:
+        out:int = tape[offset + 1]
+        if tztensor.tensor_device(out) != 0: ret 0 - 1
+        arg:int = 2
+        while arg <= 5:
+          input:int = tape[offset + arg]
+          if input != 0:
+            if tztensor.tensor_device(input) != 0: ret 0 - 1
+            producer:int = _autodiff_producer(input, index)
+            if producer >= 0 && _autodiff_grad(input) != 0:
+              tape[producer * NODE_WORDS + 16] = 1
+          arg = arg + 1
+      index = index - 1
+    index = 0
+    while index < tape_len:
+      if tape[index * NODE_WORDS + 16] != 0:
+        tztensor.tensor_zero_grad(tape[index * NODE_WORDS + 1])
+      index = index + 1
+    tzcpu.tz_cpu_fill_f32(tztensor.tensor_grad(root_loss), tztensor.tensor_numel(root_loss), 1.0)
+    index = root_index
+    while index >= 0:
+      offset:int = index * NODE_WORDS
+      if tape[offset + 16] != 0:
+        op:int = tape[offset]
+        out:int = tape[offset + 1]
+        in0:int = tape[offset + 2]
+        in1:int = tape[offset + 3]
+        in2:int = tape[offset + 4]
+        saved0:int = tape[offset + 6]
+        saved1:int = tape[offset + 7]
+        out_g:int = tztensor.tensor_grad(out)
+        g0:int = _autodiff_grad(in0)
+        g1:int = _autodiff_grad(in1)
+        if op == OP_ADD || op == OP_SUB:
+          _autodiff_accumulate(in0, out_g, 1.0)
+          sign:float = 1.0
+          if op == OP_SUB: sign = 0.0 - 1.0
+          _autodiff_accumulate(in1, out_g, sign)
+        else if op == OP_MUL:
+          _autodiff_multiply(in0, in1, out)
+          _autodiff_multiply(in1, in0, out)
+        else if op == OP_COPY:
+          _autodiff_accumulate(in0, out_g, 1.0)
+        else if op == OP_SOFTMAX:
+          _autodiff_softmax(in0, out)
+        else if op == OP_RELU || op == OP_GELU:
+          _autodiff_activation(op, in0, out)
+        else if op == OP_LINEAR:
+          batch:int = tztensor.tensor_d0(in0)
+          inputs:int = tztensor.tensor_d1(in0)
+          outputs:int = tztensor.tensor_d0(in1)
+          if g1 != 0:
+            tzcpu.tz_cpu_gemm_tn_f32(out_g, tztensor.tensor_data(in0), g1, outputs, batch, inputs, 1.0, 1.0)
+          if _autodiff_grad(in2) != 0:
+            tzcpu.tz_cpu_reduce_sum_cols_f32(out_g, _autodiff_grad(in2), batch, outputs)
+          if g0 != 0:
+            tzcpu.tz_cpu_gemm_f32(out_g, tztensor.tensor_data(in1), g0, batch, outputs, inputs, 1.0, 1.0)
+        else if op == OP_MATMUL:
+          m:int = tztensor.tensor_d0(in0)
+          k:int = tztensor.tensor_d1(in0)
+          n:int = tztensor.tensor_d1(in1)
+          if g0 != 0:
+            tzcpu.tz_cpu_gemm_nt_f32(out_g, tztensor.tensor_data(in1), g0, m, n, k, 1.0, 1.0)
+          if g1 != 0:
+            tzcpu.tz_cpu_gemm_tn_f32(tztensor.tensor_data(in0), out_g, g1, k, m, n, 1.0, 1.0)
+        else if op == OP_CROSS_ENTROPY:
+          if g0 != 0:
+            batch:int = tztensor.tensor_d0(in0)
+            classes:int = tztensor.tensor_d1(in0)
+            temporary:int = tzcpu.tz_cpu_zeros(batch * classes)
+            if temporary == 0: ret _autodiff_fail()
+            probabilities:int = saved0
+            if probabilities == 0: ret _autodiff_fail()
+            tzcpu.tz_cpu_cross_entropy_bwd_f32(probabilities, tztensor.tensor_data(in1), temporary, batch, classes)
+            values:*f32 = temporary as *f32
+            upstream:*f32 = out_g as *f32
+            i:int = 0
+            while i < batch * classes:
+              values[i] = ((values[i] as float) * (upstream[i / classes] as float) * (batch as float)) as f32
+              i = i + 1
+            _autodiff_accumulate(in0, temporary, 1.0)
+            tzcpu.tz_cpu_free(temporary)
+        else if op == OP_RMSNORM:
+          tzcpu.tz_cpu_rmsnorm_bwd_f32(out_g, tztensor.tensor_data(in0), tztensor.tensor_data(in1), g0, g1, tztensor.tensor_d0(in0), tztensor.tensor_d1(in0), saved0)
+        else if op == OP_CONV2D:
+          temporary:int = 0
+          if g0 != 0:
+            temporary = tzcpu.tz_cpu_zeros(tztensor.tensor_numel(in0))
+            if temporary == 0: ret _autodiff_fail()
+          tzcpu.tz_cpu_conv2d_bwd_f32(out_g, tztensor.tensor_data(in0), tztensor.tensor_data(in1), temporary, g1, _autodiff_grad(in2), tztensor.tensor_d0(in0), tztensor.tensor_d1(in0), tztensor.tensor_d2(in0), tztensor.tensor_d3(in0), tztensor.tensor_d0(in1), tztensor.tensor_d2(in1), tztensor.tensor_d3(in1), saved0, saved1)
+          _autodiff_accumulate(in0, temporary, 1.0)
+          tzcpu.tz_cpu_free(temporary)
+        else if op == OP_MAXPOOL2D:
+          if g0 != 0:
+            temporary:int = tzcpu.tz_cpu_zeros(tztensor.tensor_numel(in0))
+            if temporary == 0: ret _autodiff_fail()
+            tzcpu.tz_cpu_maxpool2d_bwd_f32(out_g, saved0, temporary, tztensor.tensor_d0(in0), tztensor.tensor_d1(in0), tztensor.tensor_d2(in0), tztensor.tensor_d3(in0), tztensor.tensor_d2(out), tztensor.tensor_d3(out))
+            _autodiff_accumulate(in0, temporary, 1.0)
+            tzcpu.tz_cpu_free(temporary)
+        else if op == OP_SLICE:
+          if g0 != 0:
+            tzcpu.tz_cpu_slice4d_bwd_f32(out_g, g0, tztensor.tensor_d0(in0), tztensor.tensor_d1(in0), tztensor.tensor_d2(in0), tztensor.tensor_d3(in0), tape[offset + 8], tape[offset + 9], tape[offset + 10], tape[offset + 11], tape[offset + 12], tape[offset + 13], tape[offset + 14], tape[offset + 15])
+        else:
+          ret _autodiff_fail()
+      index = index - 1
+    status:int = (g_autodiff_state as *int)[4]
+    autodiff_reset()
+    if status != 0: ret 0 - 1
+  ret 0

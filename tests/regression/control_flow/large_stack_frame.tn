@@ -1,0 +1,11 @@
+fn large_frame(seed:int) -> int:
+  values:[int;8192]
+  values[0] = seed
+  values[4096] = seed + 1
+  values[8191] = seed + 2
+  ret values[0] + values[4096] + values[8191]
+
+fn main() -> int:
+  if large_frame(10) != 33: ret 1
+  if large_frame(20) != 63: ret 2
+  ret 0

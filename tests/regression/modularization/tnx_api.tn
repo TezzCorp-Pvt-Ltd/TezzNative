@@ -1,0 +1,21 @@
+import "tnx"
+
+fn main() -> int:
+  unsafe:
+    value:*TnxValue = tnx.obj()
+    child:*TnxValue = tnx.tnx_int(42)
+    tnx.obj_set(value, "answer", child)
+    text:str = tnx.stringify(value)
+    decoded:*TnxValue = tnx.decode(text)
+    if decoded == 0: ret 1
+    if tnx.as_int(tnx.obj_get(decoded, "answer")) != 42: ret 2
+    bytes:*TnxBytes = tnx.encode_b(decoded)
+    if bytes == 0: ret 3
+    binary:*TnxValue = tnx.decode_b(bytes[0].buf, bytes[0].len)
+    if tnx.as_int(tnx.obj_get(binary, "answer")) != 42: ret 4
+    tnx.release(binary)
+    tnx.free_bytes(bytes)
+    tnx.release(decoded)
+    free(text as *char)
+    tnx.release(value)
+  ret 0

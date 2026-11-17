@@ -1,0 +1,61 @@
+// Execute only validated statements; parsing never changes database state.
+import "tezzdb"
+import "tezzdb.queries"
+import "tezzdbql.state"
+import "tezzdbql.parser"
+import "tezzdbql.mutations"
+
+fn select_rows(db:*TezzDb, statement:*TzQlStatement, result:*TzQueryResult) -> int:
+  cursor:*DbCursor = tezzdb.cursor_open(db, statement[0].table)
+  if cursor == 0: ret -1
+  rows:str = tezzdbql.parser._ql_strdup("[")
+  if rows == 0:
+    tezzdb.cursor_close(cursor)
+    ret -1
+  count:int = 0
+  while statement[0].limit < 0 || count < statement[0].limit:
+    row:*DbRow = tezzdb.cursor_next(cursor)
+    if row == 0: break
+    if tezzdbql.mutations.matches(statement, row) != 0:
+      if count > 0: rows = tezzdb.queries._db_json_append_owned(rows, ",")
+      rows = tezzdb.queries._db_json_append_owned(rows, row[0].data)
+      count = count + 1
+    tezzdb.row_free(row)
+    if rows == 0:
+      tezzdb.cursor_close(cursor)
+      ret -1
+  failed:int = cursor[0].error
+  tezzdb.cursor_close(cursor)
+  if failed != 0:
+    free(rows)
+    ret -1
+  rows = tezzdb.queries._db_json_append_owned(rows, "]")
+  if rows == 0: ret -1
+  result[0].rows = rows
+  result[0].rows_len = len(rows)
+  result[0].row_count = count
+  result[0].affected_rows = count
+  ret 0
+
+fn execute(db:*TezzDb, statement:*TzQlStatement, result:*TzQueryResult) -> int:
+  kind:int = statement[0].kind
+  if kind == 5:
+    status:int = tezzdb.table_create(db, statement[0].table)
+    if status == -3: ret 0
+    ret status
+  if tezzdb.table_exists(db, statement[0].table) == 0: ret -2
+  if kind == 6: ret tezzdb.table_drop(db, statement[0].table)
+  if kind == 1: ret select_rows(db, statement, result)
+  if kind == 2:
+    row:str = tezzdbql.parser._ql_build_json(&statement[0].columns[0], &statement[0].values[0], statement[0].count)
+    if row == 0: ret -1
+    pk:int = tezzdb.insert(db, statement[0].table, row)
+    free(row)
+    if pk < 0: ret pk
+    result[0].last_insert_id = pk
+    result[0].affected_rows = 1
+    ret 0
+  changed:int = tezzdbql.mutations.execute(db, statement)
+  if changed < 0: ret changed
+  result[0].affected_rows = changed
+  ret 0

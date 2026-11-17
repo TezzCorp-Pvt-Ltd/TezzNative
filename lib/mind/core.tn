@@ -1,0 +1,674 @@
+// mind implementation: core.
+import "math"
+import "str"
+import "nn"
+import "mind.forward"
+import "mind.state"
+
+fn nn_matmul_avx2(x:*float, w:*float, out:*float, T:int, in_dim:int, out_dim:int) -> int:
+  ret 0 - 1
+
+fn _mf(s:*float, i:int) -> float:
+  v:float = 0.0
+  unsafe:
+    v = s[i]
+  ret v
+
+fn _mw(s:*float, i:int, v:float) -> int:
+  unsafe:
+    s[i] = v
+  ret 0
+
+fn _mi(s:*float, i:int) -> int:
+  ret _mf(s, i) as int
+
+fn _mwi(s:*float, i:int, v:int) -> int:
+  _mw(s, i, v as float)
+  ret 0
+
+// â”€â”€ PRNG â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+fn _mrand() -> float:
+  (*mind.state._state__mind_seed()) = (*mind.state._state__mind_seed()) * 1664525 + 1013904223
+  bits:int = ((*mind.state._state__mind_seed()) >> 8) & 16777215
+  ret (bits as float) / 16777216.0 - 0.5
+
+fn mind_set_seed(s:int) -> int:
+  (*mind.state._state__mind_seed()) = s
+  ret 0
+
+// â”€â”€ Compute weight counts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+fn _mind_layer_weights(dim:int, q_heads:int, kv_heads:int, head_dim:int, ffn:int) -> int:
+  w_q_sz:int = dim * q_heads * head_dim
+  w_k_sz:int = dim * kv_heads * head_dim
+  w_v_sz:int = dim * kv_heads * head_dim
+  w_o_sz:int = q_heads * head_dim * dim
+  w_gate_sz:int = dim * ffn
+  w_up_sz:int = dim * ffn
+  w_down_sz:int = ffn * dim
+
+  sum1:int = dim + w_q_sz
+  sum2:int = sum1 + w_k_sz
+  sum3:int = sum2 + w_v_sz
+  sum4:int = sum3 + w_o_sz
+  sum5:int = sum4 + dim
+  sum6:int = sum5 + w_gate_sz
+  sum7:int = sum6 + w_up_sz
+  sum8:int = sum7 + w_down_sz
+  ret sum8
+
+fn _mind_total_weights(vocab:int, dim:int, q_heads:int, kv_heads:int, layers:int, head_dim:int, ffn:int) -> int:
+  lw:int = _mind_layer_weights(dim, q_heads, kv_heads, head_dim, ffn)
+  embed_sz:int = vocab * dim
+  layers_sz:int = layers * lw
+  final_ln_sz:int = dim
+  lm_head_sz:int = dim * vocab
+
+  sum1:int = embed_sz + layers_sz
+  sum2:int = sum1 + final_ln_sz
+  sum3:int = sum2 + lm_head_sz
+  ret sum3
+
+fn _mind_kv_size(layers:int, max_seq:int, kv_heads:int, head_dim:int) -> int:
+  ret layers * 2 * max_seq * kv_heads * head_dim
+
+// â”€â”€ Layer offsets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+fn _layer_weights_start(vocab:int, dim:int, q_heads:int, kv_heads:int, head_dim:int, ffn:int, l:int) -> int:
+  w_start:int = vocab * dim
+  lw_sz:int = _mind_layer_weights(dim, q_heads, kv_heads, head_dim, ffn)
+  ret w_start + l * lw_sz
+
+// â”€â”€ mind_new: allocate and init a TezzMind model â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+fn mind_new(vocab:int, dim:int, q_heads:int, kv_heads:int, layers:int, ffn:int, max_seq:int) -> *float:
+  if vocab <= 0 || dim <= 0 || q_heads <= 0 || kv_heads <= 0 || layers <= 0 || ffn <= 0 || max_seq <= 0:
+    ret 0 as *float
+  if q_heads % kv_heads != 0:
+    ret 0 as *float
+
+  head_dim:int = dim / q_heads
+  if head_dim <= 0 || dim % q_heads != 0 || (head_dim & 1) != 0:
+    ret 0 as *float
+
+  nw:int     = _mind_total_weights(vocab, dim, q_heads, kv_heads, layers, head_dim, ffn)
+  kv_sz:int  = _mind_kv_size(layers, max_seq, kv_heads, head_dim)
+  kv_off:int = (*mind.state._state__MH_HDR())
+  w_off:int  = kv_off + kv_sz
+  total:int  = w_off + nw
+
+  raw:*char
+  unsafe:
+    raw = malloc(total * 8)
+  if raw == 0:
+    ret 0 as *float
+
+  model:*float
+  unsafe:
+    model = raw as *float
+
+  // Zero the entire slab
+  i:int = 0
+  while i < total:
+    _mw(model, i, 0.0)
+    i = i + 1
+
+  // Write header
+  _mwi(model, (*mind.state._state__MH_MAGIC()),  (*mind.state._state_MIND_MAGIC()))
+  _mwi(model, (*mind.state._state__MH_VOCAB()),  vocab)
+  _mwi(model, (*mind.state._state__MH_DIM()),    dim)
+  _mwi(model, (*mind.state._state__MH_QH()),     q_heads)
+  _mwi(model, (*mind.state._state__MH_KVH()),    kv_heads)
+  _mwi(model, (*mind.state._state__MH_LAYERS()), layers)
+  _mwi(model, (*mind.state._state__MH_SEQLEN()), max_seq)
+  _mwi(model, (*mind.state._state__MH_FFN()),    ffn)
+  _mwi(model, (*mind.state._state__MH_HDIM()),   head_dim)
+  _mwi(model, (*mind.state._state__MH_NW()),     nw)
+  _mwi(model, (*mind.state._state__MH_KVOFF()),  kv_off)
+  _mwi(model, (*mind.state._state__MH_WOFF()),   w_off)
+
+  // Xavier/Glorot weight init
+  wi:int = w_off
+
+  // Token embedding: vocab * dim
+  fan_e:float = (vocab + dim) as float
+  sc_e:float = math.sqrt(6.0 / fan_e)
+  j:int = 0
+  while j < vocab * dim:
+    _mw(model, wi + j, _mrand() * 2.0 * sc_e)
+    j = j + 1
+  wi = wi + vocab * dim
+
+  // Per-layer weights
+  l:int = 0
+  while l < layers:
+    // RMSNorm 1: ones
+    j = 0
+    while j < dim:
+      _mw(model, wi + j, 1.0)
+      j = j + 1
+    wi = wi + dim
+
+    // w_q: dim Ã— q_dim
+    q_out:int = q_heads * head_dim
+    fan_q:float = (dim + q_out) as float
+    sc_q:float = math.sqrt(6.0 / fan_q)
+    j = 0
+    while j < dim * q_out:
+      _mw(model, wi + j, _mrand() * 2.0 * sc_q)
+      j = j + 1
+    wi = wi + dim * q_out
+
+    // w_k: dim Ã— kv_dim
+    kv_out:int = kv_heads * head_dim
+    fan_k:float = (dim + kv_out) as float
+    sc_k:float = math.sqrt(6.0 / fan_k)
+    j = 0
+    while j < dim * kv_out:
+      _mw(model, wi + j, _mrand() * 2.0 * sc_k)
+      j = j + 1
+    wi = wi + dim * kv_out
+
+    // w_v: dim Ã— kv_dim
+    j = 0
+    while j < dim * kv_out:
+      _mw(model, wi + j, _mrand() * 2.0 * sc_k)
+      j = j + 1
+    wi = wi + dim * kv_out
+
+    // w_o: q_dim Ã— dim
+    fan_o:float = (q_out + dim) as float
+    sc_o:float = math.sqrt(6.0 / fan_o)
+    j = 0
+    while j < q_out * dim:
+      _mw(model, wi + j, _mrand() * 2.0 * sc_o)
+      j = j + 1
+    wi = wi + q_out * dim
+
+    // RMSNorm 2: ones
+    j = 0
+    while j < dim:
+      _mw(model, wi + j, 1.0)
+      j = j + 1
+    wi = wi + dim
+
+    // w_gate: dim Ã— ffn
+    fan_g:float = (dim + ffn) as float
+    sc_g:float = math.sqrt(6.0 / fan_g)
+    j = 0
+    while j < dim * ffn:
+      _mw(model, wi + j, _mrand() * 2.0 * sc_g)
+      j = j + 1
+    wi = wi + dim * ffn
+
+    // w_up: dim Ã— ffn
+    j = 0
+    while j < dim * ffn:
+      _mw(model, wi + j, _mrand() * 2.0 * sc_g)
+      j = j + 1
+    wi = wi + dim * ffn
+
+    // w_down: ffn Ã— dim
+    fan_d:float = (ffn + dim) as float
+    sc_d:float = math.sqrt(6.0 / fan_d)
+    j = 0
+    while j < ffn * dim:
+      _mw(model, wi + j, _mrand() * 2.0 * sc_d)
+      j = j + 1
+    wi = wi + ffn * dim
+
+    l = l + 1
+
+  // Final RMSNorm: ones
+  j = 0
+  while j < dim:
+    _mw(model, wi + j, 1.0)
+    j = j + 1
+  wi = wi + dim
+
+  // lm_head: dim Ã— vocab (small init)
+  fan_lm:float = (dim + vocab) as float
+  sc_lm:float = math.sqrt(6.0 / fan_lm) * 0.1
+  j = 0
+  while j < dim * vocab:
+    _mw(model, wi + j, _mrand() * 2.0 * sc_lm)
+    j = j + 1
+
+  ret model
+
+// â”€â”€ mind_free â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+fn mind_free(model:*float) -> int:
+  if model == 0 as *float: ret 0
+  unsafe:
+    free(model as *char)
+  ret 0
+
+// â”€â”€ mind_info â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+fn mind_info(model:*float) -> int:
+  if model == 0 as *float: ret 0 - 1
+  vocab:int  = _mi(model, (*mind.state._state__MH_VOCAB()))
+  dim:int    = _mi(model, (*mind.state._state__MH_DIM()))
+  qh:int     = _mi(model, (*mind.state._state__MH_QH()))
+  kvh:int    = _mi(model, (*mind.state._state__MH_KVH()))
+  layers:int = _mi(model, (*mind.state._state__MH_LAYERS()))
+  seqlen:int = _mi(model, (*mind.state._state__MH_SEQLEN()))
+  ffn:int    = _mi(model, (*mind.state._state__MH_FFN()))
+  hdim:int   = _mi(model, (*mind.state._state__MH_HDIM()))
+  nw:int     = _mi(model, (*mind.state._state__MH_NW()))
+  say "+------------------------------------------+"
+  say "|       TezzMind Model Architecture        |"
+  say "+------------------------------------------+"
+  say "| vocab_size:  ", vocab
+  say "| embed_dim:   ", dim
+  say "| q_heads:     ", qh, "  kv_heads: ", kvh, " (GQA ratio: ", qh / kvh, ":1)"
+  say "| head_dim:    ", hdim
+  say "| layers:      ", layers
+  say "| ffn_hidden:  ", ffn
+  say "| max_seq_len: ", seqlen
+  say "| parameters:  ", nw, " (~", nw / 1000000, "M)"
+  say "| RAM (f64):   ~", (nw * 8) / (1024 * 1024), " MB"
+  say "+------------------------------------------+"
+  ret 0
+
+fn mind_get_nw(model:*float) -> int:
+  if model == 0 as *float: ret 0
+  ret _mi(model, (*mind.state._state__MH_NW()))
+
+fn mind_is_valid(model:*float) -> int:
+  if model == 0 as *float:
+    ret 0
+  if _mi(model, (*mind.state._state__MH_MAGIC())) != (*mind.state._state_MIND_MAGIC()):
+    ret 0
+  vocab:int = _mi(model, (*mind.state._state__MH_VOCAB()))
+  dim:int = _mi(model, (*mind.state._state__MH_DIM()))
+  q_heads:int = _mi(model, (*mind.state._state__MH_QH()))
+  kv_heads:int = _mi(model, (*mind.state._state__MH_KVH()))
+  layers:int = _mi(model, (*mind.state._state__MH_LAYERS()))
+  max_seq:int = _mi(model, (*mind.state._state__MH_SEQLEN()))
+  ffn:int = _mi(model, (*mind.state._state__MH_FFN()))
+  ret _mind_header_valid(vocab, dim, q_heads, kv_heads, layers, max_seq, ffn)
+
+fn _mind_hash_float(acc:int, v:float, salt:int) -> int:
+  if v != v:
+    ret 0 - 1
+  x:float = v
+  sign:int = 0
+  if x < 0.0:
+    sign = 1
+    x = 0.0 - x
+  scaled:int = (x * 1000000.0) as int
+  mixed:int = (acc * 131 + scaled + salt * 17 + sign * 8191) & 2147483647
+  ret mixed
+
+fn mind_weight_checksum(model:*float, max_weights:int) -> int:
+  if mind_is_valid(model) == 0:
+    ret 0
+  nw:int = _mi(model, (*mind.state._state__MH_NW()))
+  w_off:int = _mi(model, (*mind.state._state__MH_WOFF()))
+  lim:int = max_weights
+  if lim <= 0 || lim > nw:
+    lim = nw
+  acc:int = 17
+  acc = (acc * 131 + _mi(model, (*mind.state._state__MH_VOCAB()))) & 2147483647
+  acc = (acc * 131 + _mi(model, (*mind.state._state__MH_DIM()))) & 2147483647
+  acc = (acc * 131 + _mi(model, (*mind.state._state__MH_LAYERS()))) & 2147483647
+  i:int = 0
+  while i < lim:
+    acc = _mind_hash_float(acc, _mf(model, w_off + i), i)
+    if acc < 0:
+      ret 0
+    i = i + 1
+  ret acc
+
+fn mind_logits_checksum(logits:*float, n:int) -> int:
+  if logits == 0 as *float || n <= 0:
+    ret 0
+  acc:int = 23
+  i:int = 0
+  while i < n:
+    acc = _mind_hash_float(acc, _mf(logits, i), i)
+    if acc < 0:
+      ret 0
+    i = i + 1
+  ret acc
+
+fn mind_argmax(logits:*float, n:int) -> int:
+  if logits == 0 as *float || n <= 0:
+    ret 0 - 1
+  best:int = 0
+  best_v:float = _mf(logits, 0)
+  i:int = 1
+  while i < n:
+    v:float = _mf(logits, i)
+    if v > best_v:
+      best_v = v
+      best = i
+    i = i + 1
+  ret best
+
+fn mind_eval_next_token_accuracy(model:*float, text:str, max_steps:int) -> int:
+  if mind_is_valid(model) == 0 || text == 0 || max_steps <= 0:
+    ret 0 - 1
+  vocab:int = _mi(model, (*mind.state._state__MH_VOCAB()))
+  max_seq:int = _mi(model, (*mind.state._state__MH_SEQLEN()))
+  text_len:int = len(text)
+  if text_len < 2:
+    ret 0 - 1
+  steps:int = max_steps
+  if steps > text_len - 1:
+    steps = text_len - 1
+  if steps > max_seq:
+    steps = max_seq
+  logits_raw:*char
+  unsafe:
+    logits_raw = malloc(vocab * 8)
+  if logits_raw == 0:
+    ret 0 - 1
+  logits:*float
+  unsafe:
+    logits = logits_raw as *float
+  correct:int = 0
+  i:int = 0
+  while i < steps:
+    tok:int = (text as *char)[i] as int & 255
+    target:int = (text as *char)[i + 1] as int & 255
+    if tok >= vocab:
+      tok = tok % vocab
+    if target >= vocab:
+      target = target % vocab
+    if mind.forward.mind_forward(model, tok, i, logits) != 0:
+      unsafe:
+        free(logits_raw)
+      ret 0 - 1
+    if mind_argmax(logits, vocab) == target:
+      correct = correct + 1
+    i = i + 1
+  unsafe:
+    free(logits_raw)
+  ret correct
+
+// â”€â”€ Mathematical Primitives â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+fn _mfw_i(f:*char, v:int) -> int:
+  b:*char
+  unsafe:
+    b = malloc(8)
+    p:*int = b as *int
+    p[0] = v
+    fwrite(b, 8, 1, f)
+    free(b)
+  ret 0
+
+fn _mfw_f(f:*char, v:float) -> int:
+  b:*char
+  unsafe:
+    b = malloc(8)
+    p:*float = b as *float
+    p[0] = v
+    fwrite(b, 8, 1, f)
+    free(b)
+  ret 0
+
+fn _mfr_i(f:*char) -> int:
+  v:int = 0
+  b:*char
+  unsafe:
+    b = malloc(8)
+    fread(b, 8, 1, f)
+    p:*int = b as *int
+    v = p[0]
+    free(b)
+  ret v
+
+fn _mfr_f(f:*char) -> float:
+  v:float = 0.0
+  b:*char
+  unsafe:
+    b = malloc(8)
+    fread(b, 8, 1, f)
+    p:*float = b as *float
+    v = p[0]
+    free(b)
+  ret v
+
+fn _mind_header_valid(vocab:int, dim:int, q_heads:int, kv_heads:int, layers:int, max_seq:int, ffn:int) -> int:
+  if vocab <= 0 || dim <= 0 || q_heads <= 0 || kv_heads <= 0 || layers <= 0 || max_seq <= 0 || ffn <= 0:
+    ret 0
+  if q_heads % kv_heads != 0:
+    ret 0
+  head_dim:int = dim / q_heads
+  if head_dim <= 0 || (head_dim & 1) != 0:
+    ret 0
+  ret 1
+
+fn mind_file_matches(path:str, vocab:int, dim:int, q_heads:int, kv_heads:int, layers:int, ffn:int, max_seq:int) -> int:
+  if path == 0:
+    ret 0
+  f:*char = fopen(path, "rb")
+  unsafe:
+    if f == 0 as *char: ret 0
+
+  magic:int = _mfr_i(f)
+  if magic != (*mind.state._state_MIND_MAGIC()):
+    unsafe:
+      fclose(f)
+    ret 0
+
+  fvocab:int  = _mfr_i(f)
+  fdim:int    = _mfr_i(f)
+  fq_heads:int = _mfr_i(f)
+  fkv_heads:int = _mfr_i(f)
+  flayers:int = _mfr_i(f)
+  fmax_seq:int = _mfr_i(f)
+  fffn:int    = _mfr_i(f)
+
+  unsafe:
+    fclose(f)
+
+  if _mind_header_valid(fvocab, fdim, fq_heads, fkv_heads, flayers, fmax_seq, fffn) == 0:
+    ret 0
+  if fvocab != vocab || fdim != dim || fq_heads != q_heads || fkv_heads != kv_heads:
+    ret 0
+  if flayers != layers || fffn != ffn || fmax_seq != max_seq:
+    ret 0
+  ret 1
+
+fn mind_save(model:*float, path:str) -> int:
+  if model == 0 as *float || path == 0: ret 0 - 1
+  f:*char = fopen(path, "wb")
+  unsafe:
+    if f == 0 as *char: ret 0 - 1
+
+  _mfw_i(f, (*mind.state._state_MIND_MAGIC()))
+  _mfw_i(f, _mi(model, (*mind.state._state__MH_VOCAB())))
+  _mfw_i(f, _mi(model, (*mind.state._state__MH_DIM())))
+  _mfw_i(f, _mi(model, (*mind.state._state__MH_QH())))
+  _mfw_i(f, _mi(model, (*mind.state._state__MH_KVH())))
+  _mfw_i(f, _mi(model, (*mind.state._state__MH_LAYERS())))
+  _mfw_i(f, _mi(model, (*mind.state._state__MH_SEQLEN())))
+  _mfw_i(f, _mi(model, (*mind.state._state__MH_FFN())))
+
+  nw:int   = _mi(model, (*mind.state._state__MH_NW()))
+  w_off:int = _mi(model, (*mind.state._state__MH_WOFF()))
+  i:int = 0
+  while i < nw:
+    _mfw_f(f, _mf(model, w_off + i))
+    i = i + 1
+
+  unsafe:
+    fclose(f)
+  ret 0
+
+// â”€â”€ mind_load: load weights from file â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+fn mind_load(path:str) -> *float:
+  if path == 0: ret 0 as *float
+  f:*char = fopen(path, "rb")
+  unsafe:
+    if f == 0 as *char: ret 0 as *float
+
+  magic:int = _mfr_i(f)
+  if magic != (*mind.state._state_MIND_MAGIC()):
+    unsafe:
+      fclose(f)
+    ret 0 as *float
+
+  vocab:int  = _mfr_i(f)
+  dim:int    = _mfr_i(f)
+  q_heads:int = _mfr_i(f)
+  kv_heads:int = _mfr_i(f)
+  layers:int = _mfr_i(f)
+  max_seq:int = _mfr_i(f)
+  ffn:int    = _mfr_i(f)
+
+  if _mind_header_valid(vocab, dim, q_heads, kv_heads, layers, max_seq, ffn) == 0:
+    unsafe:
+      fclose(f)
+    ret 0 as *float
+
+  model:*float = mind_new(vocab, dim, q_heads, kv_heads, layers, ffn, max_seq)
+  if model == 0 as *float:
+    unsafe:
+      fclose(f)
+    ret 0 as *float
+
+  nw:int    = _mi(model, (*mind.state._state__MH_NW()))
+  w_off:int = _mi(model, (*mind.state._state__MH_WOFF()))
+  i:int = 0
+  while i < nw:
+    _mw(model, w_off + i, _mfr_f(f))
+    i = i + 1
+
+  unsafe:
+    fclose(f)
+  ret model
+
+// â”€â”€ mind_generate: autoregressive text generation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+fn mind_generate(model:*float, prompt:str, max_tokens:int, temp:float, seed:int) -> str:
+  if mind_is_valid(model) == 0 || max_tokens <= 0: ret 0 as str
+  vocab:int   = _mi(model, (*mind.state._state__MH_VOCAB()))
+  max_seq:int = _mi(model, (*mind.state._state__MH_SEQLEN()))
+
+  out_cap:int = max_tokens + max_seq + 2
+  out_buf:*char = malloc(out_cap)
+  if out_buf == 0: ret 0 as str
+  out_len:int = 0
+
+  logits_raw:*char
+  unsafe:
+    logits_raw = malloc(vocab * 8)
+  if logits_raw == 0:
+    unsafe:
+      free(out_buf)
+    ret 0 as str
+  logits:*float
+  unsafe:
+    logits = logits_raw as *float
+
+  pos:int = 0
+  rng:int = seed
+  if rng == 0: rng = 42
+
+  pi:int = 0
+  prompt_len:int = 0
+  if prompt != 0:
+    prompt_len = len(prompt)
+  while pi < prompt_len && pos < max_seq - 1:
+    tok:int = (prompt as *char)[pi] as int & 255
+    if tok >= vocab:
+      tok = tok % vocab
+    if mind.forward.mind_forward(model, tok, pos, logits) != 0:
+      unsafe:
+        free(logits_raw)
+        free(out_buf)
+      ret 0 as str
+    if out_len < out_cap - 2:
+      out_buf[out_len] = (prompt as *char)[pi]
+      out_len = out_len + 1
+    pos = pos + 1
+    pi = pi + 1
+
+  if pos == 0:
+    seed_tok:int = 32
+    if seed_tok >= vocab:
+      seed_tok = 0
+    if mind.forward.mind_forward(model, seed_tok, pos, logits) != 0:
+      unsafe:
+        free(logits_raw)
+        free(out_buf)
+      ret 0 as str
+    pos = pos + 1
+
+  gen:int = 0
+  while gen < max_tokens && pos < max_seq:
+    next_tok:int = 0
+    if temp <= 0.001:
+      best_v:float = _mf(logits, 0)
+      best_i:int = 0
+      j:int = 1
+      while j < vocab:
+        v:float = _mf(logits, j)
+        if v > best_v:
+          best_v = v
+          best_i = j
+        j = j + 1
+      next_tok = best_i
+    else:
+      j:int = 0
+      while j < vocab:
+        _mw(logits, j, _mf(logits, j) / temp)
+        j = j + 1
+      maxv:float = _mf(logits, 0)
+      j = 1
+      while j < vocab:
+        v:float = _mf(logits, j)
+        if v > maxv: maxv = v
+        j = j + 1
+      sum_e:float = 0.0
+      j = 0
+      while j < vocab:
+        ev:float = math.exp(_mf(logits, j) - maxv)
+        _mw(logits, j, ev)
+        sum_e = sum_e + ev
+        j = j + 1
+      if sum_e <= 0.0:
+        unsafe:
+          free(logits_raw)
+          free(out_buf)
+        ret 0 as str
+      rng = rng * 1664525 + 1013904223
+      bits:int = (rng >> 8) & 16777215
+      r:float = (bits as float) / 16777216.0
+      cdf:float = 0.0
+      j = 0
+      while j < vocab:
+        cdf = cdf + _mf(logits, j) / sum_e
+        if r < cdf:
+          next_tok = j
+          break
+        j = j + 1
+
+    if next_tok == 0: break
+
+    if next_tok > 0 && next_tok < 256:
+      if out_len < out_cap - 2:
+        out_buf[out_len] = next_tok as char
+        out_len = out_len + 1
+
+    if mind.forward.mind_forward(model, next_tok, pos, logits) != 0:
+      unsafe:
+        free(logits_raw)
+        free(out_buf)
+      ret 0 as str
+    pos = pos + 1
+    gen = gen + 1
+
+  out_buf[out_len] = 0 as char
+
+  unsafe:
+    free(logits_raw)
+  ret out_buf as str

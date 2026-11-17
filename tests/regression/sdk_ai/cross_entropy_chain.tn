@@ -1,0 +1,30 @@
+import "tztensor"
+import "math"
+import "./support/lib/values.tn"
+
+fn main() -> int:
+  logits:int = tztensor.tensor_new_2d(2, 2, 1)
+  labels:int = tztensor.tensor_new_1d(2, 0)
+  unsafe:
+    ids:*i32 = tztensor.tensor_data(labels) as *i32
+    ids[0] = 0 as i32
+    ids[1] = 1 as i32
+  loss:int = tztensor.tensor_new_1d(2, 0)
+  weights:int = tztensor.tensor_new_1d(2, 0)
+  values.write(weights, 0, 2.0)
+  values.write(weights, 1, 3.0)
+  tztensor.tensor_cross_entropy(logits, labels, loss)
+  weighted:int = tztensor.tensor_mul_infix(loss, weights)
+  status:int = tztensor.tensor_backward(weighted)
+  failed:int = 0
+  if status != 0 || values.read(logits, 0) != 0.0 || math.absf(values.read(loss, 0) - math.log(2.0)) > 0.00001:
+    failed = 1
+  if values.gradient(logits, 0) != 0.0 - 1.0 || values.gradient(logits, 1) != 1.0 || values.gradient(logits, 2) != 1.5 || values.gradient(logits, 3) != 0.0 - 1.5:
+    failed = 1
+  tztensor.tensor_free(weighted)
+  tztensor.tensor_free(weights)
+  tztensor.tensor_free(loss)
+  tztensor.tensor_free(labels)
+  tztensor.tensor_free(logits)
+  if failed != 0: say "FAIL: SDK cross entropy must preserve logits and apply each upstream adjoint"
+  ret failed

@@ -1,0 +1,22 @@
+import "tezzdb"
+
+fn main() -> int:
+  unsafe:
+    remove("corrupt_metadata.tdb")
+    remove("corrupt_metadata.tdb.wal")
+    db:*TezzDb = tezzdb.open("corrupt_metadata.tdb")
+    if db == 0: ret 1
+    tezzdb.table_create(db, "items")
+    tezzdb.close(db)
+    h:*char = fopen("corrupt_metadata.tdb", "r+b")
+    if h == 0: ret 2
+    count:[char;4]
+    tezzdb._db_w32_le(&count[0], 0, 10000)
+    fseek(h, 8192 + 16, 0)
+    fwrite(&count[0], 1, 4, h)
+    fclose(h)
+    db = tezzdb.open("corrupt_metadata.tdb")
+    if db != 0:
+      say "FAIL: corrupt database table count must be rejected"
+      ret 1
+    ret 0

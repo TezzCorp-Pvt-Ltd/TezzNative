@@ -1,0 +1,27 @@
+struct Counter:
+  value:int
+
+fn main() -> int:
+  value:int = 1
+  value++
+  if value != 2: ret 1
+  value--
+  if value != 1: ret 2
+  narrow:u8 = 255 as u8
+  narrow++
+  if narrow != 0: ret 3
+  narrow--
+  if narrow != 255: ret 4
+  counter:Counter = Counter{value:4}
+  counter.value++
+  if counter.value != 5: ret 5
+  array:[int;2]
+  array[1] = 7
+  array[1]--
+  if array[1] != 6: ret 6
+  i:int = 0
+  total:int = 0
+  for i = 0; i < 3; i++:
+    total = total + i
+  if total != 3: ret 7
+  ret 0

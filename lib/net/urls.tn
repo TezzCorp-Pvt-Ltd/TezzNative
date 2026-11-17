@@ -1,0 +1,797 @@
+// net implementation: urls.
+
+import "net.state"
+import "net.transport"
+import "net.http"
+
+fn dns_lookup(host:str) -> str:
+  if host == 0:
+    ret 0 as str
+  ret net.transport.resolve(host, 0)
+
+fn dns_lookup_port(host:str, port:int) -> str:
+  if host == 0:
+    ret 0 as str
+  ret net.transport.resolve(host, port)
+
+fn dns_is_ipv4(addr:str) -> int:
+  if addr == 0 || addr[0] == 0 as char:
+    ret 0
+  dots:int = 0
+  digits:int = 0
+  part:int = 0
+  i:int = 0
+  while addr[i] != 0 as char:
+    c:int = (addr[i] as int) & 255
+    if c >= 48 && c <= 57:
+      digits = digits + 1
+      if digits > 3:
+        ret 0
+      part = (part * 10) + (c - 48)
+      if part > 255:
+        ret 0
+    else if c == 46:
+      if digits == 0:
+        ret 0
+      dots = dots + 1
+      digits = 0
+      part = 0
+      if dots > 3:
+        ret 0
+    else:
+      ret 0
+    i = i + 1
+  if dots == 3 && digits > 0:
+    ret 1
+  ret 0
+
+fn dns_is_ipv6(addr:str) -> int:
+  if addr == 0 || addr[0] == 0 as char:
+    ret 0
+  colons:int = 0
+  i:int = 0
+  while addr[i] != 0 as char:
+    c:int = (addr[i] as int) & 255
+    hex:int = 0
+    if (c >= 48 && c <= 57) || (c >= 65 && c <= 70) || (c >= 97 && c <= 102):
+      hex = 1
+    if c == 58:
+      colons = colons + 1
+    else if hex == 0:
+      ret 0
+    i = i + 1
+  if colons >= 2:
+    ret 1
+  ret 0
+
+fn _rfind_char(s:str, ch:int) -> int:
+  if s == 0:
+    ret 0 - 1
+  i:int = len(s) - 1
+  while i >= 0:
+    if (((s[i] as int) & 255) == ch):
+      ret i
+    i = i - 1
+  ret 0 - 1
+
+fn dns_endpoint_host(endpoint:str) -> str:
+  if endpoint == 0:
+    ret 0 as str
+  if endpoint[0] == 91 as char: // '['
+    i:int = 1
+    while endpoint[i] != 0 as char && endpoint[i] != 93 as char: // ']'
+      i = i + 1
+    if endpoint[i] == 93 as char:
+      ret net.http._substr_dup(endpoint, 1, i)
+  if dns_is_ipv6(endpoint) != 0:
+    ret net.http._substr_dup(endpoint, 0, len(endpoint))
+  p:int = _rfind_char(endpoint, 58) // ':'
+  if p < 0:
+    ret net.http._substr_dup(endpoint, 0, len(endpoint))
+  ret net.http._substr_dup(endpoint, 0, p)
+
+fn dns_endpoint_port(endpoint:str, default_port:int) -> int:
+  if endpoint == 0:
+    ret default_port
+  if endpoint[0] == 91 as char:
+    i:int = 1
+    while endpoint[i] != 0 as char && endpoint[i] != 93 as char:
+      i = i + 1
+    if endpoint[i] == 93 as char && endpoint[i + 1] == 58 as char:
+      ret net.http._parse_int_dec(endpoint + i + 2)
+    ret default_port
+  if dns_is_ipv6(endpoint) != 0:
+    ret default_port
+  p:int = _rfind_char(endpoint, 58)
+  if p < 0:
+    ret default_port
+  ret net.http._parse_int_dec(endpoint + p + 1)
+
+fn dns_resolve_endpoint(endpoint:str, default_port:int) -> str:
+  if endpoint == 0:
+    ret 0 as str
+  host:str = dns_endpoint_host(endpoint)
+  if host == 0:
+    ret 0 as str
+  port:int = dns_endpoint_port(endpoint, default_port)
+  out:str = net.transport.resolve(host, port)
+  free(host)
+  ret out
+
+// ------------------------------
+// URL + HTTP response utilities
+// ------------------------------
+
+fn _find_char_from(s:str, ch:int, start:int) -> int:
+  if s == 0:
+    ret 0 - 1
+  i:int = start
+  if i < 0:
+    i = 0
+  n:int = len(s)
+  while i < n:
+    if (((s[i] as int) & 255) == ch):
+      ret i
+    i = i + 1
+  ret 0 - 1
+
+fn _url_scheme_end(url:str) -> int:
+  if url == 0:
+    ret 0 - 1
+  n:int = len(url)
+  i:int = 0
+  while i + 2 < n:
+    if url[i] == 58 as char: // ':'
+      if url[i + 1] == 47 as char && url[i + 2] == 47 as char: // "//"
+        ret i
+    i = i + 1
+  ret 0 - 1
+
+fn url_scheme(url:str) -> str:
+  if url == 0:
+    ret 0 as str
+  se:int = _url_scheme_end(url)
+  if se < 0:
+    ret 0 as str
+  ret net.http._substr_dup(url, 0, se)
+
+fn _url_authority_start(url:str) -> int:
+  se:int = _url_scheme_end(url)
+  if se < 0:
+    ret 0
+  ret se + 3
+
+fn _url_path_start(url:str) -> int:
+  if url == 0:
+    ret 0 - 1
+  st:int = _url_authority_start(url)
+  n:int = len(url)
+  i:int = st
+  while i < n:
+    c:int = (url[i] as int) & 255
+    if c == 47 || c == 63 || c == 35: // '/', '?', '#'
+      ret i
+    i = i + 1
+  ret n
+
+fn url_authority(url:str) -> str:
+  if url == 0:
+    ret 0 as str
+  st:int = _url_authority_start(url)
+  n:int = len(url)
+  if st >= n:
+    ret 0 as str
+  p:int = _url_path_start(url)
+  if p < 0:
+    p = n
+  ret net.http._substr_dup(url, st, p)
+
+fn url_host(url:str) -> str:
+  auth:str = url_authority(url)
+  if auth == 0:
+    ret 0 as str
+  h:str = dns_endpoint_host(auth)
+  free(auth)
+  ret h
+
+fn url_default_port(url:str) -> int:
+  s:str = url_scheme(url)
+  if s == 0:
+    ret net.state._get_HTTP_PORT()
+  port:int = net.state._get_HTTP_PORT()
+  if net.transport._streq_nocase(s, "https") != 0 || net.transport._streq_nocase(s, "wss") != 0:
+    port = net.state._get_HTTPS_PORT()
+  free(s)
+  ret port
+
+fn url_port(url:str) -> int:
+  auth:str = url_authority(url)
+  if auth == 0:
+    ret url_default_port(url)
+  defp:int = url_default_port(url)
+  p:int = dns_endpoint_port(auth, defp)
+  free(auth)
+  ret p
+
+fn url_path(url:str) -> str:
+  if url == 0:
+    ret 0 as str
+  n:int = len(url)
+  ps:int = _url_path_start(url)
+  if ps < 0 || ps >= n:
+    ret net.http._substr_dup("/", 0, 1)
+  if url[ps] == 63 as char: // '?'
+    ret net.http._substr_dup("/", 0, 1)
+  if url[ps] == 35 as char: // '#'
+    ret net.http._substr_dup("/", 0, 1)
+  qe:int = _find_char_from(url, 63, ps) // '?'
+  he:int = _find_char_from(url, 35, ps) // '#'
+  end:int = n
+  if qe >= 0 && qe < end:
+    end = qe
+  if he >= 0 && he < end:
+    end = he
+  ret net.http._substr_dup(url, ps, end)
+
+fn url_query(url:str) -> str:
+  if url == 0:
+    ret 0 as str
+  n:int = len(url)
+  q:int = _find_char_from(url, 63, 0) // '?'
+  if q < 0:
+    ret 0 as str
+  end:int = _find_char_from(url, 35, q + 1) // '#'
+  if end < 0:
+    end = n
+  ret net.http._substr_dup(url, q + 1, end)
+
+fn url_fragment(url:str) -> str:
+  if url == 0:
+    ret 0 as str
+  n:int = len(url)
+  h:int = _find_char_from(url, 35, 0) // '#'
+  if h < 0:
+    ret 0 as str
+  ret net.http._substr_dup(url, h + 1, n)
+
+fn url_path_query(url:str) -> str:
+  p:str = url_path(url)
+  if p == 0:
+    ret 0 as str
+  q:str = url_query(url)
+  if q == 0 || q[0] == 0 as char:
+    if q != 0:
+      free(q)
+    ret p
+  p1:str = net.transport._join2(p, "?")
+  out:str = net.transport._join2(p1, q)
+  free(p)
+  free(q)
+  free(p1)
+  ret out
+
+fn url_is_secure(url:str) -> int:
+  s:str = url_scheme(url)
+  if s == 0:
+    ret 0
+  ok:int = 0
+  if net.transport._streq_nocase(s, "https") != 0 || net.transport._streq_nocase(s, "wss") != 0:
+    ok = 1
+  free(s)
+  ret ok
+
+fn _is_url_unreserved(c:int) -> int:
+  out:int = 0
+  if (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122):
+    out = 1
+  else if c == 45 || c == 95 || c == 46 || c == 126: // - _ . ~
+    out = 1
+  ret out
+
+fn _hex_upper(n:int) -> int:
+  out:int = 0
+  if n < 10:
+    out = 48 + n
+  else:
+    out = 55 + n
+  ret out
+
+fn _trim_range_dup(s:str, from_i:int, to_i:int) -> str:
+  if s == 0:
+    ret 0 as str
+  a:int = from_i
+  b:int = to_i
+  if a < 0:
+    a = 0
+  n:int = len(s)
+  if b > n:
+    b = n
+  while a < b:
+    c0:int = net.transport._byte_at(s, a)
+    if c0 == 32 || c0 == 9 || c0 == 10 || c0 == 13:
+      a = a + 1
+    else:
+      break
+  while b > a:
+    c1:int = net.transport._byte_at(s, b - 1)
+    if c1 == 32 || c1 == 9 || c1 == 10 || c1 == 13:
+      b = b - 1
+    else:
+      break
+  ret net.http._substr_dup(s, a, b)
+
+fn url_encode_component(s:str) -> str:
+  if s == 0:
+    ret 0 as str
+  n:int = len(s)
+  out:*char = malloc((n * 3) + 1)
+  if out == 0:
+    ret 0 as str
+  i:int = 0
+  w:int = 0
+  while i < n:
+    c:int = (s[i] as int) & 255
+    if _is_url_unreserved(c) != 0:
+      out[w] = c as char
+      w = w + 1
+    else:
+      out[w] = 37 as char // '%'
+      out[w + 1] = _hex_upper((c >> 4) & 15) as char
+      out[w + 2] = _hex_upper(c & 15) as char
+      w = w + 3
+    i = i + 1
+  out[w] = 0 as char
+  ret out as str
+
+fn url_decode_component(s:str) -> str:
+  if s == 0:
+    ret 0 as str
+  n:int = len(s)
+  out:*char = malloc(n + 1)
+  if out == 0:
+    ret 0 as str
+  i:int = 0
+  w:int = 0
+  while i < n:
+    c:int = (s[i] as int) & 255
+    if c == 37 && (i + 2) < n: // '%'
+      h1:int = _hex_val((s[i + 1] as int) & 255)
+      h2:int = _hex_val((s[i + 2] as int) & 255)
+      if h1 >= 0 && h2 >= 0:
+        out[w] = ((h1 << 4) + h2) as char
+        w = w + 1
+        i = i + 3
+        continue
+    if c == 43: // '+'
+      out[w] = 32 as char
+      w = w + 1
+      i = i + 1
+      continue
+    out[w] = c as char
+    w = w + 1
+    i = i + 1
+  out[w] = 0 as char
+  ret out as str
+
+fn query_param(query_or_url:str, key:str) -> str:
+  if query_or_url == 0 || key == 0:
+    ret 0 as str
+  qsrc:str = 0 as str
+  if _find_char_from(query_or_url, 63, 0) >= 0:
+    qsrc = url_query(query_or_url)
+  else:
+    h:int = _find_char_from(query_or_url, 35, 0)
+    if h >= 0:
+      qsrc = net.http._substr_dup(query_or_url, 0, h)
+    else:
+      qsrc = net.http._substr_dup(query_or_url, 0, len(query_or_url))
+  if qsrc == 0:
+    ret 0 as str
+  n:int = len(qsrc)
+  i:int = 0
+  while i < n:
+    seg_start:int = i
+    while i < n && qsrc[i] != 38 as char: // '&'
+      i = i + 1
+    seg_end:int = i
+    if seg_end > seg_start:
+      eq:int = seg_start
+      while eq < seg_end && qsrc[eq] != 61 as char: // '='
+        eq = eq + 1
+      kenc:str = net.http._substr_dup(qsrc, seg_start, eq)
+      kdec:str = url_decode_component(kenc)
+      free(kenc)
+      if kdec != 0 && net.transport._streq(kdec, key) != 0:
+        venc:str = 0 as str
+        if eq < seg_end:
+          venc = net.http._substr_dup(qsrc, eq + 1, seg_end)
+        else:
+          venc = net.http._substr_dup("", 0, 0)
+        vdec:str = url_decode_component(venc)
+        free(venc)
+        free(kdec)
+        free(qsrc)
+        ret vdec
+      if kdec != 0:
+        free(kdec)
+    if i < n && qsrc[i] == 38 as char:
+      i = i + 1
+  free(qsrc)
+  ret 0 as str
+
+fn query_has_key(query_or_url:str, key:str) -> int:
+  v:str = query_param(query_or_url, key)
+  if v == 0:
+    ret 0
+  free(v)
+  ret 1
+
+fn query_param_int(query_or_url:str, key:str, default_value:int) -> int:
+  v:str = query_param(query_or_url, key)
+  if v == 0:
+    ret default_value
+  out:int = net.http._parse_int_dec(v)
+  free(v)
+  ret out
+
+fn http_has_header(req:str, name:str) -> int:
+  v:str = net.http.http_get_header(req, name)
+  if v == 0:
+    ret 0
+  free(v)
+  ret 1
+
+fn http_auth_scheme(req:str) -> str:
+  h:str = net.http.http_get_header(req, "Authorization")
+  if h == 0:
+    ret 0 as str
+  i:int = 0
+  n:int = len(h)
+  while i < n:
+    if h[i] == 32 as char || h[i] == 9 as char:
+      i = i + 1
+    else:
+      break
+  start:int = i
+  while i < n:
+    if h[i] == 32 as char || h[i] == 9 as char:
+      break
+    i = i + 1
+  out:str = net.http._substr_dup(h, start, i)
+  free(h)
+  ret out
+
+fn http_auth_token(req:str) -> str:
+  h:str = net.http.http_get_header(req, "Authorization")
+  if h == 0:
+    ret 0 as str
+  n:int = len(h)
+  i:int = 0
+  while i < n:
+    if h[i] == 32 as char || h[i] == 9 as char:
+      i = i + 1
+    else:
+      break
+  while i < n:
+    if h[i] == 32 as char || h[i] == 9 as char:
+      i = i + 1
+      break
+    i = i + 1
+  out:str = _trim_range_dup(h, i, n)
+  free(h)
+  ret out
+
+fn http_bearer_token(req:str) -> str:
+  h:str = net.http.http_get_header(req, "Authorization")
+  if h == 0:
+    ret 0 as str
+  n:int = len(h)
+  i:int = 0
+  while i < n:
+    if h[i] == 32 as char || h[i] == 9 as char:
+      i = i + 1
+    else:
+      break
+  s0:int = i
+  while i < n:
+    if h[i] == 32 as char || h[i] == 9 as char:
+      break
+    i = i + 1
+  scheme:str = net.http._substr_dup(h, s0, i)
+  ok:int = 0
+  if scheme != 0:
+    if net.transport._streq(scheme, "Bearer") != 0 || net.transport._streq(scheme, "bearer") != 0 || net.transport._streq(scheme, "BEARER") != 0:
+      ok = 1
+    free(scheme)
+  if ok == 0:
+    free(h)
+    ret 0 as str
+  while i < n:
+    if h[i] == 32 as char || h[i] == 9 as char:
+      i = i + 1
+    else:
+      break
+  out:str = _trim_range_dup(h, i, n)
+  free(h)
+  ret out
+
+fn http_get_cookie(req:str, name:str) -> str:
+  if name == 0:
+    ret 0 as str
+  ck:str = net.http.http_get_header(req, "Cookie")
+  if ck == 0:
+    ret 0 as str
+  n:int = len(ck)
+  i:int = 0
+  while i < n:
+    while i < n:
+      if ck[i] == 32 as char || ck[i] == 9 as char || ck[i] == 59 as char:
+        i = i + 1
+      else:
+        break
+    seg_start:int = i
+    while i < n && ck[i] != 59 as char: // ';'
+      i = i + 1
+    seg_end:int = i
+    if seg_end > seg_start:
+      eq:int = seg_start
+      while eq < seg_end && ck[eq] != 61 as char: // '='
+        eq = eq + 1
+      k:str = _trim_range_dup(ck, seg_start, eq)
+      if k != 0 && net.transport._streq(k, name) != 0:
+        vraw:str = 0 as str
+        if eq < seg_end:
+          vraw = _trim_range_dup(ck, eq + 1, seg_end)
+        else:
+          vraw = net.http._substr_dup("", 0, 0)
+        vdec:str = url_decode_component(vraw)
+        free(vraw)
+        free(k)
+        free(ck)
+        ret vdec
+      if k != 0:
+        free(k)
+    if i < n && ck[i] == 59 as char:
+      i = i + 1
+  free(ck)
+  ret 0 as str
+
+fn http_request_url(method:str, url:str, body:str, content_type:str, extra_headers:str, timeout_ms:int, max_bytes:int) -> str:
+  if url == 0:
+    ret 0 as str
+  auth:str = url_authority(url)
+  if auth == 0:
+    ret 0 as str
+  defp:int = url_default_port(url)
+  host:str = dns_endpoint_host(auth)
+  if host == 0:
+    free(auth)
+    ret 0 as str
+  port:int = dns_endpoint_port(auth, defp)
+  free(auth)
+  pathq:str = url_path_query(url)
+  if pathq == 0:
+    free(host)
+    ret 0 as str
+  secure:int = url_is_secure(url)
+  req:str = net.transport._http_request_ex(method, host, pathq, body, content_type, extra_headers)
+  if req == 0:
+    free(host)
+    free(pathq)
+    ret 0 as str
+  resp:str = 0 as str
+  if secure != 0:
+    h:int = tls_connect(host, port)
+    if h >= 0:
+      if net.transport.tls_send_text(h, req) >= 0:
+        resp = net.transport.tls_recv_all(h, max_bytes)
+      tls_close(h)
+  else:
+    resp = net.transport.tcp_request(host, port, req, timeout_ms, max_bytes)
+  free(req)
+  free(host)
+  free(pathq)
+  ret resp
+
+fn http_get_url(url:str, timeout_ms:int, max_bytes:int) -> str:
+  ret http_request_url("GET", url, 0 as str, 0 as str, 0 as str, timeout_ms, max_bytes)
+
+fn http_post_url(url:str, body:str, content_type:str, timeout_ms:int, max_bytes:int) -> str:
+  ret http_request_url("POST", url, body, content_type, 0 as str, timeout_ms, max_bytes)
+
+fn http_fetch(url:str, timeout_ms:int, max_bytes:int) -> str:
+  ret http_get_url(url, timeout_ms, max_bytes)
+
+fn _hex_val(c:int) -> int:
+  out:int = 0 - 1
+  if c >= 48 && c <= 57:
+    out = c - 48
+  else if c >= 65 && c <= 70:
+    out = 10 + (c - 65)
+  else if c >= 97 && c <= 102:
+    out = 10 + (c - 97)
+  ret out
+
+fn _parse_hex_slice(s:str, a:int, b:int) -> int:
+  if s == 0:
+    ret 0
+  i:int = a
+  v:int = 0
+  while i < b:
+    c:int = (s[i] as int) & 255
+    if c == 59 || c == 32 || c == 9: // ';' or space or tab
+      break
+    hv:int = _hex_val(c)
+    if hv < 0:
+      break
+    v = (v << 4) + hv
+    i = i + 1
+  ret v
+
+fn http_status_code(resp:str) -> int:
+  if resp == 0:
+    ret 0
+  i:int = 0
+  while resp[i] != 0 as char && resp[i] != 32 as char:
+    i = i + 1
+  while resp[i] == 32 as char:
+    i = i + 1
+  ret net.http._parse_int_dec(resp + i)
+
+fn http_reason_phrase(resp:str) -> str:
+  if resp == 0:
+    ret 0 as str
+  i:int = 0
+  while resp[i] != 0 as char && resp[i] != 32 as char:
+    i = i + 1
+  while resp[i] == 32 as char:
+    i = i + 1
+  while resp[i] != 0 as char && resp[i] != 32 as char:
+    i = i + 1
+  while resp[i] == 32 as char:
+    i = i + 1
+  start:int = i
+  while resp[i] != 0 as char:
+    c:int = (resp[i] as int) & 255
+    if c == 10 || c == 13:
+      break
+    if c == 114:
+      if (((resp[i + 1] as int) & 255) == 10):
+        break
+    i = i + 1
+  ret net.http._substr_dup(resp, start, i)
+
+fn http_response_header(resp:str, name:str) -> str:
+  ret net.http.http_get_header(resp, name)
+
+fn http_response_body(resp:str) -> str:
+  if resp == 0:
+    ret 0 as str
+  n:int = len(resp)
+  start:int = net.http._find_header_end_index(resp as *char, n)
+  if start < 0:
+    ret net.http._substr_dup("", 0, 0)
+  if start > n:
+    start = n
+  ret net.http._substr_dup(resp, start, n)
+
+fn http_is_chunked(resp:str) -> int:
+  h:str = net.http.http_get_header(resp, "Transfer-Encoding")
+  if h == 0:
+    ret 0
+  ok:int = net.http._header_has_token(h, "chunked")
+  free(h)
+  ret ok
+
+fn http_decode_chunked_body(body:str) -> str:
+  if body == 0:
+    ret 0 as str
+  n:int = len(body)
+  out:*char = malloc(n + 1)
+  if out == 0:
+    ret 0 as str
+  i:int = 0
+  w:int = 0
+  while i < n:
+    line_start:int = i
+    while i < n:
+      c0:int = (body[i] as int) & 255
+      if c0 == 10 || c0 == 13 || c0 == 114:
+        break
+      i = i + 1
+    sz:int = _parse_hex_slice(body, line_start, i)
+    while i < n:
+      c1:int = (body[i] as int) & 255
+      if c1 == 10 || c1 == 13 || c1 == 114:
+        i = i + 1
+      else:
+        break
+    if sz <= 0:
+      break
+    if i + sz > n:
+      sz = n - i
+    if sz > 0:
+      unsafe:
+        memcpy(out + w, (body as *char) + i, sz)
+      w = w + sz
+      i = i + sz
+    while i < n:
+      c2:int = (body[i] as int) & 255
+      if c2 == 10 || c2 == 13 || c2 == 114:
+        i = i + 1
+      else:
+        break
+  out[w] = 0 as char
+  ret out as str
+
+fn http_response_body_decoded(resp:str) -> str:
+  b:str = http_response_body(resp)
+  if b == 0:
+    ret 0 as str
+  if http_is_chunked(resp) == 0:
+    ret b
+  out:str = http_decode_chunked_body(b)
+  free(b)
+  ret out
+
+fn http_fetch_body(url:str, timeout_ms:int, max_bytes:int) -> str:
+  resp:str = http_fetch(url, timeout_ms, max_bytes)
+  if resp == 0:
+    ret 0 as str
+  body:str = http_response_body_decoded(resp)
+  free(resp)
+  ret body
+
+fn dns_endpoint_join(host:str, port:int) -> str:
+  if host == 0:
+    ret 0 as str
+  ps:str = net.transport._itoa(port)
+  if dns_is_ipv6(host) != 0 && host[0] != 91 as char:
+    b1:str = net.transport._join2("[", host)
+    b2:str = net.transport._join2(b1, "]:")
+    out6:str = net.transport._join2(b2, ps)
+    free(ps)
+    free(b1)
+    free(b2)
+    ret out6
+  p0:str = net.transport._join2(host, ":")
+  out:str = net.transport._join2(p0, ps)
+  free(ps)
+  free(p0)
+  ret out
+
+fn tcp_recv_line(sock:int, max_bytes:int) -> str:
+  if sock < 0:
+    ret 0 as str
+  lim:int = max_bytes
+  if lim <= 0:
+    lim = 4096
+  out:*char = malloc(lim + 1)
+  if out == 0:
+    ret 0 as str
+  i:int = 0
+  while i < lim:
+    c:[char;1]
+    r:int = net_recv(sock, c, 1)
+    if r <= 0:
+      break
+    ch:int = (c[0] as int) & 255
+    if ch == 10 || ch == 13 || ch == 114:
+      break
+    out[i] = c[0]
+    i = i + 1
+  out[i] = 0 as char
+  ret out as str
+
+fn http_server_serve_text_once(listener:int, max_req_bytes:int, status:int, text:str) -> int:
+  if listener < 0:
+    ret net.state._get_NET_ERR()
+  cli:int = net.http.http_server_accept(listener, 0)
+  if cli < 0:
+    ret net.state._get_NET_ERR()
+  req:str = net.http.http_read_request(cli, max_req_bytes)
+  if req != 0:
+    free(req)
+  rc:int = net.http.http_respond_text(cli, status, text)
+  net.transport.close(cli)
+  ret rc

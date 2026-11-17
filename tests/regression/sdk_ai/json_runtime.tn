@@ -1,0 +1,37 @@
+import "json"
+import "runtime"
+
+fn main() -> int:
+  failed:int = 0
+  value:*JsonVal = json.json_parse("{\"items\":[1,2],\"ok\":true}")
+  if value == 0 || json.json_ok() == 0: ret 1
+  items:*JsonVal = json.json_get(value, "items")
+  if json.json_len(items) != 2 || json.json_int(json.json_at(items, 1)) != 2:
+    failed = 1
+  encoded:str = json.json_stringify(value)
+  copied:*JsonVal = json.json_parse(encoded)
+  if copied == 0 || json.json_ok() == 0:
+    say "FAIL: nested JSON round trip: ", encoded
+    failed = 1
+  json.json_free(copied)
+  json.json_free(value)
+  unsafe:
+    free(encoded as *char)
+  runtime.setenv("SDK_AUDIT_KEY", "one")
+  if runtime.strncmp(runtime.getenv("SDK_AUDIT_KEY"), "one", 4) != 0:
+    failed = 1
+  runtime.setenv("SDK_AUDIT_KEY", "two")
+  if runtime.strncmp(runtime.getenv("SDK_AUDIT_KEY"), "two", 4) != 0:
+    failed = 1
+  runtime.unsetenv("SDK_AUDIT_KEY")
+  unsafe:
+    if runtime.getenv("SDK_AUDIT_KEY") != 0 as str:
+      failed = 1
+  buffer:[char;32]
+  unsafe:
+    start:*char = &buffer[0]
+    runtime.sprintf_int(start, "%d", 17)
+    if runtime.strncmp(start as str, "17", 3) != 0:
+      failed = 1
+  if failed != 0: say "FAIL: SDK JSON/runtime compatibility"
+  ret failed

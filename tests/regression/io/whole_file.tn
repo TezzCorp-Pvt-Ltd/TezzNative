@@ -1,0 +1,27 @@
+fn main() -> int:
+  path:str = "whole_file.bin"
+  remove(path)
+  if file_size(path) != -1:
+    say "FAIL missing file size"
+    ret 1
+  if write_file(path, "hello", 5) != 5 || file_size(path) != 5:
+    say "FAIL write_file payload"
+    ret 2
+  if write_file(path, "x", 1) != 1 || file_size(path) != 1:
+    say "FAIL write_file truncation"
+    ret 3
+  if write_file(path, "invalid", -1) != -1 || file_size(path) != 1:
+    say "FAIL invalid write must preserve existing file"
+    ret 6
+  unsafe:
+    if write_file(path, 0 as str, 3) != -1 || file_size(path) != 1:
+      say "FAIL missing buffer must preserve existing file"
+      ret 7
+  if write_file(path, "", 0) != 0 || file_size(path) != 0:
+    say "FAIL write_file empty"
+    ret 4
+  remove(path)
+  if write_file("missing_directory/output.bin", "x", 1) >= 0:
+    say "FAIL write_file missing parent"
+    ret 5
+  ret 0

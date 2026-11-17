@@ -1,0 +1,615 @@
+// Shared types, constants, and state for os.
+import "sys"
+
+struct Task:
+  entry:*char
+  arg:*char
+  active:int
+  recycle:int
+  state:int
+  last_tick:int
+  runs:int
+
+extern fn arch_load_cr3(pml4:*char) -> int
+
+extern fn arch_enable_paging() -> int
+
+extern fn arch_rdtsc() -> int
+
+extern fn fb_addr() -> *char
+
+extern fn fb_width() -> int
+
+extern fn fb_height() -> int
+
+extern fn fb_pitch() -> int
+
+extern fn fb_bpp() -> int
+
+extern fn boot_text() -> int
+
+extern fn fb_text(x:int, y:int, s:str, color:int) -> int
+
+extern fn fb_text_ex(x:int, y:int, s:str, color:int, scale:int, bold:int) -> int
+
+extern fn fb_text_style(x:int, y:int, s:str, color:int, pixel_size:int, weight:int, family:str) -> int
+
+extern fn fb_text_measure(s:str, pixel_size:int, weight:int, family:str) -> int
+
+extern fn fb_text_copy(dst:*char, src:str, capacity:int) -> int
+
+extern fn fb_present() -> int
+
+extern fn fb_sync_resize() -> int
+
+extern fn fb_present_rect(x:int, y:int, w:int, h:int) -> int
+
+extern fn fb_set_app_icon(kind:int, primary:int, accent:int) -> int
+
+extern fn fb_pump_events() -> int
+
+extern fn fb_wait_events() -> int
+
+extern fn fb_host_windowing() -> int
+
+extern fn fb_set_scale(scale:int) -> int
+
+extern fn fb_get_scale() -> int
+
+extern fn fb_text_mode(mode:int) -> int
+
+extern fn fb_font_aa_mode(mode:int) -> int
+
+extern fn fb_font_ttf_mode(mode:int) -> int
+
+extern fn fb_draw_logo(x:int, y:int, w:int, h:int) -> int
+
+extern fn fb_draw_wallpaper(x:int, y:int, w:int, h:int) -> int
+
+extern fn fb_draw_cursor(x:int, y:int, scale:int) -> int
+
+extern fn fb_draw_app_icon(app:int, x:int, y:int, w:int, h:int) -> int
+
+extern fn fb_fill(color:int) -> int
+
+extern fn fb_fill_rect(x:int, y:int, w:int, h:int, color:int) -> int
+
+extern fn fb_blit(sx:int, sy:int, w:int, h:int, dx:int, dy:int) -> int
+
+extern fn fb_composite_rect(x:int, y:int, w:int, h:int, color:int, alpha:int) -> int
+
+extern fn fb_gradient_v(x:int, y:int, w:int, h:int, top:int, bottom:int) -> int
+
+extern fn fb_gradient_h(x:int, y:int, w:int, h:int, left:int, right:int) -> int
+
+extern fn fb_time_us() -> int
+
+extern fn fb_time_ms() -> int
+
+extern fn fb_frame_sync(target_fps:int) -> int
+
+extern fn fb_vsync() -> int
+
+extern fn fb_spring_step(current:int, target:int, vel:*int, tension:int, damping:int, dt_ms:int) -> int
+
+extern fn fb_get_pixel(x:int, y:int) -> int
+
+extern fn fb_put_pixel(x:int, y:int, color:int) -> int
+
+extern fn fb_cursor_soft_reset() -> int
+
+extern fn fb_cursor_soft_move(x:int, y:int, scale:int) -> int
+
+extern fn fb_cursor_kind(kind:int) -> int
+
+extern fn fb_set_color(color:int) -> int
+
+extern fn fb_set_cursor(x:int, y:int) -> int
+
+extern fn fb_cursor_mode(mode:int) -> int
+
+extern fn fb_cursor(on:int, color:int) -> int
+
+extern fn memmap_count() -> int
+
+extern fn memmap_base(i:int) -> int
+
+extern fn memmap_len(i:int) -> int
+
+extern fn memmap_type(i:int) -> int
+
+extern fn disk_count() -> int
+
+extern fn disk_media_type(i:int) -> int
+
+extern fn disk_table_kind(i:int) -> int
+
+extern fn disk_mbr_id(i:int) -> int
+
+extern fn disk_part_count(i:int) -> int
+
+extern fn disk_part_index(disk_idx:int, part_idx:int) -> int
+
+extern fn disk_gpt_disk_hi(i:int) -> int
+
+extern fn disk_gpt_disk_lo(i:int) -> int
+
+extern fn disk_gpt_part_hi(i:int) -> int
+
+extern fn disk_gpt_part_lo(i:int) -> int
+
+extern fn pci_display_probe() -> int
+
+extern fn pci_display_vendor() -> int
+
+extern fn pci_display_device() -> int
+
+extern fn pci_display_class() -> int
+
+extern fn pci_display_subclass() -> int
+
+extern fn pci_display_prog_if() -> int
+
+extern fn pci_display_bus() -> int
+
+extern fn pci_display_slot() -> int
+
+extern fn pci_display_func() -> int
+
+extern fn pci_display_command() -> int
+
+extern fn pci_display_bar_addr(i:int) -> int
+
+extern fn pci_display_bar_size(i:int) -> int
+
+extern fn pci_display_bar_is_io(i:int) -> int
+
+extern fn pci_display_bar_prefetch(i:int) -> int
+
+extern fn pci_display_bar_mem_type(i:int) -> int
+
+extern fn pci_display_bar_safe(i:int) -> int
+
+extern fn pci_display_mmio_safe() -> int
+
+extern fn pci_usb_probe() -> int
+
+extern fn pci_usb_count() -> int
+
+extern fn pci_usb_kind_count(kind:int) -> int
+
+extern fn pci_usb_bus(i:int) -> int
+
+extern fn pci_usb_slot(i:int) -> int
+
+extern fn pci_usb_func(i:int) -> int
+
+extern fn pci_usb_prog_if(i:int) -> int
+
+extern fn pci_usb_vendor(i:int) -> int
+
+extern fn pci_usb_device(i:int) -> int
+
+extern fn pci_net_probe() -> int
+
+extern fn pci_net_count() -> int
+
+extern fn pci_net_bus(i:int) -> int
+
+extern fn pci_net_slot(i:int) -> int
+
+extern fn pci_net_func(i:int) -> int
+
+extern fn pci_net_subclass(i:int) -> int
+
+extern fn pci_net_prog_if(i:int) -> int
+
+extern fn pci_net_vendor(i:int) -> int
+
+extern fn pci_net_device(i:int) -> int
+
+extern fn pci_audio_probe() -> int
+
+extern fn pci_audio_count() -> int
+
+extern fn pci_audio_bus(i:int) -> int
+
+extern fn pci_audio_slot(i:int) -> int
+
+extern fn pci_audio_func(i:int) -> int
+
+extern fn pci_audio_subclass(i:int) -> int
+
+extern fn pci_audio_prog_if(i:int) -> int
+
+extern fn pci_audio_vendor(i:int) -> int
+
+extern fn pci_audio_device(i:int) -> int
+
+extern fn gpu_hw_cursor_available() -> int
+
+extern fn gpu_hw_cursor_enable(on:int) -> int
+
+extern fn gpu_hw_cursor_move(x:int, y:int) -> int
+
+extern fn gpu_driver_kind() -> int
+
+extern fn arch_id() -> int
+
+extern fn arch_bits() -> int
+
+extern fn blk_count() -> int
+
+extern fn blk_sector_size(dev_idx:int) -> int
+
+extern fn blk_sector_count(dev_idx:int) -> int
+
+extern fn blk_read_sector(dev_idx:int, lba:int, out512:*char) -> int
+
+extern fn blk_write_sector(dev_idx:int, lba:int, in512:*char) -> int
+
+extern fn irq_enable() -> int
+
+extern fn irq_disable() -> int
+
+extern fn halt() -> int
+
+extern fn timer_init(hz:int) -> int
+
+extern fn timer_ticks_irq() -> int
+
+extern fn timer_sleep_ms(ms:int) -> int
+
+extern fn kbd_has_event() -> int
+
+extern fn kbd_read_scancode() -> int
+
+extern fn kbd_read_scancode_raw() -> int
+
+extern fn kbd_read_char() -> int
+
+extern fn kbd_modifiers() -> int
+
+extern fn kbd_ime_active() -> int
+
+extern fn kbd_ime_cursor() -> int
+
+extern fn kbd_ime_length() -> int
+
+extern fn kbd_set_debug(on:int) -> int
+
+extern fn kbd_last_scancode() -> int
+
+extern fn mouse_has_packet() -> int
+
+extern fn mouse_read_packet() -> int
+
+extern fn mouse_dx() -> int
+
+extern fn mouse_dy() -> int
+
+extern fn mouse_buttons() -> int
+
+extern fn mouse_x() -> int
+
+extern fn mouse_y() -> int
+
+extern fn mouse_packet_x() -> int
+
+extern fn mouse_packet_y() -> int
+
+extern fn mouse_wheel_x() -> int
+
+extern fn mouse_wheel_y() -> int
+
+extern fn touch_has_event() -> int
+
+extern fn touch_read_event() -> int
+
+extern fn touch_id() -> int
+
+extern fn touch_phase() -> int
+
+extern fn touch_x() -> int
+
+extern fn touch_y() -> int
+
+extern fn touch_pressure() -> int
+
+extern fn ps2_force_mouse_path(profile:int) -> int
+
+extern fn apic_available() -> int
+
+extern fn apic_init() -> int
+
+extern fn apic_eoi() -> int
+
+extern fn apic_timer_init(hz:int) -> int
+
+extern fn hpet_init() -> int
+
+extern fn hpet_set_base(base:int) -> int
+
+extern fn hpet_time_ns() -> int
+
+extern fn acpi_hpet_base() -> int
+
+extern fn power_battery_present() -> int
+
+extern fn power_battery_percent() -> int
+
+extern fn rtc_probe() -> int
+
+extern fn rtc_year() -> int
+
+extern fn rtc_month() -> int
+
+extern fn rtc_day() -> int
+
+extern fn rtc_hour() -> int
+
+extern fn rtc_minute() -> int
+
+extern fn rtc_second() -> int
+
+extern fn pf_last_addr_raw() -> int
+
+extern fn pf_last_err_raw() -> int
+
+extern fn pf_last_count_raw() -> int
+
+extern fn pf_autofix_set_raw(on:int) -> int
+
+extern fn arch_invlpg(p:*char) -> int
+
+extern fn tn_mmap_file(path:str, out_size:*int) -> *char
+
+extern fn tn_munmap_file(view:*char, size:int) -> int
+
+struct MemRegion:
+  base:int
+  len:int
+  typ:int
+
+struct HeapBlock:
+  size:int
+  is_free:int
+  next:*HeapBlock
+
+struct SysEntry:
+  num:int
+  fnptr:*char
+
+let CONSOLE_SYSWRITE:int = 0
+
+let CONSOLE_VGA:int = 1
+
+let CONSOLE_SERIAL:int = 2
+
+let CONSOLE_DEBUGCON:int = 3
+
+let PAGE_PRESENT:int = 1
+
+let PAGE_RW:int = 2
+
+let PAGE_PS:int = 128
+
+let PAGE_ADDR_MASK:int = -4096
+
+static let g_heap_base:*char = 0 as *char
+
+static let g_heap_end:*char = 0 as *char
+
+static let g_heap_cur:*char = 0 as *char
+
+static let g_heap_inited:int = 0
+
+static let g_heap_head:*HeapBlock = 0 as *HeapBlock
+
+static let g_page_base:*char = 0 as *char
+
+static let g_page_end:*char = 0 as *char
+
+static let g_page_cur:*char = 0 as *char
+
+static let g_page_size:int = 4096
+
+static let g_page_inited:int = 0
+
+static let g_pml4:*char = 0 as *char
+
+static let g_phys_regions:[MemRegion;64]
+
+static let g_phys_n:int = 0
+
+static let g_phys_inited:int = 0
+
+static let g_console_backend:int = 0
+
+static let g_console_mirror_serial:int = 0
+
+static let g_console_serial_in:int = 0
+
+static let g_vga_row:int = 0
+
+static let g_vga_col:int = 0
+
+static let g_vga_attr:int = 7
+
+static let g_vga_cursor_enabled:int = 0
+
+static let g_serial_base:int = 1016
+
+static let g_serial_inited:int = 0
+
+static let g_tasks:[Task;64]
+
+static let g_task_count:int = 0
+
+static let g_sched_inited:int = 0
+
+static let g_runq:[int;64]
+
+static let g_rhead:int = 0
+
+static let g_rtail:int = 0
+
+static let g_syscalls:[SysEntry;64]
+
+static let g_sys_count:int = 0
+
+@inline
+fn _get_CONSOLE_SYSWRITE() -> int:
+  ret CONSOLE_SYSWRITE
+
+@inline
+fn _get_CONSOLE_VGA() -> int:
+  ret CONSOLE_VGA
+
+@inline
+fn _get_CONSOLE_SERIAL() -> int:
+  ret CONSOLE_SERIAL
+
+@inline
+fn _get_CONSOLE_DEBUGCON() -> int:
+  ret CONSOLE_DEBUGCON
+
+@inline
+fn _get_PAGE_PRESENT() -> int:
+  ret PAGE_PRESENT
+
+@inline
+fn _get_PAGE_RW() -> int:
+  ret PAGE_RW
+
+@inline
+fn _get_PAGE_PS() -> int:
+  ret PAGE_PS
+
+@inline
+fn _get_PAGE_ADDR_MASK() -> int:
+  ret PAGE_ADDR_MASK
+
+@inline
+fn _get_g_heap_base() -> **char:
+  ret &g_heap_base
+
+@inline
+fn _get_g_heap_end() -> **char:
+  ret &g_heap_end
+
+@inline
+fn _get_g_heap_cur() -> **char:
+  ret &g_heap_cur
+
+@inline
+fn _get_g_heap_inited() -> *int:
+  ret &g_heap_inited
+
+@inline
+fn _get_g_heap_head() -> **HeapBlock:
+  ret &g_heap_head
+
+@inline
+fn _get_g_page_base() -> **char:
+  ret &g_page_base
+
+@inline
+fn _get_g_page_end() -> **char:
+  ret &g_page_end
+
+@inline
+fn _get_g_page_cur() -> **char:
+  ret &g_page_cur
+
+@inline
+fn _get_g_page_size() -> *int:
+  ret &g_page_size
+
+@inline
+fn _get_g_page_inited() -> *int:
+  ret &g_page_inited
+
+@inline
+fn _get_g_pml4() -> **char:
+  ret &g_pml4
+
+@inline
+fn _get_g_phys_regions() -> *[MemRegion;64]:
+  ret &g_phys_regions
+
+@inline
+fn _get_g_phys_n() -> *int:
+  ret &g_phys_n
+
+@inline
+fn _get_g_phys_inited() -> *int:
+  ret &g_phys_inited
+
+@inline
+fn _get_g_console_backend() -> *int:
+  ret &g_console_backend
+
+@inline
+fn _get_g_console_mirror_serial() -> *int:
+  ret &g_console_mirror_serial
+
+@inline
+fn _get_g_console_serial_in() -> *int:
+  ret &g_console_serial_in
+
+@inline
+fn _get_g_vga_row() -> *int:
+  ret &g_vga_row
+
+@inline
+fn _get_g_vga_col() -> *int:
+  ret &g_vga_col
+
+@inline
+fn _get_g_vga_attr() -> *int:
+  ret &g_vga_attr
+
+@inline
+fn _get_g_vga_cursor_enabled() -> *int:
+  ret &g_vga_cursor_enabled
+
+@inline
+fn _get_g_serial_base() -> *int:
+  ret &g_serial_base
+
+@inline
+fn _get_g_serial_inited() -> *int:
+  ret &g_serial_inited
+
+@inline
+fn _get_g_tasks() -> *[Task;64]:
+  ret &g_tasks
+
+@inline
+fn _get_g_task_count() -> *int:
+  ret &g_task_count
+
+@inline
+fn _get_g_sched_inited() -> *int:
+  ret &g_sched_inited
+
+@inline
+fn _get_g_runq() -> *[int;64]:
+  ret &g_runq
+
+@inline
+fn _get_g_rhead() -> *int:
+  ret &g_rhead
+
+@inline
+fn _get_g_rtail() -> *int:
+  ret &g_rtail
+
+@inline
+fn _get_g_syscalls() -> *[SysEntry;64]:
+  ret &g_syscalls
+
+@inline
+fn _get_g_sys_count() -> *int:
+  ret &g_sys_count

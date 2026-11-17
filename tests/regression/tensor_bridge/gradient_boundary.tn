@@ -1,0 +1,43 @@
+import "tensor_bridge"
+import "tensor"
+import "tztensor"
+import "tzautodiff"
+
+fn main() -> int:
+  tensor.tape_init()
+  source:Tensor = tensor.tensor_ones_1d(4)
+  source = tensor.tensor_require_grad(source)
+  scaled:Tensor = tensor.tensor_scale(source, 3.0)
+  before:int = tensor.tape_len()
+  if tensor_bridge.to_tztensor(scaled) != 0: ret 1
+  detached:int = tensor_bridge.to_tztensor_detached(scaled)
+  if detached == 0 || tztensor.tensor_requires_grad(detached) != 0: ret 2
+  if tensor.tape_len() != before: ret 3
+  unsafe:
+    (tztensor.tensor_data(detached) as *f32)[0] = 9.0 as f32
+    if scaled.data[0] != 3.0: ret 4
+  loss:Tensor = tensor.tensor_sum_all_t(scaled)
+  tensor.tensor_backward(loss)
+  if tensor.tensor_grad_item(source, 0) != 3.0: ret 5
+  tensor.tape_reset()
+  tensor.tensor_free_tensor(loss)
+  tensor.tensor_free_tensor(scaled)
+  tensor.tensor_free_tensor(source)
+  tztensor.tensor_free(detached)
+  native:int = tztensor.tensor_new_1d(4, 1)
+  if native == 0: ret 6
+  tztensor.tensor_fill(native, 2.0 as f32)
+  rejected:Tensor = tensor_bridge.to_tensor(native)
+  if rejected.size != 0: ret 7
+  copied:Tensor = tensor_bridge.to_tensor_detached(native)
+  if copied.size != 4 || copied.requires_grad != 0: ret 8
+  unsafe:
+    copied.data[0] = 12.0
+    if (tztensor.tensor_data(native) as *f32)[0] != 2.0 as f32: ret 9
+  if tztensor.tensor_backward(native) != 0: ret 10
+  unsafe:
+    if (tztensor.tensor_grad(native) as *f32)[0] != 1.0 as f32: ret 11
+  tzautodiff.autodiff_reset()
+  tensor.tensor_free_tensor(copied)
+  tztensor.tensor_free(native)
+  ret 0

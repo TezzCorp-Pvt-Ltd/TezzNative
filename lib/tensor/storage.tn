@@ -1,0 +1,667 @@
+// tensor implementation: storage.
+import "simd"
+import "math"
+import "io"
+import "str"
+import "tensor.state"
+import "tensor.tape"
+
+fn _tensor_alloc_shape(shape:Tensor) -> Tensor:
+  out:Tensor = shape
+  out.offset = 0
+  out.is_view = 0
+  out.requires_grad = 0
+  out.node_id = 0
+  out.data = 0 as *float
+  out.grad = 0 as *Tensor
+  out.size = 0
+  if shape.ndim < 0 || shape.ndim > 8:
+    ret out
+  total:int = 1
+  if shape.ndim == 0:
+    if shape.size != 1:
+      ret out
+  else:
+    axis:int = 0
+    while axis < shape.ndim:
+      d:int = tensor_shape(shape, axis)
+      if d <= 0 || total > 1152921504606846975 / d:
+        ret out
+      total = total * d
+      axis = axis + 1
+    out = tensor_calc_strides(out)
+  out.size = total
+  out.data = (*float)malloc(total * 8)
+  if out.data == 0 as *float:
+    out.size = 0
+  ret out
+
+fn _tensor_zeros_like(t:Tensor) -> Tensor:
+  out:Tensor = _tensor_alloc_shape(t)
+  tensor_fill(out, 0.0)
+  ret out
+
+fn _tensor_axis(t:Tensor, axis:int) -> int:
+  ax:int = axis
+  if ax < 0:
+    ax = t.ndim + ax
+  if ax < 0 || ax >= t.ndim:
+    ret 0 - 1
+  ret ax
+
+fn _tensor_track_copy(out_value:Tensor, source:Tensor) -> Tensor:
+  out:Tensor = out_value
+  if (*tensor.state._state__tape_enabled()) != 0 && source.requires_grad != 0 && out.data != 0 as *float:
+    out = tensor.tape.tensor_require_grad(out)
+    tensor.tape.tape_record_unary((*tensor.state._state_AUTOGRAD_OP_COPY()), out, source, tensor_empty_raw(0, 0, 0, 0, 0), 0.0, 0, 0)
+  ret out
+
+fn _tensor_track_view(view_value:Tensor, source:Tensor) -> Tensor:
+  out:Tensor = view_value
+  out.grad = 0 as *Tensor
+  out.requires_grad = 0
+  out.node_id = 0
+  if (*tensor.state._state__tape_enabled()) != 0 && source.requires_grad != 0 && out.size > 0:
+    out = tensor.tape.tensor_require_grad(out)
+    tensor.tape._tape_record_view(out, source)
+  ret out
+
+fn _tensor_gradient_retain(g:*Tensor) -> int:
+  if g != 0 as *Tensor:
+    owner:*TensorGradient = (*TensorGradient)g
+    owner.refs = owner.refs + 1
+  ret 0
+
+fn _tensor_gradient_release(g:*Tensor) -> int:
+  if g == 0 as *Tensor:
+    ret 0
+  owner:*TensorGradient = (*TensorGradient)g
+  owner.refs = owner.refs - 1
+  if owner.refs <= 0:
+    if g.data != 0 as *float:
+      free(g.data as *char)
+    free(g as *char)
+  ret 0
+
+fn tensor_clone(t:Tensor) -> Tensor:
+  ret _tensor_track_copy(_tensor_clone_raw(t), t)
+
+fn tensor_shape(t:Tensor, axis:int) -> int:
+  if axis == 0: ret t.shape0
+  if axis == 1: ret t.shape1
+  if axis == 2: ret t.shape2
+  if axis == 3: ret t.shape3
+  if axis == 4: ret t.shape4
+  if axis == 5: ret t.shape5
+  if axis == 6: ret t.shape6
+  if axis == 7: ret t.shape7
+  ret 0
+
+fn tensor_stride(t:Tensor, axis:int) -> int:
+  if axis == 0: ret t.stride0
+  if axis == 1: ret t.stride1
+  if axis == 2: ret t.stride2
+  if axis == 3: ret t.stride3
+  if axis == 4: ret t.stride4
+  if axis == 5: ret t.stride5
+  if axis == 6: ret t.stride6
+  if axis == 7: ret t.stride7
+  ret 0
+
+fn tensor_set_shape(t:Tensor, axis:int, v:int) -> Tensor:
+  out:Tensor = t
+  if axis == 0: out.shape0 = v
+  else if axis == 1: out.shape1 = v
+  else if axis == 2: out.shape2 = v
+  else if axis == 3: out.shape3 = v
+  else if axis == 4: out.shape4 = v
+  else if axis == 5: out.shape5 = v
+  else if axis == 6: out.shape6 = v
+  else if axis == 7: out.shape7 = v
+  ret out
+
+fn tensor_set_stride(t:Tensor, axis:int, v:int) -> Tensor:
+  out:Tensor = t
+  if axis == 0: out.stride0 = v
+  else if axis == 1: out.stride1 = v
+  else if axis == 2: out.stride2 = v
+  else if axis == 3: out.stride3 = v
+  else if axis == 4: out.stride4 = v
+  else if axis == 5: out.stride5 = v
+  else if axis == 6: out.stride6 = v
+  else if axis == 7: out.stride7 = v
+  ret out
+
+// Recompute canonical contiguous strides and total size
+
+fn tensor_calc_strides(t:Tensor) -> Tensor:
+  out:Tensor = t
+  nd:int = t.ndim
+  if nd <= 0:
+    out.size = 0
+    ret out
+
+  stride:int = 1
+  total:int = 1
+
+  if nd >= 8:
+    out.stride7 = stride
+    stride = stride * out.shape7
+    total = total * out.shape7
+  else:
+    out.shape7 = 0
+    out.stride7 = 0
+
+  if nd >= 7:
+    out.stride6 = stride
+    stride = stride * out.shape6
+    total = total * out.shape6
+  else:
+    out.shape6 = 0
+    out.stride6 = 0
+
+  if nd >= 6:
+    out.stride5 = stride
+    stride = stride * out.shape5
+    total = total * out.shape5
+  else:
+    out.shape5 = 0
+    out.stride5 = 0
+
+  if nd >= 5:
+    out.stride4 = stride
+    stride = stride * out.shape4
+    total = total * out.shape4
+  else:
+    out.shape4 = 0
+    out.stride4 = 0
+
+  if nd >= 4:
+    out.stride3 = stride
+    stride = stride * out.shape3
+    total = total * out.shape3
+  else:
+    out.shape3 = 0
+    out.stride3 = 0
+
+  if nd >= 3:
+    out.stride2 = stride
+    stride = stride * out.shape2
+    total = total * out.shape2
+  else:
+    out.shape2 = 0
+    out.stride2 = 0
+
+  if nd >= 2:
+    out.stride1 = stride
+    stride = stride * out.shape1
+    total = total * out.shape1
+  else:
+    out.shape1 = 0
+    out.stride1 = 0
+
+  if nd >= 1:
+    out.stride0 = stride
+    stride = stride * out.shape0
+    total = total * out.shape0
+  else:
+    out.shape0 = 0
+    out.stride0 = 0
+
+  out.size = total
+  ret out
+
+fn tensor_empty_raw(ndim:int, d0:int, d1:int, d2:int, d3:int) -> Tensor:
+  t:Tensor
+  t.ndim = ndim
+  t.shape0 = d0
+  t.shape1 = d1
+  t.shape2 = d2
+  t.shape3 = d3
+  t.shape4 = 0
+  t.shape5 = 0
+  t.shape6 = 0
+  t.shape7 = 0
+  t.stride0 = 0
+  t.stride1 = 0
+  t.stride2 = 0
+  t.stride3 = 0
+  t.stride4 = 0
+  t.stride5 = 0
+  t.stride6 = 0
+  t.stride7 = 0
+  t.offset = 0
+  t.size = 0
+  t.dtype = (*tensor.state._state_TENSOR_DTYPE_F64())
+  t.is_view = 0
+  t.requires_grad = 0
+  t.node_id = 0
+  unsafe:
+    t.grad = 0 as *Tensor
+    t.data = 0 as *float
+  ret _tensor_alloc_shape(t)
+
+fn tensor_1d(d0:int) -> Tensor:
+  ret tensor_empty_raw(1, d0, 0, 0, 0)
+
+fn tensor_2d(d0:int, d1:int) -> Tensor:
+  ret tensor_empty_raw(2, d0, d1, 0, 0)
+
+fn tensor_3d(d0:int, d1:int, d2:int) -> Tensor:
+  ret tensor_empty_raw(3, d0, d1, d2, 0)
+
+fn tensor_4d(d0:int, d1:int, d2:int, d3:int) -> Tensor:
+  ret tensor_empty_raw(4, d0, d1, d2, d3)
+
+fn tensor_fill(t:Tensor, val:float) -> int:
+  if t.data == 0 as *float || t.size <= 0:
+    ret 0
+  i:int = 0
+  while i < t.size:
+    off:int = _tensor_unravel_offset(t, i)
+    t.data[off] = val
+    i = i + 1
+  ret 0
+
+fn tensor_zeros_1d(d0:int) -> Tensor:
+  t:Tensor = tensor_1d(d0)
+  tensor_fill(t, 0.0)
+  ret t
+
+fn tensor_zeros_2d(d0:int, d1:int) -> Tensor:
+  t:Tensor = tensor_2d(d0, d1)
+  tensor_fill(t, 0.0)
+  ret t
+
+fn tensor_zeros_3d(d0:int, d1:int, d2:int) -> Tensor:
+  t:Tensor = tensor_3d(d0, d1, d2)
+  tensor_fill(t, 0.0)
+  ret t
+
+fn tensor_zeros_4d(d0:int, d1:int, d2:int, d3:int) -> Tensor:
+  t:Tensor = tensor_4d(d0, d1, d2, d3)
+  tensor_fill(t, 0.0)
+  ret t
+
+fn tensor_ones_1d(d0:int) -> Tensor:
+  t:Tensor = tensor_1d(d0)
+  tensor_fill(t, 1.0)
+  ret t
+
+fn tensor_ones_2d(d0:int, d1:int) -> Tensor:
+  t:Tensor = tensor_2d(d0, d1)
+  tensor_fill(t, 1.0)
+  ret t
+
+fn tensor_ones_3d(d0:int, d1:int, d2:int) -> Tensor:
+  t:Tensor = tensor_3d(d0, d1, d2)
+  tensor_fill(t, 1.0)
+  ret t
+
+fn tensor_ones_4d(d0:int, d1:int, d2:int, d3:int) -> Tensor:
+  t:Tensor = tensor_4d(d0, d1, d2, d3)
+  tensor_fill(t, 1.0)
+  ret t
+
+// PRNG for tensor initialization
+
+fn tensor_set_seed(s:int) -> int:
+  (*tensor.state._state__t_seed()) = s
+  ret 0
+
+fn tensor_randf() -> float:
+  (*tensor.state._state__t_seed()) = (*tensor.state._state__t_seed()) * 1664525 + 1013904223
+  bits:int = ((*tensor.state._state__t_seed()) >> 8) & 16777215
+  ret (bits as float) / 16777216.0
+
+// Box-Muller normal random distribution
+
+fn tensor_randn_2d(d0:int, d1:int, mean:float, std:float) -> Tensor:
+  t:Tensor = tensor_2d(d0, d1)
+  i:int = 0
+  while i < t.size:
+    u1:float = tensor_randf()
+    u2:float = tensor_randf()
+    if u1 < 1.0e-07:
+      u1 = 1.0e-07
+    z0:float = math.sqrt((0.0 - 2.0) * math.log(u1)) * math.cos(2.0 * math.PI() * u2)
+    unsafe:
+      t.data[i] = mean + std * z0
+    i = i + 1
+  ret t
+
+// Free tensor data if owner
+
+fn tensor_free_tensor(t:Tensor) -> int:
+  _tensor_gradient_release(t.grad)
+  if t.is_view == 0 && t.data != 0 as *float:
+    free(t.data as *char)
+  ret 0
+
+// Fast element accessors
+
+fn tensor_get1(t:Tensor, i:int) -> float:
+  idx:int = t.offset + i * t.stride0
+  v:float = 0.0
+  unsafe:
+    v = t.data[idx]
+  ret v
+
+fn tensor_set1(t:Tensor, i:int, val:float) -> int:
+  idx:int = t.offset + i * t.stride0
+  unsafe:
+    t.data[idx] = val
+  ret 0
+
+fn tensor_get2(t:Tensor, i:int, j:int) -> float:
+  idx:int = t.offset + i * t.stride0 + j * t.stride1
+  v:float = 0.0
+  unsafe:
+    v = t.data[idx]
+  ret v
+
+fn tensor_set2(t:Tensor, i:int, j:int, val:float) -> int:
+  idx:int = t.offset + i * t.stride0 + j * t.stride1
+  unsafe:
+    t.data[idx] = val
+  ret 0
+
+fn tensor_get3(t:Tensor, i:int, j:int, k:int) -> float:
+  idx:int = t.offset + i * t.stride0 + j * t.stride1 + k * t.stride2
+  v:float = 0.0
+  unsafe:
+    v = t.data[idx]
+  ret v
+
+fn tensor_set3(t:Tensor, i:int, j:int, k:int, val:float) -> int:
+  idx:int = t.offset + i * t.stride0 + j * t.stride1 + k * t.stride2
+  unsafe:
+    t.data[idx] = val
+  ret 0
+
+fn tensor_get4(t:Tensor, b:int, h:int, s:int, d:int) -> float:
+  idx:int = t.offset + b * t.stride0 + h * t.stride1 + s * t.stride2 + d * t.stride3
+  v:float = 0.0
+  unsafe:
+    v = t.data[idx]
+  ret v
+
+fn tensor_set4(t:Tensor, b:int, h:int, s:int, d:int, val:float) -> int:
+  idx:int = t.offset + b * t.stride0 + h * t.stride1 + s * t.stride2 + d * t.stride3
+  unsafe:
+    t.data[idx] = val
+  ret 0
+
+// Check if memory layout is contiguous
+
+fn tensor_is_contiguous(t:Tensor) -> int:
+  if t.ndim <= 0:
+    ret 1
+  if t.size <= 1:
+    ret 1
+  expected_stride:int = 1
+  d:int = t.ndim - 1
+  while d >= 0:
+    s:int = tensor_shape(t, d)
+    st:int = tensor_stride(t, d)
+    if s > 1:
+      if st != expected_stride:
+        ret 0
+      expected_stride = expected_stride * s
+    d = d - 1
+  ret 1
+
+// Convert multi-index to flat strided offset
+
+fn _tensor_unravel_offset(t:Tensor, k:int) -> int:
+  off:int = t.offset
+  rem:int = k
+  d:int = t.ndim - 1
+  while d >= 0:
+    s:int = tensor_shape(t, d)
+    st:int = tensor_stride(t, d)
+    coord:int = 0
+    if s > 0:
+      coord = rem % s
+      rem = rem / s
+    off = off + coord * st
+    d = d - 1
+  ret off
+
+// Return contiguous copy of tensor
+
+fn tensor_contiguous(t:Tensor) -> Tensor:
+  ret tensor_clone(t)
+
+// Deep copy of tensor
+
+fn _tensor_clone_raw(t:Tensor) -> Tensor:
+  if t.data == 0 as *float || t.size <= 0:
+    ret tensor_empty_raw(0, 0, 0, 0, 0)
+  out:Tensor = _tensor_alloc_shape(t)
+  if out.data == 0 as *float:
+    ret out
+  i:int = 0
+  while i < out.size:
+    out.data[i] = t.data[_tensor_unravel_offset(t, i)]
+    i = i + 1
+  ret out
+
+// Zero-copy Transpose swapping axis0 and axis1
+
+fn tensor_transpose(t:Tensor, a0:int, a1:int) -> Tensor:
+  ax0:int = _tensor_axis(t, a0)
+  ax1:int = _tensor_axis(t, a1)
+  if ax0 < 0 || ax1 < 0:
+    ret tensor_empty_raw(0, 0, 0, 0, 0)
+  v:Tensor = t
+  v.is_view = 1
+  v = tensor_set_shape(v, ax0, tensor_shape(t, ax1))
+  v = tensor_set_shape(v, ax1, tensor_shape(t, ax0))
+  v = tensor_set_stride(v, ax0, tensor_stride(t, ax1))
+  v = tensor_set_stride(v, ax1, tensor_stride(t, ax0))
+  ret _tensor_track_view(v, t)
+
+// 2D Transpose convenience
+
+fn tensor_t(t:Tensor) -> Tensor:
+  ret tensor_transpose(t, 0, 1)
+
+// Zero-copy 4D Permute (e.g. for attention [B, S, H, D] -> [B, H, S, D] is permute 0, 2, 1, 3)
+
+fn tensor_permute_4d(t:Tensor, p0:int, p1:int, p2:int, p3:int) -> Tensor:
+  if t.ndim != 4 || p0 < 0 || p0 > 3 || p1 < 0 || p1 > 3 || p2 < 0 || p2 > 3 || p3 < 0 || p3 > 3:
+    ret tensor_empty_raw(0, 0, 0, 0, 0)
+  if p0 == p1 || p0 == p2 || p0 == p3 || p1 == p2 || p1 == p3 || p2 == p3:
+    ret tensor_empty_raw(0, 0, 0, 0, 0)
+  v:Tensor = t
+  v.is_view = 1
+  v.shape0 = tensor_shape(t, p0)
+  v.shape1 = tensor_shape(t, p1)
+  v.shape2 = tensor_shape(t, p2)
+  v.shape3 = tensor_shape(t, p3)
+  v.stride0 = tensor_stride(t, p0)
+  v.stride1 = tensor_stride(t, p1)
+  v.stride2 = tensor_stride(t, p2)
+  v.stride3 = tensor_stride(t, p3)
+  ret _tensor_track_view(v, t)
+
+// Zero-copy Strided Slicing along an axis
+
+fn tensor_slice(t:Tensor, axis:int, start:int, end:int, step:int) -> Tensor:
+  ax:int = _tensor_axis(t, axis)
+  if ax < 0 || step <= 0:
+    ret tensor_empty_raw(0, 0, 0, 0, 0)
+  dim:int = tensor_shape(t, ax)
+  if start < 0: start = 0
+  if start > dim: start = dim
+  if end < 0: end = 0
+  if end > dim: end = dim
+  new_len:int = 0
+  if end > start:
+    new_len = 1 + (end - start - 1) / step
+  v:Tensor = t
+  v.is_view = 1
+  v.offset = t.offset + start * tensor_stride(t, ax)
+  v = tensor_set_shape(v, ax, new_len)
+  v = tensor_set_stride(v, ax, tensor_stride(t, ax) * step)
+  v.size = 1
+  i:int = 0
+  while i < v.ndim:
+    v.size = v.size * tensor_shape(v, i)
+    i = i + 1
+  ret _tensor_track_view(v, t)
+
+// Zero-copy Squeeze: removes axis of size 1
+
+fn tensor_squeeze(t:Tensor, axis:int) -> Tensor:
+  ax:int = _tensor_axis(t, axis)
+  if ax < 0:
+    ret tensor_empty_raw(0, 0, 0, 0, 0)
+  v:Tensor = t
+  v.is_view = 1
+  if tensor_shape(t, ax) == 1 && t.ndim > 1:
+    i:int = ax
+    while i < v.ndim - 1:
+      v = tensor_set_shape(v, i, tensor_shape(t, i + 1))
+      v = tensor_set_stride(v, i, tensor_stride(t, i + 1))
+      i = i + 1
+    v = tensor_set_shape(v, v.ndim - 1, 0)
+    v = tensor_set_stride(v, v.ndim - 1, 0)
+    v.ndim = v.ndim - 1
+  ret _tensor_track_view(v, t)
+
+// Zero-copy Unsqueeze: inserts dimension of size 1 at axis
+
+fn tensor_unsqueeze(t:Tensor, axis:int) -> Tensor:
+  ax:int = axis
+  if ax < 0: ax = t.ndim + 1 + ax
+  if ax < 0 || ax > t.ndim || t.ndim >= 8:
+    ret tensor_empty_raw(0, 0, 0, 0, 0)
+  v:Tensor = t
+  v.is_view = 1
+  i:int = v.ndim
+  while i > ax:
+    v = tensor_set_shape(v, i, tensor_shape(t, i - 1))
+    v = tensor_set_stride(v, i, tensor_stride(t, i - 1))
+    i = i - 1
+  v = tensor_set_shape(v, ax, 1)
+  stride:int = 1
+  if ax < t.ndim:
+    stride = tensor_stride(t, ax) * tensor_shape(t, ax)
+  v = tensor_set_stride(v, ax, stride)
+  v.ndim = t.ndim + 1
+  ret _tensor_track_view(v, t)
+
+// Reshape tensor (zero-copy if contiguous, repack if non-contiguous)
+
+fn tensor_reshape_2d(t:Tensor, d0:int, d1:int) -> Tensor:
+  requested:Tensor = tensor_empty_raw(0, 0, 0, 0, 0)
+  requested.ndim = 2
+  requested.shape0 = d0
+  requested.shape1 = d1
+  total:int = 1
+  ax:int = 0
+  while ax < requested.ndim:
+    d:int = tensor_shape(requested, ax)
+    if d <= 0 || total > 1152921504606846975 / d:
+      ret tensor_empty_raw(0, 0, 0, 0, 0)
+    total = total * d
+    ax = ax + 1
+  if total != t.size:
+    ret tensor_empty_raw(0, 0, 0, 0, 0)
+  v:Tensor = t
+  copied:int = 0
+  if tensor_is_contiguous(t) == 0:
+    v = _tensor_clone_raw(t)
+    copied = 1
+  v.ndim = requested.ndim
+  v.shape0 = requested.shape0
+  v.shape1 = requested.shape1
+  v.shape2 = requested.shape2
+  v.shape3 = requested.shape3
+  v.shape4 = 0
+  v.shape5 = 0
+  v.shape6 = 0
+  v.shape7 = 0
+  v = tensor_calc_strides(v)
+  v.is_view = 1 - copied
+  v.grad = 0 as *Tensor
+  v.requires_grad = 0
+  ret _tensor_track_copy(v, t)
+
+fn tensor_reshape_1d(t:Tensor, d0:int) -> Tensor:
+  requested:Tensor = tensor_empty_raw(0, 0, 0, 0, 0)
+  requested.ndim = 1
+  requested.shape0 = d0
+  total:int = 1
+  ax:int = 0
+  while ax < requested.ndim:
+    d:int = tensor_shape(requested, ax)
+    if d <= 0 || total > 1152921504606846975 / d:
+      ret tensor_empty_raw(0, 0, 0, 0, 0)
+    total = total * d
+    ax = ax + 1
+  if total != t.size:
+    ret tensor_empty_raw(0, 0, 0, 0, 0)
+  v:Tensor = t
+  copied:int = 0
+  if tensor_is_contiguous(t) == 0:
+    v = _tensor_clone_raw(t)
+    copied = 1
+  v.ndim = requested.ndim
+  v.shape0 = requested.shape0
+  v.shape1 = requested.shape1
+  v.shape2 = requested.shape2
+  v.shape3 = requested.shape3
+  v.shape4 = 0
+  v.shape5 = 0
+  v.shape6 = 0
+  v.shape7 = 0
+  v = tensor_calc_strides(v)
+  v.is_view = 1 - copied
+  v.grad = 0 as *Tensor
+  v.requires_grad = 0
+  ret _tensor_track_copy(v, t)
+
+fn tensor_reshape_4d(t:Tensor, d0:int, d1:int, d2:int, d3:int) -> Tensor:
+  requested:Tensor = tensor_empty_raw(0, 0, 0, 0, 0)
+  requested.ndim = 4
+  requested.shape0 = d0
+  requested.shape1 = d1
+  requested.shape2 = d2
+  requested.shape3 = d3
+  total:int = 1
+  ax:int = 0
+  while ax < requested.ndim:
+    d:int = tensor_shape(requested, ax)
+    if d <= 0 || total > 1152921504606846975 / d:
+      ret tensor_empty_raw(0, 0, 0, 0, 0)
+    total = total * d
+    ax = ax + 1
+  if total != t.size:
+    ret tensor_empty_raw(0, 0, 0, 0, 0)
+  v:Tensor = t
+  copied:int = 0
+  if tensor_is_contiguous(t) == 0:
+    v = _tensor_clone_raw(t)
+    copied = 1
+  v.ndim = requested.ndim
+  v.shape0 = requested.shape0
+  v.shape1 = requested.shape1
+  v.shape2 = requested.shape2
+  v.shape3 = requested.shape3
+  v.shape4 = 0
+  v.shape5 = 0
+  v.shape6 = 0
+  v.shape7 = 0
+  v = tensor_calc_strides(v)
+  v.is_view = 1 - copied
+  v.grad = 0 as *Tensor
+  v.requires_grad = 0
+  ret _tensor_track_copy(v, t)
+
+fn tensor_flatten(t:Tensor) -> Tensor:
+  ret tensor_reshape_1d(t, t.size)
+
+// Neatly print tensor details

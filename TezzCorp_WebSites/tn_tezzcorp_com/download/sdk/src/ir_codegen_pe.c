@@ -7,18 +7,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
-
-extern long long tn_os_system(unsigned char*);
-extern void* tn_mmap_file(unsigned char*, long long*);
-extern void tn_munmap_file(void*, long long);
-extern long long tn_io_pipe_create(long long*, long long*);
-extern long long tn_io_fd_read(long long, unsigned char*, long long);
-extern long long tn_io_fd_write(long long, unsigned char*, long long);
-extern long long tn_io_fd_close(long long);
-extern unsigned char* tn_getenv_str(const unsigned char*);
-extern long long tn_color_is_tty_stdout(void);
-extern long long tn_tts_play_pcm(long long* pcm, long long len, long long rate);
-extern long long tn_stt_capture_mic(long long* pcm, long long n_samples, long long rate);
+#include <limits.h>
 
 static uint32_t align_up_u32(uint32_t v, uint32_t a){
   return (v + (a - 1)) & ~(a - 1);
@@ -262,10 +251,11 @@ int ir_verify_pe_exe(const char* path){
   return 0;
 }
 
-static int build_pe_imports(unsigned char* rdata, uint32_t rdata_rva, uint32_t ptr_size,
+static int build_pe_imports(IRModule* module, unsigned char* rdata, uint32_t rdata_rva, uint32_t ptr_size,
                             PeImportInfo* out){
   if(!rdata || !out) return -1;
   if(ptr_size != 4 && ptr_size != 8) return -1;
+  if(tn_native_collect(module,&out->native)!=0) return -1;
 
   const char* k_dll = "kernel32.dll";
   const char* k_funcs[] = {
@@ -351,13 +341,17 @@ static int build_pe_imports(unsigned char* rdata, uint32_t rdata_rva, uint32_t p
   };
   const int w_n = 13;
 
-  const int ndll = 5;
+  int native_dll[TN_NATIVE_LIBRARY_COUNT], native_count[TN_NATIVE_LIBRARY_COUNT]={0};
+  int ndll = 5;
+  for(int i=0;i<out->native.count;i++) native_count[out->native.entries[i].library]++;
+  for(int i=0;i<TN_NATIVE_LIBRARY_COUNT;i++) native_dll[i]=native_count[i] ? ndll++ : -1;
   const uint32_t desc_size = 20u * (uint32_t)(ndll + 1);
   uint32_t cur = desc_size;
 
-  uint32_t ilt_off[5];
-  uint32_t iat_off[5];
-  uint32_t dll_off[5];
+  uint32_t ilt_off[5+TN_NATIVE_LIBRARY_COUNT];
+  uint32_t iat_off[5+TN_NATIVE_LIBRARY_COUNT];
+  uint32_t dll_off[5+TN_NATIVE_LIBRARY_COUNT];
+  uint32_t hint_off_native[TN_NATIVE_IMPORT_MAX];
   uint32_t hint_off_k[27];
   uint32_t hint_off_u[1];
   uint32_t hint_off_m[8];
@@ -369,12 +363,18 @@ static int build_pe_imports(unsigned char* rdata, uint32_t rdata_rva, uint32_t p
   ilt_off[2] = cur; cur += (uint32_t)ptr_size * (uint32_t)(m_n + 1);
   ilt_off[3] = cur; cur += (uint32_t)ptr_size * (uint32_t)(c_n + 1);
   ilt_off[4] = cur; cur += (uint32_t)ptr_size * (uint32_t)(w_n + 1);
+  for(int i=0;i<TN_NATIVE_LIBRARY_COUNT;i++) if(native_count[i]){
+    ilt_off[native_dll[i]]=cur; cur+=ptr_size*(uint32_t)(native_count[i]+1);
+  }
 
   iat_off[0] = cur; cur += (uint32_t)ptr_size * (uint32_t)(k_n + 1);
   iat_off[1] = cur; cur += (uint32_t)ptr_size * (uint32_t)(u_n + 1);
   iat_off[2] = cur; cur += (uint32_t)ptr_size * (uint32_t)(m_n + 1);
   iat_off[3] = cur; cur += (uint32_t)ptr_size * (uint32_t)(c_n + 1);
   iat_off[4] = cur; cur += (uint32_t)ptr_size * (uint32_t)(w_n + 1);
+  for(int i=0;i<TN_NATIVE_LIBRARY_COUNT;i++) if(native_count[i]){
+    iat_off[native_dll[i]]=cur; cur+=ptr_size*(uint32_t)(native_count[i]+1);
+  }
 
   for(int i=0;i<k_n;i++){
     if(cur & 1u) cur++;
@@ -401,6 +401,11 @@ static int build_pe_imports(unsigned char* rdata, uint32_t rdata_rva, uint32_t p
     hint_off_w[i] = cur;
     cur += 2 + (uint32_t)strlen(w_funcs[i]) + 1;
   }
+  for(int i=0;i<out->native.count;i++){
+    if(cur&1u) cur++;
+    hint_off_native[i]=cur;
+    cur+=2+(uint32_t)strlen(out->native.entries[i].symbol)+1;
+  }
 
   if(cur & 1u) cur++;
   dll_off[0] = cur; cur += (uint32_t)strlen(k_dll) + 1;
@@ -412,6 +417,11 @@ static int build_pe_imports(unsigned char* rdata, uint32_t rdata_rva, uint32_t p
   dll_off[3] = cur; cur += (uint32_t)strlen(c_dll) + 1;
   if(cur & 1u) cur++;
   dll_off[4] = cur; cur += (uint32_t)strlen(w_dll) + 1;
+  for(int i=0;i<TN_NATIVE_LIBRARY_COUNT;i++) if(native_count[i]){
+    if(cur&1u) cur++;
+    dll_off[native_dll[i]]=cur;
+    cur+=(uint32_t)strlen(tn_native_library_name(i,1))+1;
+  }
 
   memset(rdata, 0, cur);
 
@@ -435,6 +445,29 @@ static int build_pe_imports(unsigned char* rdata, uint32_t rdata_rva, uint32_t p
   put_u32_le(rdata + 80 + 0, rdata_rva + ilt_off[4]);
   put_u32_le(rdata + 80 + 12, rdata_rva + dll_off[4]);
   put_u32_le(rdata + 80 + 16, rdata_rva + iat_off[4]);
+  for(int i=0;i<TN_NATIVE_LIBRARY_COUNT;i++) if(native_count[i]){
+    int index=native_dll[i];
+    put_u32_le(rdata+20*index,rdata_rva+ilt_off[index]);
+    put_u32_le(rdata+20*index+12,rdata_rva+dll_off[index]);
+    put_u32_le(rdata+20*index+16,rdata_rva+iat_off[index]);
+    memcpy(rdata+dll_off[index],tn_native_library_name(i,1),strlen(tn_native_library_name(i,1))+1);
+  }
+  int native_ordinal[TN_NATIVE_LIBRARY_COUNT]={0};
+  for(int i=0;i<out->native.count;i++){
+    TnNativeImport* entry=&out->native.entries[i];
+    int index=native_dll[entry->library];
+    uint32_t displacement=ptr_size*(uint32_t)native_ordinal[entry->library]++;
+    uint32_t hint=rdata_rva+hint_off_native[i];
+    if(ptr_size==8){
+      put_u64_le(rdata+ilt_off[index]+displacement,hint);
+      put_u64_le(rdata+iat_off[index]+displacement,hint);
+    } else {
+      put_u32_le(rdata+ilt_off[index]+displacement,hint);
+      put_u32_le(rdata+iat_off[index]+displacement,hint);
+    }
+    memcpy(rdata+hint_off_native[i]+2,entry->symbol,strlen(entry->symbol)+1);
+    entry->iat=rdata_rva+iat_off[index]+displacement;
+  }
 
   // ILT/IAT kernel32
   for(int i=0;i<k_n;i++){
@@ -595,6 +628,13 @@ static int build_pe_imports(unsigned char* rdata, uint32_t rdata_rva, uint32_t p
   out->iat_wsa_recv        = rdata_rva + iat_off[4] + (uint32_t)ptr_size * 10u;
   out->iat_wsa_ioctlsocket = rdata_rva + iat_off[4] + (uint32_t)ptr_size * 11u;
   out->iat_wsa_setsockopt  = rdata_rva + iat_off[4] + (uint32_t)ptr_size * 12u;
+  if(out->native.count>0){
+    for(int i=0;i<out->native.count;i++){
+      if(strcmp(out->native.entries[i].symbol,"tn_native_malloc")==0) out->iat_valloc=out->native.entries[i].iat;
+      if(strcmp(out->native.entries[i].symbol,"tn_native_free")==0) out->iat_vfree=out->native.entries[i].iat;
+    }
+    out->runtime_flags|=PE_IMPORT_RUNTIME_TN_ALLOC;
+  }
   return (int)cur;
 }
 
@@ -1291,9 +1331,12 @@ static void emit_call_rel32(CodeBuf* cb, int32_t disp){
 static void emit_prologue(CodeBuf* cb, int frame_size){
   cb_emit1(cb, 0x55);               // push rbp
   cb_emit(cb, "\x48\x89\xE5", 3);   // mov rbp, rsp
-  if(frame_size > 0){
-    cb_emit(cb, "\x48\x81\xEC", 3); // sub rsp, imm32
-    cb_emit4(cb, (uint32_t)frame_size);
+  // Touch each page before descending past the Windows stack guard page.
+  while(frame_size > 0){
+    int step = frame_size > 4096 ? 4096 : frame_size;
+    emit_sub_rsp_imm32(cb, (uint32_t)step);
+    cb_emit(cb, "\xF6\x04\x24\x00", 4); // test byte ptr [rsp], 0
+    frame_size -= step;
   }
 }
 
@@ -1328,6 +1371,23 @@ static void emit_setcc(CodeBuf* cb, int cc){
   emit_modrm(cb, 3, 0, 0);
 }
 static void emit_movzx_eax_al(CodeBuf* cb){ cb_emit(cb, "\x0F\xB6\xC0", 3); }
+
+static void emit_float_setcc(CodeBuf* cb, IRCmp op){
+  switch(op){
+    case C_NEQ: emit_setcc(cb, 5); break;
+    case C_LT:  emit_setcc(cb, 2); break;
+    case C_LTE: emit_setcc(cb, 6); break;
+    case C_GT:  emit_setcc(cb, 7); break;
+    case C_GTE: emit_setcc(cb, 3); break;
+    default: emit_setcc(cb, 4); break;
+  }
+  // UCOMIS sets PF for unordered operands. Only != is true for NaN.
+  if(op==C_NEQ){
+    cb_emit(cb, "\x0F\x9A\xC4\x08\xE0", 5); // setp ah; or al, ah
+  } else if(op==C_EQ || op==C_LT || op==C_LTE){
+    cb_emit(cb, "\x0F\x9B\xC4\x20\xE0", 5); // setnp ah; and al, ah
+  }
+}
 
 static void emit_fbin(CodeBuf* cb, int op){
   // xmm0 op xmm1 -> xmm0 (scalar double)
@@ -1366,7 +1426,7 @@ static void emit_ucomiss(CodeBuf* cb){
 }
 
 static void emit_cvtsi2sd(CodeBuf* cb){
-  cb_emit(cb, "\xF2\x0F\x2A\xC0", 4); // cvtsi2sd xmm0, rax
+  cb_emit(cb, "\xF2\x48\x0F\x2A\xC0", 5); // cvtsi2sd xmm0, rax
 }
 
 static void emit_cvtsi2ss(CodeBuf* cb){
@@ -1374,7 +1434,7 @@ static void emit_cvtsi2ss(CodeBuf* cb){
 }
 
 static void emit_cvttsd2si(CodeBuf* cb){
-  cb_emit(cb, "\xF2\x0F\x2C\xC0", 4); // cvttsd2si rax, xmm0
+  cb_emit(cb, "\xF2\x48\x0F\x2C\xC0", 5); // cvttsd2si rax, xmm0
 }
 
 static void emit_cvttss2si(CodeBuf* cb){
@@ -1435,12 +1495,45 @@ enum { T_MAIN=1, T_SAY=2, T_SAYSTR=3 };
 typedef struct {
   size_t pos;
   int func_idx;
+  int absolute_x86;
 } FuncPatch;
 
 typedef struct {
   size_t pos;
   int label;
 } LabelPatch;
+
+/* Every CALL/ADDRSYM needs at most one function relocation. Branch and return
+ * relocations are resolved per function, so one buffer covers its maximum. */
+static int allocate_module_patches(IRModule* module, const unsigned char* reach,
+                                  FuncPatch** functions, int* function_cap,
+                                  LabelPatch** labels, int* label_cap){
+  size_t calls=0, maximum_labels=0;
+  for(int i=0;i<module->fn_n;i++){
+    IRFunc* fn=&module->fns[i];
+    if(fn->is_extern || (reach && !reach[i])) continue;
+    size_t branches=0;
+    for(int j=0;j<fn->n;j++){
+      IROp op=fn->ins[j].op;
+      if(op==I_CALL || op==I_ADDRSYM){
+        if(calls==(size_t)INT_MAX) return -1;
+        calls++;
+      }
+      if(op==I_JMP || op==I_JZ || op==I_RET) branches++;
+    }
+    if(branches>maximum_labels) maximum_labels=branches;
+  }
+  if(!calls) calls=1;
+  if(!maximum_labels) maximum_labels=1;
+  if(maximum_labels>(size_t)INT_MAX || calls>SIZE_MAX/sizeof(**functions) ||
+     maximum_labels>SIZE_MAX/sizeof(**labels)) return -1;
+  *functions=(FuncPatch*)malloc(calls*sizeof(**functions));
+  *labels=(LabelPatch*)malloc(maximum_labels*sizeof(**labels));
+  if(!*functions || !*labels){ free(*functions); free(*labels); return -1; }
+  *function_cap=(int)calls;
+  *label_cap=(int)maximum_labels;
+  return 0;
+}
 
 typedef struct {
   const char* name;
@@ -1489,6 +1582,7 @@ static int emit_func_patch_call(CodeBuf* cb, FuncPatch* fpatches, int* fpatch_n,
   cb_emit4(cb, 0);
   fpatches[*fpatch_n].pos = pos;
   fpatches[*fpatch_n].func_idx = tidx;
+  fpatches[*fpatch_n].absolute_x86 = 0;
   (*fpatch_n)++;
   return 0;
 }
@@ -1586,6 +1680,76 @@ static void emit_call_finish(CodeBuf* cb, int total_al, int pushed){
 static void patch_rel32_to(CodeBuf* cb, size_t pos, size_t target){
   int32_t disp = (int32_t)((int64_t)target - (int64_t)(pos + 4));
   cb_patch4(cb, pos, (uint32_t)disp);
+}
+
+static int emit_stdio_read_file_inline(CodeBuf* cb, uint32_t text_rva,
+                                       const PeImportInfo* imp,
+                                       size_t malloc_off, size_t free_off){
+  if(!ensure_iat(imp->iat_fopen, "read_file->fopen") ||
+     !ensure_iat(imp->iat_fclose, "read_file->fclose") ||
+     !ensure_iat(imp->iat_fseek, "read_file->fseek") ||
+     !ensure_iat(imp->iat_ftell, "read_file->ftell") ||
+     !ensure_iat(imp->iat_fread, "read_file->fread")) return -1;
+  // The native x64 import shims use Win64 registers on each host. Locals live
+  // beyond the 32-byte outgoing shadow area, and the stack stays aligned.
+  emit_sub_rsp_imm32(cb, 96);
+  emit_store_rsp_disp_imm32(cb, 32, 0x6272); // "rb"
+  emit_store_rsp_disp_imm32(cb, 56, 0); // buffer
+  emit_store_rsp_disp_imm32(cb, 72, 0); // result
+  cb_emit(cb, "\x48\x85\xC9\x0F\x84", 5);
+  size_t no_path = cb->len; cb_emit4(cb, 0);
+  emit_lea_reg_rsp_disp(cb, 2, 32);
+  emit_mov_reg_rip(cb, 0, text_rva, imp->iat_fopen); emit_call_reg(cb, 0);
+  cb_emit(cb, "\x48\x85\xC0\x0F\x84", 5);
+  size_t no_file = cb->len; cb_emit4(cb, 0);
+  emit_store_rsp_disp_reg(cb, 48, 0);
+  emit_mov_rr(cb, 1, 0); emit_mov_reg_imm64(cb, 2, 0); emit_mov_reg_imm64(cb, 8, 2);
+  emit_mov_reg_rip(cb, 0, text_rva, imp->iat_fseek); emit_call_reg(cb, 0);
+  cb_emit(cb, "\x85\xC0\x0F\x85", 4);
+  size_t seek_end_failed = cb->len; cb_emit4(cb, 0);
+  emit_mov_reg_rsp_disp(cb, 1, 48);
+  emit_mov_reg_rip(cb, 0, text_rva, imp->iat_ftell); emit_call_reg(cb, 0);
+  cb_emit(cb, "\x48\x85\xC0\x0F\x88", 5);
+  size_t tell_failed = cb->len; cb_emit4(cb, 0);
+  emit_store_rsp_disp_reg(cb, 64, 0);
+  emit_mov_reg_rsp_disp(cb, 1, 48);
+  emit_mov_reg_imm64(cb, 2, 0); emit_mov_reg_imm64(cb, 8, 0);
+  emit_mov_reg_rip(cb, 0, text_rva, imp->iat_fseek); emit_call_reg(cb, 0);
+  cb_emit(cb, "\x85\xC0\x0F\x85", 4);
+  size_t seek_start_failed = cb->len; cb_emit4(cb, 0);
+  emit_mov_reg_rsp_disp(cb, 1, 64);
+  cb_emit(cb, "\x48\xFF\xC1", 3);
+  emit_call_rel32(cb, (int32_t)((int64_t)malloc_off - (int64_t)(cb->len + 5)));
+  cb_emit(cb, "\x48\x85\xC0\x0F\x84", 5);
+  size_t allocation_failed = cb->len; cb_emit4(cb, 0);
+  emit_store_rsp_disp_reg(cb, 56, 0);
+  emit_mov_rr(cb, 1, 0); emit_mov_reg_imm64(cb, 2, 1);
+  emit_mov_reg_rsp_disp(cb, 8, 64); emit_mov_reg_rsp_disp(cb, 9, 48);
+  emit_mov_reg_rip(cb, 0, text_rva, imp->iat_fread); emit_call_reg(cb, 0);
+  emit_mov_reg_rsp_disp(cb, 2, 64);
+  cb_emit(cb, "\x48\x39\xD0\x0F\x85", 5);
+  size_t read_failed = cb->len; cb_emit4(cb, 0);
+  emit_mov_reg_rsp_disp(cb, 0, 56);
+  cb_emit(cb, "\xC6\x04\x10\x00", 4); // buffer[length]=0
+  emit_store_rsp_disp_reg(cb, 72, 0);
+  cb_emit1(cb, 0xE9); size_t success = cb->len; cb_emit4(cb, 0);
+  size_t free_buffer = cb->len;
+  patch_rel32_to(cb, read_failed, free_buffer);
+  emit_mov_reg_rsp_disp(cb, 1, 56);
+  emit_call_rel32(cb, (int32_t)((int64_t)free_off - (int64_t)(cb->len + 5)));
+  size_t close_file = cb->len;
+  patch_rel32_to(cb, seek_end_failed, close_file);
+  patch_rel32_to(cb, tell_failed, close_file);
+  patch_rel32_to(cb, seek_start_failed, close_file);
+  patch_rel32_to(cb, allocation_failed, close_file);
+  patch_rel32_to(cb, success, close_file);
+  emit_mov_reg_rsp_disp(cb, 1, 48);
+  emit_mov_reg_rip(cb, 0, text_rva, imp->iat_fclose); emit_call_reg(cb, 0);
+  size_t done = cb->len;
+  patch_rel32_to(cb, no_path, done); patch_rel32_to(cb, no_file, done);
+  emit_mov_reg_rsp_disp(cb, 0, 72);
+  emit_add_rsp_imm32(cb, 96);
+  return 0;
 }
 
 static int emit_win_list_dir_inline(CodeBuf* cb, uint32_t text_rva,
@@ -1858,9 +2022,12 @@ static int emit_win_proc_out_inline(CodeBuf* cb, uint32_t text_rva,
 static void emit_x86_prologue(CodeBuf* cb, int frame_size){
   cb_emit1(cb, 0x55);             // push ebp
   cb_emit(cb, "\x89\xE5", 2);     // mov ebp, esp
-  if(frame_size > 0){
+  while(frame_size > 0){
+    int step = frame_size > 4096 ? 4096 : frame_size;
     cb_emit1(cb, 0x81); cb_emit1(cb, 0xEC); // sub esp, imm32
-    cb_emit4(cb, (uint32_t)frame_size);
+    cb_emit4(cb, (uint32_t)step);
+    cb_emit(cb, "\xF6\x04\x24\x00", 4); // test byte ptr [esp], 0
+    frame_size -= step;
   }
 }
 
@@ -2052,9 +2219,9 @@ static LsraInterval* lsra_compute_ranges(IRFunc* F, int nreg) {
     if(in->op==I_GEP)  { MARK_USE(in->b); }
     if(in->op==I_JZ)   { MARK_USE(in->a); }
     if(in->op==I_RET)  { MARK_USE(in->a); }
-    if((in->op==I_CALL || in->op==I_CALLPTR) && in->args) {
+    if(in->op==I_CALL || in->op==I_CALLPTR) {
       if(in->op==I_CALLPTR) { MARK_USE(in->b); }
-      for(int ai=0; ai<in->argc; ai++) MARK_USE(in->args[ai]);
+      if(in->args) for(int ai=0; ai<in->argc; ai++) MARK_USE(in->args[ai]);
      if(in->a >= 0 && in->a < nreg){
       if(iv[in->a].live_start == 0x7fffffff) iv[in->a].live_start = k;
       iv[in->a].live_end = k + 1;
@@ -2342,9 +2509,6 @@ static int lower_func_x64(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
     for(int i=0;i<lbl_n;i++) label_off[i] = (size_t)-1;
   }
 
-  size_t ret_patches[512];
-  int ret_n = 0;
-
   for(int k=0;k<fn->n;k++){
     IRIns* in = &fn->ins[k];
     switch(in->op){
@@ -2361,6 +2525,10 @@ static int lower_func_x64(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
           lpatches[*lpatch_n].pos = pos;
           lpatches[*lpatch_n].label = in->a;
           (*lpatch_n)++;
+        } else {
+          fprintf(stderr,"buildexe: branch relocation capacity exceeded\n");
+          free(amap.dst_reg); free(amap.off_bytes); free(label_off);
+          return -1;
         }
         break;
       }
@@ -2374,6 +2542,10 @@ static int lower_func_x64(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
           lpatches[*lpatch_n].pos = pos;
           lpatches[*lpatch_n].label = in->b;
           (*lpatch_n)++;
+        } else {
+          fprintf(stderr,"buildexe: branch relocation capacity exceeded\n");
+          free(amap.dst_reg); free(amap.off_bytes); free(label_off);
+          return -1;
         }
         break;
       }
@@ -2385,7 +2557,12 @@ static int lower_func_x64(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
         const char* nm = in->name;
         int nlen = in->nlen;
         int done = 0;
-        if(nlen==3 && strncmp(nm, "say", 3)==0){
+        int native_index=tn_native_find(&imp->native,nm,nlen);
+        if(native_index>=0){
+          emit_mov_reg_rip(cb,0,text_rva,imp->native.entries[native_index].iat);
+          ra_store_rax(cb,in->a,vreg_to_mreg,nreg);
+          done=1;
+        } else if(nlen==3 && strncmp(nm, "say", 3)==0){
           emit_lea_reg_rip(cb, 0, text_rva, text_rva + (uint32_t)say_off);
           ra_store_rax(cb, in->a, vreg_to_mreg, nreg);
           done = 1;
@@ -2574,7 +2751,13 @@ static int lower_func_x64(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
           for(int fi=0; fi<fcount; fi++){
             if(finfo[fi].len==nlen && strncmp(finfo[fi].name, nm, (size_t)nlen)==0){
               if(!finfo[fi].is_extern){
-                emit_lea_reg_rip(cb, 0, text_rva, text_rva + (uint32_t)finfo[fi].off);
+                if(*fpatch_n>=fpatch_cap){ free(amap.dst_reg); free(amap.off_bytes); free(label_off); return -1; }
+                cb_emit(cb, "\x48\x8D\x05", 3); // lea rax,[rip+function], patched after every function is lowered
+                fpatches[*fpatch_n].pos=cb->len;
+                fpatches[*fpatch_n].func_idx=fi;
+                fpatches[*fpatch_n].absolute_x86=0;
+                (*fpatch_n)++;
+                cb_emit4(cb,0);
                 ra_store_rax(cb, in->a, vreg_to_mreg, nreg);
                 done = 1;
                 break;
@@ -2703,15 +2886,7 @@ static int lower_func_x64(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
         ra_load_xmm(cb, 1, in->c, vreg_to_mreg, nreg);
         if(in->size == 4) emit_ucomiss(cb);
         else emit_ucomisd(cb);
-        switch(in->cmpop){
-          case C_EQ:  emit_setcc(cb, 4); break;  // sete
-          case C_NEQ: emit_setcc(cb, 5); break;  // setne
-          case C_LT:  emit_setcc(cb, 2); break;  // setb
-          case C_LTE: emit_setcc(cb, 6); break;  // setbe
-          case C_GT:  emit_setcc(cb, 7); break;  // seta
-          case C_GTE: emit_setcc(cb, 3); break;  // setae
-          default: emit_setcc(cb, 4); break;
-        }
+        emit_float_setcc(cb, in->cmpop);
         emit_movzx_eax_al(cb);
         ra_store_rax(cb, in->a, vreg_to_mreg, nreg);
         break;
@@ -2934,11 +3109,18 @@ static int lower_func_x64(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
           return -1;
         }
         /* Strip recognised module prefixes so bare-name dispatch works */
-        if(nlen > 8 && strncmp(name, "gui_win.", 8)==0){ name += 8; nlen -= 8; }
-        if(nlen > 3 && strncmp(name, "os.", 3)==0){ name += 3; nlen -= 3; }
+        if(call_target_index(finfo,fcount,name,nlen)<0){
+          if(nlen > 8 && strncmp(name, "gui_win.", 8)==0){ name += 8; nlen -= 8; }
+          if(nlen > 3 && strncmp(name, "os.", 3)==0){ name += 3; nlen -= 3; }
+        }
         int pushed_mregs = 0;
         int total = emit_call_prepare(cb, in->argc, in->args, vreg_to_mreg, nreg, iv, k, &pushed_mregs);
-        if(nlen==9 && strncmp(name, "say_multi", 9)==0){
+        int native_index=tn_native_find(&imp->native,name,nlen);
+        if(native_index>=0){
+          emit_mov_reg_rip(cb,0,text_rva,imp->native.entries[native_index].iat);
+          emit_call_reg(cb,0);
+          if(in->call_ty && type_is_float(in->call_ty->fret)) emit_movq_reg_xmm(cb,0,0);
+        } else if(nlen==9 && strncmp(name, "say_multi", 9)==0){
           int32_t disp = (int32_t)((text_rva + (uint32_t)saymulti_off) - (text_rva + (uint32_t)cb->len + 5));
           emit_call_rel32(cb, disp);
         } else if(nlen==5 && strncmp(name, "say_f", 5)==0){
@@ -2962,10 +3144,6 @@ static int lower_func_x64(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
         } else if(nlen==11 && strncmp(name, "time_now_ns", 11)==0){
           int32_t disp = (int32_t)((text_rva + (uint32_t)time_ns_off) - (text_rva + (uint32_t)cb->len + 5));
           emit_call_rel32(cb, disp);
-        } else if(nlen==10 && strncmp(name, "args_count", 10)==0){
-          emit_mov_reg_imm64(cb, 0, 0);
-        } else if(nlen==3 && strncmp(name, "arg", 3)==0){
-          emit_mov_reg_imm64(cb, 0, 0);
         } else if(nlen==13 && strncmp(name, "async_workers", 13)==0){
           emit_mov_reg_imm64(cb, 0, 1);
         } else if(nlen==7 && strncmp(name, "os_name", 7)==0){
@@ -2973,111 +3151,6 @@ static int lower_func_x64(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
           { int32_t disp = (int32_t)((int64_t)(text_rva + malloc_off) - (int64_t)(text_rva + (uint32_t)(cb->len + 5))); emit_call_rel32(cb, disp); }
           cb_emit(cb, "\x48\xB9\x77\x69\x6E\x64\x6F\x77\x73\x00", 10); // mov rcx, "windows\0"
           cb_emit(cb, "\x48\x89\x08", 3); // mov [rax], rcx
-        } else if(nlen==7 && strncmp(name, "fb_addr", 7)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_fb_addr);
-          emit_call_reg(cb, 0);
-        } else if(nlen==8 && strncmp(name, "fb_width", 8)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_fb_width);
-          emit_call_reg(cb, 0);
-        } else if(nlen==9 && strncmp(name, "fb_height", 9)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_fb_height);
-          emit_call_reg(cb, 0);
-        } else if(nlen==8 && strncmp(name, "fb_pitch", 8)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_fb_pitch);
-          emit_call_reg(cb, 0);
-        } else if(nlen==7 && strncmp(name, "get_env", 7)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_getenv_str);
-          emit_call_reg(cb, 0);
-        } else if(nlen==19 && strncmp(name, "color_is_tty_stdout", 19)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_color_is_tty_stdout);
-          emit_call_reg(cb, 0);
-        } else if(nlen==12 && strncmp(name, "tts_play_pcm", 12)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_tts_play_pcm);
-          emit_call_reg(cb, 0);
-        } else if(nlen==15 && strncmp(name, "stt_capture_mic", 15)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_stt_capture_mic);
-          emit_call_reg(cb, 0);
-        } else if(nlen==9 && strncmp(name, "os_system", 9)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_os_system);
-          emit_call_reg(cb, 0);
-        } else if(nlen==12 && strncmp(name, "io_mmap_open", 12)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_mmap_file);
-          emit_call_reg(cb, 0);
-        } else if(nlen==13 && strncmp(name, "io_mmap_close", 13)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_munmap_file);
-          emit_call_reg(cb, 0);
-        } else if(nlen==14 && strncmp(name, "io_pipe_create", 14)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_io_pipe_create);
-          emit_call_reg(cb, 0);
-        } else if(nlen==10 && strncmp(name, "io_fd_read", 10)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_io_fd_read);
-          emit_call_reg(cb, 0);
-        } else if(nlen==11 && strncmp(name, "io_fd_write", 11)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_io_fd_write);
-          emit_call_reg(cb, 0);
-        } else if(nlen==11 && strncmp(name, "io_fd_close", 11)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_io_fd_close);
-          emit_call_reg(cb, 0);
-        } else if(nlen==6 && strncmp(name, "fb_bpp", 6)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_fb_bpp);
-          emit_call_reg(cb, 0);
-        } else if(nlen==12 && strncmp(name, "screen_width", 12)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_screen_width);
-          emit_call_reg(cb, 0);
-        } else if(nlen==13 && strncmp(name, "screen_height", 13)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_screen_height);
-          emit_call_reg(cb, 0);
-        } else if(nlen==12 && strncmp(name, "fb_fill_rect", 12)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_fb_fill_rect);
-          emit_call_reg(cb, 0);
-        } else if(nlen==12 && strncmp(name, "fb_put_pixel", 12)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_fb_put_pixel);
-          emit_call_reg(cb, 0);
-        } else if(nlen==10 && strncmp(name, "fb_init_ex", 10)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_fb_init_ex);
-          emit_call_reg(cb, 0);
-        } else if(nlen==10 && strncmp(name, "fb_present", 10)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_fb_present);
-          emit_call_reg(cb, 0);
-        } else if(nlen==7 && strncmp(name, "fb_fill", 7)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_fb_fill);
-          emit_call_reg(cb, 0);
-        } else if(nlen==15 && strncmp(name, "fb_fill_rounded", 15)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_fb_fill_rounded);
-          emit_call_reg(cb, 0);
-        } else if(nlen==14 && strncmp(name, "fb_soft_cursor", 14)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_fb_soft_cursor);
-          emit_call_reg(cb, 0);
-        } else if(nlen==7 && strncmp(name, "fb_text", 7)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_fb_text);
-          emit_call_reg(cb, 0);
-        } else if(nlen==10 && strncmp(name, "fb_text_ex", 10)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_fb_text_ex);
-          emit_call_reg(cb, 0);
-        } else if(nlen==13 && strncmp(name, "kbd_has_event", 13)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_kbd_has_event);
-          emit_call_reg(cb, 0);
-        } else if(nlen==13 && strncmp(name, "kbd_read_char", 13)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_kbd_read_char);
-          emit_call_reg(cb, 0);
-        } else if(nlen==16 && strncmp(name, "mouse_has_packet", 16)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_mouse_has_packet);
-          emit_call_reg(cb, 0);
-        } else if(nlen==8 && strncmp(name, "mouse_dx", 8)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_mouse_dx);
-          emit_call_reg(cb, 0);
-        } else if(nlen==8 && strncmp(name, "mouse_dy", 8)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_mouse_dy);
-          emit_call_reg(cb, 0);
-        } else if(nlen==13 && strncmp(name, "mouse_buttons", 13)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_mouse_buttons);
-          emit_call_reg(cb, 0);
-        } else if(nlen==11 && strncmp(name, "mouse_pos_x", 11)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_mouse_pos_x);
-          emit_call_reg(cb, 0);
-        } else if(nlen==11 && strncmp(name, "mouse_pos_y", 11)==0){
-          emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_host_mouse_pos_y);
-          emit_call_reg(cb, 0);
         } else if(nlen==13 && strncmp(name, "async_pending", 13)==0){
           emit_mov_reg_imm64(cb, 0, 0);
         } else if(nlen==8 && strncmp(name, "sleep_ms", 8)==0){
@@ -3143,21 +3216,18 @@ static int lower_func_x64(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
           emit_lea_reg_rip(cb, 0, text_rva, nl_rva);
         } else if(nlen==11 && strncmp(name, "path_exists", 11)==0){
           if(!ensure_iat(imp->iat_getfileattr, "path_exists->GetFileAttributesA")){ free(amap.dst_reg); free(amap.off_bytes); free(label_off); return -1; }
-          cb_emit(cb, "\x48\x83\xEC\x28", 4); // sub rsp, 40
+          // emit_call_prepare already reserved aligned Win64 shadow space.
           emit_mov_reg_rip(cb, 0, text_rva, imp->iat_getfileattr);
           emit_call_reg(cb, 0);
-          cb_emit(cb, "\x48\x83\xC4\x28", 4); // add rsp, 40
           cb_emit(cb, "\x83\xF8\xFF", 3); // cmp eax, -1
           cb_emit(cb, "\x0F\x95\xC0", 3); // setne al
           cb_emit(cb, "\x48\x0F\xB6\xC0", 4); // movzx rax, al
         } else if(nlen==11 && strncmp(name, "path_is_dir", 11)==0){
           if(!ensure_iat(imp->iat_getfileattr, "path_is_dir->GetFileAttributesA")){ free(amap.dst_reg); free(amap.off_bytes); free(label_off); return -1; }
-          cb_emit(cb, "\x48\x83\xEC\x28", 4); // sub rsp, 40
           emit_mov_reg_rip(cb, 0, text_rva, imp->iat_getfileattr);
           emit_call_reg(cb, 0);
-          cb_emit(cb, "\x48\x83\xC4\x28", 4); // add rsp, 40
           cb_emit(cb, "\x83\xF8\xFF", 3); // cmp eax, -1
-          cb_emit(cb, "\x74\x0A", 2); // jz fail
+          cb_emit(cb, "\x74\x0D", 2); // jz fail (skip 13 bytes)
           cb_emit(cb, "\x48\x83\xE0\x10", 4); // and rax, 16
           cb_emit(cb, "\x0F\x95\xC0", 3); // setne al
           cb_emit(cb, "\x48\x0F\xB6\xC0", 4); // movzx rax, al
@@ -3170,22 +3240,20 @@ static int lower_func_x64(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
         } else if(nlen==5 && strncmp(name, "mkdir", 5)==0){
           if(!ensure_iat(imp->iat_createdir, "mkdir->CreateDirectoryA")){ free(amap.dst_reg); free(amap.off_bytes); free(label_off); return -1; }
           cb_emit(cb, "\x48\x31\xD2", 3); // xor rdx, rdx
-          cb_emit(cb, "\x48\x83\xEC\x28", 4); // sub rsp, 40
           emit_mov_reg_rip(cb, 0, text_rva, imp->iat_createdir);
           emit_call_reg(cb, 0);
-          cb_emit(cb, "\x48\x83\xC4\x28", 4); // add rsp, 40
           cb_emit(cb, "\x48\x85\xC0", 3); // test rax, rax
           cb_emit(cb, "\x0F\x94\xC0", 3); // setz al
           cb_emit(cb, "\x48\x0F\xB6\xC0", 4); // movzx rax, al
+          cb_emit(cb, "\x48\xF7\xD8", 3); // neg rax: 0 on success, -1 on failure
         } else if(nlen==5 && strncmp(name, "rmdir", 5)==0){
           if(!ensure_iat(imp->iat_removedir, "rmdir->RemoveDirectoryA")){ free(amap.dst_reg); free(amap.off_bytes); free(label_off); return -1; }
-          cb_emit(cb, "\x48\x83\xEC\x28", 4); // sub rsp, 40
           emit_mov_reg_rip(cb, 0, text_rva, imp->iat_removedir);
           emit_call_reg(cb, 0);
-          cb_emit(cb, "\x48\x83\xC4\x28", 4); // add rsp, 40
           cb_emit(cb, "\x48\x85\xC0", 3); // test rax, rax
           cb_emit(cb, "\x0F\x94\xC0", 3); // setz al
           cb_emit(cb, "\x48\x0F\xB6\xC0", 4); // movzx rax, al
+          cb_emit(cb, "\x48\xF7\xD8", 3); // neg rax: 0 on success, -1 on failure
         } else if(nlen==6 && strncmp(name, "remove", 6)==0){
           // C remove(path)->int through UCRT, preserving C-compatible return codes.
           if(!ensure_iat(imp->iat_remove, "remove")){ free(amap.dst_reg); free(amap.off_bytes); free(label_off); return -1; }
@@ -3234,6 +3302,11 @@ static int lower_func_x64(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
           cb->data[fs_done + 1] = (unsigned char)(cb->len - (fs_done + 2));
           cb_emit(cb, "\x48\x83\xC4\x40", 4);            // add rsp, 0x40
         } else if(nlen==9 && strncmp(name, "read_file", 9)==0){
+          if(!imp->iat_createfile){
+            if(emit_stdio_read_file_inline(cb, text_rva, imp, malloc_off, free_off) != 0){
+              free(amap.dst_reg); free(amap.off_bytes); free(label_off); return -1;
+            }
+          } else {
           // read_file(path:rcx)->str via CreateFileA+GetFileSizeEx+malloc+ReadFile+CloseHandle
           if(!ensure_iat(imp->iat_createfile, "read_file->CreateFileA")){ free(amap.dst_reg); free(amap.off_bytes); free(label_off); return -1; }
           if(!ensure_iat(imp->iat_getfilesize, "read_file->GetFileSizeEx")){ free(amap.dst_reg); free(amap.off_bytes); free(label_off); return -1; }
@@ -3289,6 +3362,7 @@ static int lower_func_x64(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
           emit_mov_reg_imm64(cb, 0, 0);
           cb->data[rf_done + 1] = (unsigned char)(cb->len - (rf_done + 2));
           cb_emit(cb, "\x48\x83\xC4\x60", 4);            // add rsp, 0x60
+          }
         } else if(nlen==10 && strncmp(name, "write_file", 10)==0){
           // write_file(path:rcx, data:rdx, len:r8) -> bytes_written:rax
           // Uses Win32: CreateFileA + WriteFile + CloseHandle (no wide string issues)
@@ -3544,9 +3618,11 @@ static int lower_func_x64(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
         } else if(nlen==6 && strncmp(name, "strcmp", 6)==0){
           emit_mov_reg_rip(cb, 0, text_rva, imp->iat_lstrcmp);
           emit_call_reg(cb, 0);
+          cb_emit(cb, "\x48\x98", 2); // sign-extend the C int comparison result
         } else if(nlen==8 && strncmp(name, "tn_strcmp", 8)==0){
           emit_mov_reg_rip(cb, 0, text_rva, imp->iat_lstrcmp);
           emit_call_reg(cb, 0);
+          cb_emit(cb, "\x48\x98", 2);
         } else if(nlen==7 && strncmp(name, "say_str", 7)==0){
           int32_t disp = (int32_t)((text_rva + (uint32_t)saystr_off) - (text_rva + (uint32_t)cb->len + 5));
           emit_call_rel32(cb, disp);
@@ -3608,12 +3684,6 @@ static int lower_func_x64(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
               emit_call_reg(cb, 0);
             } else if(nlen==19 && strncmp(name, "color_is_tty_stdout", 19)==0){
               emit_mov_reg_imm64(cb, 0, 1);
-            } else if(nlen==12 && strncmp(name, "tts_play_pcm", 12)==0){
-              emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_tts_play_pcm);
-              emit_call_reg(cb, 0);
-            } else if(nlen==15 && strncmp(name, "stt_capture_mic", 15)==0){
-              emit_mov_reg_imm64(cb, 0, (uint64_t)&tn_stt_capture_mic);
-              emit_call_reg(cb, 0);
             } else if(is_net_runtime_name(imp, name, nlen)){
               if(emit_net_runtime_call(cb, text_rva, imp, name, nlen) != 1){
                 free(amap.dst_reg); free(amap.off_bytes); free(label_off); return -1;
@@ -3708,9 +3778,11 @@ static int lower_func_x64(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
             } else if(nlen==6 && strncmp(name, "strcmp", 6)==0){
               emit_mov_reg_rip(cb, 0, text_rva, imp->iat_lstrcmp);
               emit_call_reg(cb, 0);
+              cb_emit(cb, "\x48\x98", 2);
             } else if(nlen==8 && strncmp(name, "tn_strcmp", 8)==0){
               emit_mov_reg_rip(cb, 0, text_rva, imp->iat_lstrcmp);
               emit_call_reg(cb, 0);
+              cb_emit(cb, "\x48\x98", 2);
             } else {
               free(amap.dst_reg);
               free(amap.off_bytes);
@@ -3730,7 +3802,7 @@ static int lower_func_x64(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
         break;
       }
       case I_CALLPTR: {
-        if(!in->args){
+        if(in->argc > 0 && !in->args){
           fprintf(stderr, "buildexe: callptr missing args\n");
           free(amap.dst_reg);
           free(amap.off_bytes);
@@ -3749,8 +3821,10 @@ static int lower_func_x64(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
         if(in->a >= 0) ra_load_rax(cb, in->a, vreg_to_mreg, nreg);
         else emit_mov_reg_imm64(cb, 0, 0);
         cb_emit1(cb, 0xE9); // jmp rel32 to epilogue
-        if(ret_n < (int)(sizeof(ret_patches)/sizeof(ret_patches[0]))){
-          ret_patches[ret_n++] = cb->len;
+        if(*lpatch_n < lpatch_cap){
+          lpatches[*lpatch_n].pos = cb->len;
+          lpatches[*lpatch_n].label = -1; /* function epilogue */
+          (*lpatch_n)++;
           cb_emit4(cb, 0);
         } else {
           fprintf(stderr, "buildexe: too many returns in %.*s\n", fn->len, fn->name);
@@ -3774,14 +3848,14 @@ static int lower_func_x64(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
   emit_lsra_restores(cb, lsra_phy_mask);  // restore callee-saved regs used by LSRA
   emit_epilogue(cb, frame);
 
-  for(int i=0;i<ret_n;i++){
-    uint32_t rip = text_rva + (uint32_t)ret_patches[i] + 4;
-    int32_t disp = (int32_t)((text_rva + (uint32_t)epilogue_pos) - rip);
-    cb_patch4(cb, ret_patches[i], (uint32_t)disp);
-  }
 
   for(int i=0;i<*lpatch_n;i++){
     int lid = lpatches[i].label;
+    if(lid==-1){
+      uint32_t rip = text_rva + (uint32_t)lpatches[i].pos + 4;
+      cb_patch4(cb,lpatches[i].pos,(uint32_t)((text_rva+(uint32_t)epilogue_pos)-rip));
+      continue;
+    }
     if(lid >=0 && lid < lbl_n && label_off && label_off[lid] != (size_t)-1){
       uint32_t rip = text_rva + (uint32_t)lpatches[i].pos + 4;
       int32_t disp = (int32_t)((text_rva + (uint32_t)label_off[lid]) - rip);
@@ -3904,9 +3978,6 @@ static int lower_func_x86(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
     for(int i=0;i<lbl_n;i++) label_off[i] = (size_t)-1;
   }
 
-  size_t ret_patches[512];
-  int ret_n = 0;
-
   for(int k=0;k<fn->n;k++){
     IRIns* in = &fn->ins[k];
     switch(in->op){
@@ -3923,6 +3994,10 @@ static int lower_func_x86(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
           lpatches[*lpatch_n].pos = pos;
           lpatches[*lpatch_n].label = in->a;
           (*lpatch_n)++;
+        } else {
+          fprintf(stderr,"buildexe: branch relocation capacity exceeded\n");
+          free(amap.dst_reg); free(amap.off_bytes); free(label_off);
+          return -1;
         }
         break;
       }
@@ -3936,6 +4011,10 @@ static int lower_func_x86(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
           lpatches[*lpatch_n].pos = pos;
           lpatches[*lpatch_n].label = in->b;
           (*lpatch_n)++;
+        } else {
+          fprintf(stderr,"buildexe: branch relocation capacity exceeded\n");
+          free(amap.dst_reg); free(amap.off_bytes); free(label_off);
+          return -1;
         }
         break;
       }
@@ -4049,7 +4128,12 @@ static int lower_func_x86(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
           for(int fi=0; fi<fcount; fi++){
             if(finfo[fi].len==nlen && strncmp(finfo[fi].name, nm, (size_t)nlen)==0){
               if(!finfo[fi].is_extern){
-                emit_x86_mov_eax_abs(cb, text_rva, text_rva + (uint32_t)finfo[fi].off, rel);
+                if(*fpatch_n>=fpatch_cap){ free(amap.dst_reg); free(amap.off_bytes); free(label_off); return -1; }
+                emit_x86_mov_eax_abs(cb, text_rva, text_rva, rel);
+                fpatches[*fpatch_n].pos=cb->len-4;
+                fpatches[*fpatch_n].func_idx=fi;
+                fpatches[*fpatch_n].absolute_x86=1;
+                (*fpatch_n)++;
                 emit_x86_zero_edx(cb);
                 emit_x86_store64(cb, reg_slot_off(in->a));
                 done = 1;
@@ -4216,15 +4300,7 @@ static int lower_func_x86(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
         emit_x86_movsd_xmm_membp(cb, 0, reg_slot_off(in->b));
         emit_x86_movsd_xmm_membp(cb, 1, reg_slot_off(in->c));
         emit_x86_ucomisd(cb);
-        switch(in->cmpop){
-          case C_EQ:  emit_setcc(cb, 4); break;
-          case C_NEQ: emit_setcc(cb, 5); break;
-          case C_LT:  emit_setcc(cb, 2); break;
-          case C_LTE: emit_setcc(cb, 6); break;
-          case C_GT:  emit_setcc(cb, 7); break;
-          case C_GTE: emit_setcc(cb, 3); break;
-          default: emit_setcc(cb, 4); break;
-        }
+        emit_float_setcc(cb, in->cmpop);
         emit_movzx_eax_al(cb);
         emit_x86_zero_edx(cb);
         emit_x86_store64(cb, reg_slot_off(in->a));
@@ -4372,14 +4448,6 @@ static int lower_func_x86(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
         } else if(nlen==11 && strncmp(name, "time_now_ns", 11)==0){
           int32_t disp = (int32_t)((text_rva + (uint32_t)time_ns_off) - (text_rva + (uint32_t)cb->len + 5));
           emit_call_rel32(cb, disp);
-          emit_x86_add_esp(cb, (uint32_t)in->argc * 8u);
-        } else if(nlen==10 && strncmp(name, "args_count", 10)==0){
-          emit_x86_mov_eax_imm32(cb, 0);
-          emit_x86_zero_edx(cb);
-          emit_x86_add_esp(cb, (uint32_t)in->argc * 8u);
-        } else if(nlen==3 && strncmp(name, "arg", 3)==0){
-          emit_x86_mov_eax_imm32(cb, 0);
-          emit_x86_zero_edx(cb);
           emit_x86_add_esp(cb, (uint32_t)in->argc * 8u);
         } else if(nlen==13 && strncmp(name, "async_workers", 13)==0){
           emit_x86_mov_eax_imm32(cb, 1);
@@ -4636,7 +4704,7 @@ static int lower_func_x86(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
         break;
       }
       case I_CALLPTR: {
-        if(!in->args){
+        if(in->argc > 0 && !in->args){
           fprintf(stderr, "buildexe: callptr missing args\n");
           free(amap.dst_reg);
           free(amap.off_bytes);
@@ -4656,8 +4724,10 @@ static int lower_func_x86(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
         if(in->a >= 0) emit_x86_load64(cb, reg_slot_off(in->a));
         else { emit_x86_mov_eax_imm32(cb, 0); emit_x86_zero_edx(cb); }
         cb_emit1(cb, 0xE9);
-        if(ret_n < (int)(sizeof(ret_patches)/sizeof(ret_patches[0]))){
-          ret_patches[ret_n++] = cb->len;
+        if(*lpatch_n < lpatch_cap){
+          lpatches[*lpatch_n].pos = cb->len;
+          lpatches[*lpatch_n].label = -1; /* function epilogue */
+          (*lpatch_n)++;
           cb_emit4(cb, 0);
         } else {
           fprintf(stderr, "buildexe: too many returns in %.*s\n", fn->len, fn->name);
@@ -4681,13 +4751,13 @@ static int lower_func_x86(IRFunc* fn, CodeBuf* cb, uint32_t text_rva,
   size_t epilogue_pos = cb->len;
   emit_x86_epilogue(cb, frame);
 
-  for(int i=0;i<ret_n;i++){
-    uint32_t rip = text_rva + (uint32_t)ret_patches[i] + 4;
-    int32_t disp = (int32_t)((text_rva + (uint32_t)epilogue_pos) - rip);
-    cb_patch4(cb, ret_patches[i], (uint32_t)disp);
-  }
   for(int i=0;i<*lpatch_n;i++){
     int lid = lpatches[i].label;
+    if(lid==-1){
+      uint32_t rip = text_rva + (uint32_t)lpatches[i].pos + 4;
+      cb_patch4(cb,lpatches[i].pos,(uint32_t)((text_rva+(uint32_t)epilogue_pos)-rip));
+      continue;
+    }
     if(lid >=0 && lid < lbl_n && label_off && label_off[lid] != (size_t)-1){
       uint32_t rip = text_rva + (uint32_t)lpatches[i].pos + 4;
       int32_t disp = (int32_t)((text_rva + (uint32_t)label_off[lid]) - rip);
@@ -5600,7 +5670,7 @@ static int lower_module_x86(IRModule* m, CodeBuf* cb, uint32_t text_rva,
   emit_x86_mov_eax_membp(cb, -(8));
   emit_x86_push_reg(cb, 0);
   emit_x86_call_moffs(cb, text_rva, imp->iat_lstrcmp, rel);
-  emit_x86_zero_edx(cb);
+  cb_emit1(cb, 0x99); // cdq: signed C int to the language's EDX:EAX integer
   emit_x86_epilogue(cb, 16);
 
   // tn_strcmp helper (alias of strcmp)
@@ -5611,7 +5681,7 @@ static int lower_module_x86(IRModule* m, CodeBuf* cb, uint32_t text_rva,
   emit_x86_mov_eax_membp(cb, -(8));
   emit_x86_push_reg(cb, 0);
   emit_x86_call_moffs(cb, text_rva, imp->iat_lstrcmp, rel);
-  emit_x86_zero_edx(cb);
+  cb_emit1(cb, 0x99);
   emit_x86_epilogue(cb, 16);
 
   // say_multi helper (vals:*i64, tags:*i64, argc:i64)
@@ -5833,9 +5903,15 @@ static int lower_module_x86(IRModule* m, CodeBuf* cb, uint32_t text_rva,
   }
 
   // Lower functions
-  FuncPatch fpatches[2048];
+  FuncPatch* fpatches=NULL;
+  LabelPatch* lpatches=NULL;
+  int fpatch_cap=0, lpatch_cap=0;
+  if(allocate_module_patches(m,reach,&fpatches,&fpatch_cap,&lpatches,&lpatch_cap)!=0){
+    fprintf(stderr,"buildexe: cannot allocate module relocations\n");
+    free(reach); free(stack); free(finfo);
+    return -1;
+  }
   int fpatch_n = 0;
-  LabelPatch lpatches[2048];
   for(int i=0;i<m->fn_n;i++){
     if(!reach[i]) continue;
     finfo[i].off = cb->len;
@@ -5851,8 +5927,9 @@ static int lower_module_x86(IRModule* m, CodeBuf* cb, uint32_t text_rva,
                             out_malloc_off ? *out_malloc_off : 0,
                             out_free_off ? *out_free_off : 0,
                             finfo, m->fn_n, ginfo, gcount, imp, rel,
-                            fpatches, &fpatch_n, 2048, lpatches, &lpatch_n, 2048);
+                            fpatches, &fpatch_n, fpatch_cap, lpatches, &lpatch_n, lpatch_cap);
     if(ok != 0){
+      free(fpatches); free(lpatches);
       free(reach);
       free(stack);
       free(finfo);
@@ -5875,11 +5952,16 @@ static int lower_module_x86(IRModule* m, CodeBuf* cb, uint32_t text_rva,
   // Patch calls to functions
   for(int i=0;i<fpatch_n;i++){
     int idx = fpatches[i].func_idx;
+    if(fpatches[i].absolute_x86){
+      cb_patch4(cb,fpatches[i].pos,0x400000u+text_rva+(uint32_t)finfo[idx].off);
+      continue;
+    }
     uint32_t rip = text_rva + (uint32_t)fpatches[i].pos + 4;
     int32_t disp = (int32_t)((text_rva + (uint32_t)finfo[idx].off) - rip);
     cb_patch4(cb, fpatches[i].pos, (uint32_t)disp);
   }
 
+  free(fpatches); free(lpatches);
   free(reach);
   free(stack);
   free(finfo);
@@ -6519,8 +6601,14 @@ static int lower_module_x64(IRModule* m, CodeBuf* cb, uint32_t text_rva,
   // functions
   size_t main_off = 0;
   int main_found = 0;
-  FuncPatch fpatches[512];
-  LabelPatch lpatches[512];
+  FuncPatch* fpatches=NULL;
+  LabelPatch* lpatches=NULL;
+  int fpatch_cap=0, lpatch_cap=0;
+  if(allocate_module_patches(m,reach,&fpatches,&fpatch_cap,&lpatches,&lpatch_cap)!=0){
+    fprintf(stderr,"buildexe: cannot allocate module relocations\n");
+    free(finfo); free(reach); free(stack);
+    return -1;
+  }
   int fpatch_n = 0;
   int lpatch_n = 0;
 
@@ -6548,8 +6636,9 @@ static int lower_module_x64(IRModule* m, CodeBuf* cb, uint32_t text_rva,
                       finfo, m->fn_n,
                       ginfo, gcount,
                       imp,
-                      fpatches, &fpatch_n, 512,
-                      lpatches, &lpatch_n, 512) != 0){
+                      fpatches, &fpatch_n, fpatch_cap,
+                      lpatches, &lpatch_n, lpatch_cap) != 0){
+      free(fpatches); free(lpatches);
       free(finfo);
       free(reach);
       free(stack);
@@ -6559,6 +6648,7 @@ static int lower_module_x64(IRModule* m, CodeBuf* cb, uint32_t text_rva,
 
   if(!main_found){
     fprintf(stderr, "buildexe: main not lowered\n");
+    free(fpatches); free(lpatches);
     free(finfo);
     free(reach);
     free(stack);
@@ -6576,6 +6666,7 @@ static int lower_module_x64(IRModule* m, CodeBuf* cb, uint32_t text_rva,
   for(int i=0;i<fpatch_n;i++){
     int tidx = fpatches[i].func_idx;
     if(tidx < 0 || tidx >= m->fn_n){
+      free(fpatches); free(lpatches); free(reach); free(stack);
       free(finfo);
       return -1;
     }
@@ -6585,6 +6676,7 @@ static int lower_module_x64(IRModule* m, CodeBuf* cb, uint32_t text_rva,
     cb_patch4(cb, fpatches[i].pos, (uint32_t)d2);
   }
 
+  free(fpatches); free(lpatches);
   free(finfo);
   free(reach);
   free(stack);
@@ -7030,6 +7122,12 @@ int ir_compile_to_pe_exe(IRModule* m, const char* out_exe, const char* target){
   return -1;
 #else
   if(!target) target = "x86_64";
+  TnNativeImports native;
+  if(tn_native_collect(m,&native)!=0) return -1;
+  if(native.count>0 && strcmp(target,"x86_64")!=0){
+    fprintf(stderr,"buildexe: native runtime imports currently require the x86_64 target\n"); return -1;
+  }
+  if(tn_native_deploy(&native,out_exe,1,0x8664)!=0) return -1;
   const uint32_t text_rva = 0x1000;
   uint32_t rdata_rva = 0x2000;
   unsigned char* rdata = (unsigned char*)calloc(1, 1024*1024);
@@ -7042,7 +7140,7 @@ int ir_compile_to_pe_exe(IRModule* m, const char* out_exe, const char* target){
     for(int pass=0; pass<2; pass++){
       memset(rdata, 0, 1024*1024);
       memset(&imp, 0, sizeof(imp));
-      int base = build_pe_imports(rdata, rdata_rva_try, 4, &imp);
+      int base = build_pe_imports(m, rdata, rdata_rva_try, 4, &imp);
       if(base < 0) return -1;
       uint32_t off = (uint32_t)base;
       const char* fmt = "%d";
@@ -7125,7 +7223,7 @@ int ir_compile_to_pe_exe(IRModule* m, const char* out_exe, const char* target){
           }
           ginfo[i].rva = data_rva + doff;
           if(g->has_init){
-            if(g->ty && g->ty->k == TY_F64){
+            if(type_is_float(g->ty)){
               uint64_t bits = (uint64_t)g->init_fbits;
               for(int b=0;b<g->size && b<8;b++){
                 data[doff + (uint32_t)b] = (unsigned char)((bits >> (8*b)) & 0xFF);
@@ -7210,7 +7308,7 @@ int ir_compile_to_pe_exe(IRModule* m, const char* out_exe, const char* target){
   if(strcmp(target, "arm64")==0){
     memset(rdata, 0, 1024*1024);
     memset(&imp, 0, sizeof(imp));
-    int base = build_pe_imports(rdata, rdata_rva, 8, &imp);
+    int base = build_pe_imports(m, rdata, rdata_rva, 8, &imp);
     if(base < 0) return -1;
     uint32_t off = (uint32_t)base;
     uint32_t* str_rva = NULL;
@@ -7261,7 +7359,7 @@ int ir_compile_to_pe_exe(IRModule* m, const char* out_exe, const char* target){
         }
         ginfo[i].rva = data_rva + doff;
         if(g->has_init){
-          if(g->ty && g->ty->k == TY_F64){
+          if(type_is_float(g->ty)){
             uint64_t bits = (uint64_t)g->init_fbits;
             for(int b=0;b<g->size && b<8;b++){
               data[doff + (uint32_t)b] = (unsigned char)((bits >> (8*b)) & 0xFF);
@@ -7344,7 +7442,7 @@ int ir_compile_to_pe_exe(IRModule* m, const char* out_exe, const char* target){
   for(int pass=0; pass<2; pass++){
     memset(rdata, 0, 1024*1024);
     memset(&imp, 0, sizeof(imp));
-    int base = build_pe_imports(rdata, rdata_rva, 8, &imp);
+    int base = build_pe_imports(m, rdata, rdata_rva, 8, &imp);
     if(base < 0) return -1;
     uint32_t off = (uint32_t)base;
     const char* fmt = "%lld";
@@ -7411,7 +7509,7 @@ int ir_compile_to_pe_exe(IRModule* m, const char* out_exe, const char* target){
         }
         ginfo[i].rva = data_rva + doff;
         if(g->has_init){
-          if(g->ty && g->ty->k == TY_F64){
+          if(type_is_float(g->ty)){
             uint64_t bits = (uint64_t)g->init_fbits;
             for(int b=0;b<g->size && b<8;b++){
               data[doff + (uint32_t)b] = (unsigned char)((bits >> (8*b)) & 0xFF);

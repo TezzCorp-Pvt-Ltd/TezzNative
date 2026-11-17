@@ -1,0 +1,14 @@
+fn main() -> int:
+  start_ms:int = time_now_ms()
+  start_ns:int = time_now_ns()
+  seconds:int = time_now()
+  sleep_ms(120)
+  elapsed_ms:int = time_now_ms() - start_ms
+  elapsed_ns:int = time_now_ns() - start_ns
+  say "CLOCK_UNITS", elapsed_ms, elapsed_ns
+  if elapsed_ms < 80 || elapsed_ms > 5000: ret 1
+  if elapsed_ns < 80000000 || elapsed_ns > 5000000000: ret 2
+  // Calls are adjacent; allow a wide scheduling tolerance around the unit ratio.
+  if elapsed_ns < elapsed_ms * 500000 || elapsed_ns > elapsed_ms * 2000000: ret 3
+  if start_ms / 1000 - seconds > 2 || seconds - start_ms / 1000 > 2: ret 4
+  ret 0

@@ -1,0 +1,167 @@
+// runtime implementation: system.
+
+import "runtime.memory"
+import "runtime.state"
+
+fn fputs(s:str, h:*char) -> int:
+  if s == 0 || h == 0:
+    ret 0 - 1
+  n:int = runtime.memory.strlen(s)
+  if n <= 0:
+    ret 0
+  unsafe:
+    ret fwrite(s as *char, 1, n, h)
+
+// fputc — write single character c to file handle h, returns c or -1
+
+fn fputc(c:int, h:*char) -> int:
+  if h == 0:
+    ret 0 - 1
+  cbuf:*char = (*char)malloc(1)
+  if cbuf == 0:
+    ret 0 - 1
+  unsafe:
+    cbuf[0] = c as char
+  r:int = fwrite(cbuf, 1, 1, h)
+  free(cbuf)
+  if r == 1:
+    ret c
+  ret 0 - 1
+
+// fgets — read at most n-1 chars from h into buf, stopping at newline or EOF
+// Returns number of bytes read, or 0 on EOF/error.
+
+fn fgets(buf:*char, n:int, h:*char) -> int:
+  if buf == 0 || n <= 1 || h == 0:
+    ret 0
+  read:int = 0
+  one:*char = (*char)malloc(1)
+  if one == 0:
+    ret 0
+  while read < n - 1:
+    got:int = fread(one, 1, 1, h)
+    if got <= 0:
+      break
+    c:int = 0
+    unsafe:
+      c = one[0] as int
+    unsafe:
+      buf[read] = c as char
+    read = read + 1
+    if c == 10:  // newline
+      break
+  unsafe:
+    buf[read] = 0 as char
+  free(one)
+  ret read
+
+// ============================================================
+// SECTION 6: Environment
+// ============================================================
+
+// getenv — read environment variable by name
+// Reads from a small in-process env table set via setenv().
+// On platforms with native env support this wraps the OS call via /proc/environ.
+
+fn _rt_env_init() -> int:
+  if (*runtime.state._state__rt_env_table()) != 0:
+    ret 0
+  (*runtime.state._state__rt_env_table()) = (*_RtEnvEntry)malloc((*runtime.state._state__RT_ENV_MAX()) * sizeof(_RtEnvEntry))
+  if (*runtime.state._state__rt_env_table()) == 0:
+    ret 0 - 1
+  (*runtime.state._state__rt_env_cap()) = (*runtime.state._state__RT_ENV_MAX())
+  i:int = 0
+  while i < (*runtime.state._state__RT_ENV_MAX()):
+    e:*_RtEnvEntry = (*runtime.state._state__rt_env_table()) + i
+    (*e).key   = 0 as *char
+    (*e).value = 0 as *char
+    (*e).used  = 0
+    i = i + 1
+  ret 0
+
+// setenv — register a key=value pair in the process env table
+
+fn setenv(key:str, value:str) -> int:
+  if key == 0:
+    ret 0 - 1
+  _rt_env_init()
+  // Update if exists
+  i:int = 0
+  while i < (*runtime.state._state__rt_env_count()):
+    e:*_RtEnvEntry = (*runtime.state._state__rt_env_table()) + i
+    if (*e).used != 0 && (*e).key != 0:
+      if strcmp((*e).key as str, key) == 0:
+        if (*e).value != 0:
+          free((*e).value)
+        vlen:int = runtime.memory.strlen(value)
+        nv:*char = (*char)malloc(vlen + 1)
+        if nv == 0:
+          ret 0 - 1
+        runtime.memory.strcpy(nv, value)
+        (*e).value = nv
+        ret 0
+    i = i + 1
+  // Add new
+  if (*runtime.state._state__rt_env_count()) >= (*runtime.state._state__rt_env_cap()):
+    ret 0 - 1
+  e2:*_RtEnvEntry = (*runtime.state._state__rt_env_table()) + (*runtime.state._state__rt_env_count())
+  klen:int = runtime.memory.strlen(key)
+  nk:*char = (*char)malloc(klen + 1)
+  if nk == 0:
+    ret 0 - 1
+  runtime.memory.strcpy(nk, key)
+  vlen2:int = runtime.memory.strlen(value)
+  nv2:*char = (*char)malloc(vlen2 + 1)
+  if nv2 == 0:
+    free(nk)
+    ret 0 - 1
+  runtime.memory.strcpy(nv2, value)
+  (*e2).key   = nk
+  (*e2).value = nv2
+  (*e2).used  = 1
+  (*runtime.state._state__rt_env_count()) = (*runtime.state._state__rt_env_count()) + 1
+  ret 0
+
+// getenv — look up key in the process env table (returns str or null)
+
+fn getenv(key:str) -> str:
+  if key == 0:
+    ret 0 as str
+  _rt_env_init()
+  i:int = 0
+  while i < (*runtime.state._state__rt_env_count()):
+    e:*_RtEnvEntry = (*runtime.state._state__rt_env_table()) + i
+    if (*e).used != 0 && (*e).key != 0:
+      if strcmp((*e).key as str, key) == 0:
+        if (*e).value != 0:
+          ret (*e).value as str
+        ret 0 as str
+    i = i + 1
+  ret 0 as str
+
+// unsetenv — remove a key from the env table
+
+fn unsetenv(key:str) -> int:
+  if key == 0:
+    ret 0 - 1
+  if (*runtime.state._state__rt_env_table()) == 0:
+    ret 0
+  i:int = 0
+  while i < (*runtime.state._state__rt_env_count()):
+    e:*_RtEnvEntry = (*runtime.state._state__rt_env_table()) + i
+    if (*e).used != 0 && (*e).key != 0:
+      if strcmp((*e).key as str, key) == 0:
+        if (*e).key != 0:
+          free((*e).key)
+        if (*e).value != 0:
+          free((*e).value)
+        (*e).key   = 0 as *char
+        (*e).value = 0 as *char
+        (*e).used  = 0
+        ret 0
+    i = i + 1
+  ret 0 - 1
+
+// ============================================================
+// SECTION 7: Utility math
+// ============================================================

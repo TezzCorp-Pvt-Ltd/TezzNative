@@ -1,0 +1,35 @@
+import "tensor"
+import "math"
+
+fn main() -> int:
+  tensor.tape_init()
+  x:Tensor = tensor.tensor_2d(1, 2)
+  tensor.tensor_set2(x, 0, 0, 3.0)
+  tensor.tensor_set2(x, 0, 1, 4.0)
+  x = tensor.tensor_require_grad(x)
+  gamma:Tensor = tensor.tensor_ones_1d(2)
+  gamma = tensor.tensor_require_grad(gamma)
+  weights:Tensor = tensor.tensor_zeros_2d(1, 2)
+  tensor.tensor_set2(weights, 0, 0, 1.0)
+  normed:Tensor = tensor.tensor_rmsnorm(x, gamma, 0.00001)
+  weighted:Tensor = tensor.tensor_mul(normed, weights)
+  loss:Tensor = tensor.tensor_sum_all_t(weighted)
+  tensor.tensor_backward(loss)
+  failed:int = 0
+  r:float = math.sqrt(12.50001)
+  expected0:float = 1.0 / r - 4.5 / (r * r * r)
+  expected1:float = 0.0 - 6.0 / (r * r * r)
+  if math.absf(tensor.tensor_grad_item(x, 0) - expected0) > 0.000001 || math.absf(tensor.tensor_grad_item(x, 1) - expected1) > 0.000001:
+    failed = 1
+  if math.absf(tensor.tensor_grad_item(gamma, 0) - 3.0 / r) > 0.000001 || tensor.tensor_grad_item(gamma, 1) != 0.0:
+    failed = 1
+  tensor.tape_reset()
+  tensor.tensor_free_tensor(loss)
+  tensor.tensor_free_tensor(weighted)
+  tensor.tensor_free_tensor(normed)
+  tensor.tensor_free_tensor(weights)
+  tensor.tensor_free_tensor(gamma)
+  tensor.tensor_free_tensor(x)
+  if failed != 0:
+    say "FAIL: RMSNorm input and scale gradients"
+  ret failed

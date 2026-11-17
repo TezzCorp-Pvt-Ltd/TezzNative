@@ -1,0 +1,4 @@
+import "kernel"
+
+fn main() -> int:
+  ret 0

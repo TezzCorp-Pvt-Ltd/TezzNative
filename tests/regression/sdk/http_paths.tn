@@ -1,0 +1,38 @@
+import "tezz_http_server"
+import "str"
+
+fn rejected(path:str) -> int:
+  unsafe:
+    result:str = tezz_http_server.sanitize_request_path(path)
+    if result != 0:
+      free(result)
+      ret 0
+    ret 1
+
+fn main() -> int:
+  unsafe:
+    if rejected("/../secret") == 0: ret 1
+    if rejected("/%2e%2e/secret") == 0: ret 2
+    if rejected("/safe%00/secret") == 0: ret 3
+    if rejected("/a/%2eenv") == 0: ret 4
+    if rejected("/a%5cb") == 0: ret 5
+    if rejected("/C%3a/file") == 0: ret 6
+    if rejected("//server/file") == 0: ret 7
+    if rejected("/a%") == 0 || rejected("/a%gg") == 0: ret 8
+    if rejected("relative") == 0: ret 9
+    valid:str = tezz_http_server.sanitize_request_path("/folder/a+b%20c?query=yes")
+    if valid == 0 || strcmp(valid, "folder/a+b c") != 0: ret 10
+    free(valid)
+    valid = tezz_http_server.sanitize_request_path("/")
+    if valid == 0 || strcmp(valid, ".") != 0: ret 11
+    free(valid)
+    escaped:str = tezz_http_server.html_escape("<script a='x' b=\"y\">&")
+    if strcmp(escaped, "&lt;script a=&#39;x&#39; b=&quot;y&quot;&gt;&amp;") != 0: ret 12
+    free(escaped)
+    page:str = tezz_http_server.render_404_html("<script>alert(1)</script>")
+    if str.str_contains(page, "<script>") != 0: ret 13
+    if str.str_contains(page, "&lt;script&gt;") == 0: ret 14
+    free(page)
+    if tezz_http_server._private_file("test.TDB") != 1: ret 15
+    if tezz_http_server._private_file("public.css") != 0: ret 16
+    ret 0

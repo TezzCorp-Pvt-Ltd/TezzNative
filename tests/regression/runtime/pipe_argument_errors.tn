@@ -1,0 +1,31 @@
+extern fn io_pipe_create(read_fd:*int, write_fd:*int) -> int
+extern fn io_fd_read(fd:int, buffer:*char, size:int) -> int
+extern fn io_fd_write(fd:int, buffer:*char, size:int) -> int
+extern fn io_fd_close(fd:int) -> int
+
+fn main() -> int:
+  unsafe:
+    reader:int = 0 - 1
+    writer:int = 0 - 1
+    if io_pipe_create(0 as *int, &writer) != 0 - 1:
+      io_fd_close(writer)
+      ret 1
+    if io_pipe_create(&reader, &reader) != 0 - 1:
+      io_fd_close(reader)
+      ret 2
+    if io_pipe_create(&reader, &writer) != 0:
+      ret 3
+    buffer:[char;1]
+    if io_fd_write(writer, &buffer[0], 0 - 1) != 0 - 1:
+      ret 4
+    if io_fd_read(reader, &buffer[0], 0 - 1) != 0 - 1:
+      ret 5
+    if io_fd_write(writer, 0 as *char, 1) != 0 - 1:
+      ret 6
+    if io_fd_read(reader, 0 as *char, 1) != 0 - 1:
+      ret 7
+    if io_fd_close(writer + 4294967296) != 0 - 1:
+      ret 8
+    if io_fd_close(writer) != 0 || io_fd_close(reader) != 0:
+      ret 9
+    ret 0

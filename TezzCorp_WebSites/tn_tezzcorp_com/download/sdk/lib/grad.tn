@@ -147,8 +147,8 @@ fn has_nan_inf(tape:*float, n:int) -> int:
     // NaN check: v != v
     if v != v:
       ret 1
-    // Inf check: extremely large value
-    if v > 1.0e+30 || v < 0.0 - 1.0e+30:
+    // Infinity minus itself is NaN; every finite f64 subtracts to zero.
+    if (v - v) != 0.0:
       ret 1
     i = i + 1
   ret 0
@@ -190,11 +190,17 @@ fn scaler_new(init_scale:float) -> GradScaler:
 fn scaler_unscale(scaler:*GradScaler, tape:*float, n:int) -> int:
   if scaler == 0 || tape == 0 as *float || n <= 0:
     ret 0 - 1
+  if (*scaler).scale <= 0.0 || optim._optim_finite((*scaler).scale) == 0:
+    ret 0 - 1
   inv_scale:float = 1.0 / (*scaler).scale
   ret scale(tape, n, inv_scale)
 
 fn scaler_update(scaler:*GradScaler, tape:*float, n:int) -> int:
-  if scaler == 0 || tape == 0 as *float:
+  if scaler == 0 || tape == 0 as *float || n <= 0:
+    ret 0 - 1
+  if (*scaler).scale <= 0.0 || optim._optim_finite((*scaler).scale) == 0 || (*scaler).growth_interval <= 0:
+    ret 0 - 1
+  if (*scaler).growth_factor <= 1.0 || (*scaler).backoff_factor <= 0.0 || (*scaler).backoff_factor >= 1.0:
     ret 0 - 1
   if has_nan_inf(tape, n) != 0:
     // Gradient explosion — reduce scale
@@ -205,7 +211,9 @@ fn scaler_update(scaler:*GradScaler, tape:*float, n:int) -> int:
     ret 1  // signals that step should be skipped
   (*scaler).steps_since_inf = (*scaler).steps_since_inf + 1
   if (*scaler).steps_since_inf >= (*scaler).growth_interval:
-    (*scaler).scale = (*scaler).scale * (*scaler).growth_factor
+    grown:float = (*scaler).scale * (*scaler).growth_factor
+    if optim._optim_finite(grown) != 0:
+      (*scaler).scale = grown
     (*scaler).steps_since_inf = 0
   ret 0
 

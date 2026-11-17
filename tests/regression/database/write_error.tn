@@ -1,0 +1,19 @@
+import "tezzdb"
+
+fn main() -> int:
+  unsafe:
+    remove("write_error.tdb")
+    remove("write_error.tdb.wal")
+    db:*TezzDb = tezzdb.open("write_error.tdb")
+    if db == 0: ret 1
+    tezzdb.table_create(db, "items")
+    original:*char = (*db).h
+    readonly:*char = fopen("write_error.tdb", "rb")
+    if readonly == 0: ret 2
+    (*db).h = readonly
+    failed:int = 0
+    if tezzdb.insert(db, "items", "cannot write") >= 0: failed = 1
+    if tezzdb.close(db) == 0: failed = 1
+    fclose(original)
+    if failed != 0: say "FAIL: database write failures must reach the caller"
+    ret failed

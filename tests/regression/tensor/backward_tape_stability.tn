@@ -1,0 +1,19 @@
+import "tensor"
+
+fn main() -> int:
+  tensor.tape_init()
+  x:Tensor = tensor.tensor_ones_1d(1)
+  x = tensor.tensor_require_grad(x)
+  y:Tensor = tensor.tensor_mul(x, x)
+  loss:Tensor = tensor.tensor_sum_all_t(y)
+  before:int = tensor.tape_len()
+  tensor.tensor_backward(loss)
+  after:int = tensor.tape_len()
+  tensor.tape_reset()
+  tensor.tensor_free_tensor(loss)
+  tensor.tensor_free_tensor(y)
+  tensor.tensor_free_tensor(x)
+  if after != before:
+    say "FAIL: backward must not append derivative operations to its tape"
+    ret 1
+  ret 0

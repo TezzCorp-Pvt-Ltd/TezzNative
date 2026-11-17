@@ -14,6 +14,8 @@ import sys
 import os
 import re
 import shutil
+from pathlib import Path
+from library_package import MODULE_NAME, read_components, source_checksum, validate_name, verify_components
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SDK_LIB_DIR = os.path.join(REPO_ROOT, "lib")
@@ -64,26 +66,8 @@ LIBRARY_CATALOG = {
     "os": "Operating system abstractions: environment variables, path separators, user profiles",
 }
 
-def hash8_source_file(path):
-    with open(path, "rb") as f:
-        data = f.read()
-    h = 5381
-    pending_cr = False
-    for b in data:
-        if pending_cr:
-            if b == 10:
-                h = (((h << 5) + h + 10) & 0x7FFFFFFF)
-                pending_cr = False
-                continue
-            h = (((h << 5) + h + 13) & 0x7FFFFFFF)
-            pending_cr = False
-        if b == 13:
-            pending_cr = True
-        else:
-            h = (((h << 5) + h + b) & 0x7FFFFFFF)
-    if pending_cr:
-        h = (((h << 5) + h + 13) & 0x7FFFFFFF)
-    return f"{h:08X}"
+hash8_source_file = source_checksum
+
 
 def hash8_text(text):
     data = text.encode("ascii")
@@ -93,17 +77,59 @@ def hash8_text(text):
     return f"{h:08X}"
 
 def find_sdk_lib(name):
-    # Try local repo lib/
-    p1 = os.path.join(SDK_LIB_DIR, f"{name}.tn")
-    if os.path.exists(p1):
-        return p1
-    # Try TEZZ_SDK_ROOT
-    sdk_root = os.environ.get("TEZZ_SDK_ROOT")
-    if sdk_root:
-        p2 = os.path.join(sdk_root, "lib", f"{name}.tn")
-        if os.path.exists(p2):
-            return p2
+    validate_name(name)
+    roots = [Path(SDK_LIB_DIR)]
+    configured = os.environ.get("TEZZ_SDK_ROOT")
+    if configured:
+        roots.append(Path(configured) / "lib")
+    roots.append(Path(REPO_ROOT) / "TezzCorp_WebSites/tn_tezzcorp_com/download/sdk/lib")
+    for root in roots:
+        candidate = root / f"{name}.tn"
+        if candidate.is_file():
+            return str(candidate)
     return None
+
+
+def prepare_library(name, project_dir, overwrite=False):
+    """Validate the complete import closure before changing project files."""
+    destination = Path(project_dir) / "lib"
+    packages, files = {}, {}
+    # The compiler implicitly imports std for every normal project module.
+    pending = ["std", validate_name(name)]
+    while pending:
+        current = pending.pop()
+        if current in packages:
+            continue
+        local = destination / f"{current}.tn"
+        sdk = find_sdk_lib(current)
+        facade = local if local.is_file() and not overwrite else Path(sdk) if sdk else None
+        if facade is None:
+            raise ValueError(f"library '{current}' is missing from the SDK")
+        packages[current] = facade
+        files[f"{current}.tn"] = facade
+        components = read_components(facade)
+        if facade != local:
+            verify_components(facade)
+        sources = [facade]
+        for relative, expected in components.items():
+            component = destination / relative
+            if overwrite or not component.is_file():
+                component = facade.parent / relative
+                if not component.is_file() and sdk:
+                    component = Path(sdk).parent / relative
+            if not component.is_file() or source_checksum(component) != expected:
+                raise ValueError(f"missing or modified package component: {relative}")
+            files[relative] = component
+            sources.append(component)
+        for source in sources:
+            for imported in re.findall(r'^\s*import\s+["\']([^"\']+)["\']',
+                                       source.read_text(encoding="utf-8"), re.MULTILINE):
+                dependency = imported.split(".", 1)[0]
+                validate_name(dependency)
+                if dependency != current:
+                    pending.append(dependency)
+    return packages, files
+
 
 def update_tezz_mod(project_dir, name, version="0.1.0"):
     mod_path = os.path.join(project_dir, "tezz.mod")
@@ -178,28 +204,29 @@ def update_tezz_lock(project_dir, name, version="0.1.0", checksum=None, url=None
     with open(lock_path, "w", encoding="ascii") as f:
         f.write(header + payload)
 
-def add_library(name, project_dir="."):
+def add_library(name, project_dir=".", overwrite=True):
     project_dir = os.path.abspath(project_dir)
-    lib_src = find_sdk_lib(name)
-    if not lib_src:
-        print(f"Error: Library '{name}' not found in TezzNative SDK.")
-        print(f"Available libraries: {', '.join(sorted(LIBRARY_CATALOG.keys()))}")
+    try:
+        packages, files = prepare_library(name, project_dir, overwrite)
+        destination = Path(project_dir) / "lib"
+        for relative, source in files.items():
+            target = destination / relative
+            if not target.resolve().is_relative_to(destination.resolve()):
+                raise ValueError(f"installation path escapes library directory: {relative}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if source.resolve() != target.resolve():
+                shutil.copyfile(source, target)
+        for package in sorted(packages):
+            facade = destination / f"{package}.tn"
+            verify_components(facade)
+            update_tezz_mod(project_dir, package, "0.1.0")
+            update_tezz_lock(project_dir, package, "0.1.0", source_checksum(facade))
+        print(f"Installed '{name}': {len(packages)} modules, {len(files)} source files.")
+        return True
+    except (ValueError, OSError) as error:
+        print(f"Error: {error}")
         return False
 
-    dest_lib_dir = os.path.join(project_dir, "lib")
-    os.makedirs(dest_lib_dir, exist_ok=True)
-    dest_path = os.path.join(dest_lib_dir, f"{name}.tn")
-    shutil.copyfile(lib_src, dest_path)
-
-    checksum = hash8_source_file(dest_path)
-    update_tezz_mod(project_dir, name, "0.1.0")
-    update_tezz_lock(project_dir, name, "0.1.0", checksum)
-
-    desc = LIBRARY_CATALOG.get(name, "TezzNative module")
-    print(f"Added library '{name}' (v0.1.0, checksum: {checksum}) -> lib/{name}.tn")
-    print(f"  Description: {desc}")
-    print(f"  Ready to import in code: import \"{name}\"")
-    return True
 
 def scan_project_imports(project_dir):
     """Scan all .tn files in project for import statements."""
@@ -244,29 +271,20 @@ def sync_project(project_dir="."):
     # 2. Scan project code for imports
     code_imports = scan_project_imports(project_dir)
     for imp in code_imports:
-        if imp in LIBRARY_CATALOG or find_sdk_lib(imp):
-            needed.add(imp)
+        name = imp.split(".", 1)[0]
+        if MODULE_NAME.fullmatch(name) and (name in LIBRARY_CATALOG or find_sdk_lib(name)):
+            needed.add(name)
 
     if not needed:
         print("No libraries declared in tezz.mod or imported in project code.")
-        return
-
-    added = 0
-    dest_lib_dir = os.path.join(project_dir, "lib")
-    os.makedirs(dest_lib_dir, exist_ok=True)
+        return True
 
     for name in sorted(needed):
-        dest_file = os.path.join(dest_lib_dir, f"{name}.tn")
-        if not os.path.exists(dest_file):
-            if add_library(name, project_dir):
-                added += 1
-        else:
-            # Ensure locked in tezz.mod and tezz.lock
-            checksum = hash8_source_file(dest_file)
-            update_tezz_mod(project_dir, name, "0.1.0")
-            update_tezz_lock(project_dir, name, "0.1.0", checksum)
+        if not add_library(name, project_dir, overwrite=False):
+            return False
+    print(f"Sync complete: {len(needed)} requested libraries and their dependencies.")
+    return True
 
-    print(f"Sync complete. Project has {len(needed)} libraries ready in lib/ ({added} newly added).")
 
 def list_libraries():
     print("=" * 72)
@@ -280,15 +298,21 @@ def list_libraries():
 
 def remove_library(name, project_dir="."):
     project_dir = os.path.abspath(project_dir)
+    validate_name(name)
     lib_file = os.path.join(project_dir, "lib", f"{name}.tn")
     if os.path.exists(lib_file):
+        components = read_components(lib_file)
+        for relative in components:
+            target = Path(project_dir) / "lib" / relative
+            if target.is_file():
+                target.unlink()
         os.remove(lib_file)
         print(f"Removed lib/{name}.tn")
 
     mod_path = os.path.join(project_dir, "tezz.mod")
     if os.path.exists(mod_path):
         with open(mod_path, "r", encoding="ascii") as f:
-            lines = [l for l in f if not l.strip().startswith(f"dep.{name}")]
+            lines = [l for l in f if l.split("=", 1)[0].strip() != f"dep.{name}"]
         with open(mod_path, "w", encoding="ascii") as f:
             f.writelines(lines)
         print(f"Removed dep.{name} from tezz.mod")
@@ -321,7 +345,7 @@ def main():
         sys.exit(0 if ok else 1)
     elif cmd in ("sync", "fetch"):
         pdir = sys.argv[2] if len(sys.argv) > 2 else "."
-        sync_project(pdir)
+        sys.exit(0 if sync_project(pdir) else 1)
     elif cmd in ("list", "ls", "catalog"):
         list_libraries()
     elif cmd in ("remove", "rm"):

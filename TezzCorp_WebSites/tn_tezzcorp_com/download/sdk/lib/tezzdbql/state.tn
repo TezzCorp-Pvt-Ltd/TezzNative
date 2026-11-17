@@ -1,0 +1,34 @@
+// Shared types and module constants for tezzdbql.
+import "tezzdb"
+
+struct TzQueryResult:
+  // Internal raw data: JSON array of matching rows
+  rows:str          // heap-allocated JSON array "[{...},{...}]"
+  rows_len:int
+  // Iteration state
+  cur_pos:int       // current byte position inside rows
+  cur_row:str       // current row JSON object (heap, or 0)
+  row_count:int     // total rows in result
+  rows_iterated:int
+  // Scalar result for INSERT/UPDATE/DELETE
+  affected_rows:int
+  last_insert_id:int
+  // Error state
+  error:int         // 0 = ok, non-zero = error code
+
+// A complete, validated statement owns all parsed identifiers and values.
+struct TzQlStatement:
+  kind:int
+  table:str
+  columns:[str;32]
+  values:[str;32]
+  count:int
+  has_where:int
+  where_column:str
+  where_value:str
+  limit:int
+  parameter_index:int
+
+// ─────────────────────────────────────────────────────────────
+// Internal string helpers (no stdlib dependency)
+// ─────────────────────────────────────────────────────────────

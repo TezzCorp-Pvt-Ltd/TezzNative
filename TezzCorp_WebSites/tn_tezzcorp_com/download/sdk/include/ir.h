@@ -66,8 +66,10 @@ typedef struct IRIns {
   int name_owned;
   int* args;
   int argc;
+  Type* call_ty;     // declared signature for native external-call ABI adaptation
 
   int size;          // LOAD/STORE/ALLOCA size
+  TyKind load_kind;  // declared value type of I_LOAD, independent of prior stores
   int is_unsigned;   // LOAD integer extension mode
   int align;         // ALLOCA alignment
   IRFlt fop;         // FBIN
@@ -84,7 +86,8 @@ typedef struct IRFunc {
   int next_reg;
   int max_reg;
   int next_label;
-  int param_count;
+  int param_count; // includes leading caller-owned result pointer for aggregate returns
+  Type* ret_ty;
   int* param_regs;
   int param_regs_n;
   int is_extern;
@@ -122,7 +125,7 @@ typedef struct IRGlobal {
   int is_static;
   int has_init;
   long long init_int;
-  long long init_fbits;
+  long long init_fbits; // raw bits in the declared floating-point format
 } IRGlobal;
 
 typedef struct IRModule {

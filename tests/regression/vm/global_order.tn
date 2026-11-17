@@ -1,0 +1,20 @@
+import "./support/lib/global_left.tn"
+import "./support/lib/global_right.tn"
+import "./support/lib/global_leaf.tn"
+
+let TOTAL:int = global_left.value() + global_right.value()
+let ONCE:int = global_leaf.once()
+let CALLS:int = 0
+
+fn main() -> int:
+  if CALLS == 0:
+    if TOTAL != 105 || ONCE != 1:
+      say "FAIL dependency initialization order"
+      ret 1
+    CALLS = 1
+    ONCE = 9
+    ret main()
+  if ONCE != 9 || global_leaf.once() != 2:
+    say "FAIL initializer ran more than once"
+    ret 1
+  ret 0

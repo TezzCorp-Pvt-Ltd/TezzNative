@@ -1,0 +1,5 @@
+fn main() -> int:
+  if write_file("/dev/full", "abc", 3) != -1:
+    say "FAIL delayed write error must be reported"
+    ret 1
+  ret 0

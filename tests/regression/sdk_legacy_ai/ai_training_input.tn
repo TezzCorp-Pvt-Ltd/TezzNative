@@ -1,0 +1,30 @@
+import "ai"
+import "nn"
+import "math"
+
+fn main() -> int:
+  sizes:[float;2]
+  acts:[float;1]
+  x:[float;1]
+  targets:[float;2]
+  sizes[0] = 1.0
+  sizes[1] = 2.0
+  acts[0] = 3.0
+  x[0] = 1.0
+  targets[0] = 0.0
+  targets[1] = 0.0
+  unsafe:
+    net:*float = nn.nn_new_custom(&sizes[0], &acts[0], 1)
+    if net == 0: ret 1
+    net[44] = 2.0
+    net[45] = 3.0
+    net[46] = 0.0
+    net[47] = 0.0
+    loss:float = ai.train_mlp(net, &x[0], &targets[0], 1, 1, 2, 1, 0.1, 1)
+    w0:float = net[44]
+    w1:float = net[45]
+    nn.nn_free(net)
+    if loss != loss || math.absf(loss - 6.5) > 0.00001 || math.absf(w0 - 1.8) > 0.00001 || math.absf(w1 - 2.7) > 0.00001:
+      say "FAIL: AI training must preserve its input buffer; got ", loss, ", ", w0, ", ", w1
+      ret 1
+  ret 0

@@ -1,0 +1,58 @@
+import "tts"
+import "stt"
+
+fn reject(engine:*SttEngine, name:str) -> int:
+  let path:str = path_join("build/speech-regression/fixtures", name)
+  let rc:int = stt._stt_read_wav(engine, path)
+  unsafe:
+    free(path)
+  if rc == 0: ret 1
+  if engine.pcm_len != 0: ret 1
+  ret 0
+
+fn main() -> int:
+  let failures:int = 0
+  let recognizer:*SttEngine = stt.stt_new()
+  if recognizer == 0: ret 99
+  if stt._stt_read_wav(recognizer, "build/speech-regression/fixtures/mono8k.wav") != 0:
+    failures = failures + 1
+  else:
+    let expected:[int;6] = [-32768, -16384, 0, 16383, 32767, 32767]
+    if recognizer.pcm_len != 6: failures = failures + 1
+    let i:int = 0
+    while i < 6:
+      unsafe:
+        if recognizer.pcm_buf[i] != expected[i]: failures = failures + 1
+      i = i + 1
+  if stt._stt_read_wav(recognizer, "build/speech-regression/fixtures/stereo.wav") != 0:
+    failures = failures + 1
+  else:
+    unsafe:
+      if recognizer.pcm_len != 3 || recognizer.pcm_buf[0] != -1 || recognizer.pcm_buf[1] != 0 || recognizer.pcm_buf[2] != 32767: failures = failures + 1
+  if stt._stt_read_wav(recognizer, "build/speech-regression/fixtures/pcm8.wav") != 0:
+    failures = failures + 1
+  else:
+    unsafe:
+      if recognizer.pcm_len != 3 || recognizer.pcm_buf[0] != -32768 || recognizer.pcm_buf[1] != 0 || recognizer.pcm_buf[2] != 32512: failures = failures + 1
+  if stt._stt_read_wav(recognizer, "build/speech-regression/fixtures/extra_chunks.wav") != 0: failures = failures + 1
+  if stt._stt_read_wav(recognizer, "build/speech-regression/fixtures/data_first.wav") != 0: failures = failures + 1
+  failures = failures + reject(recognizer, "bad_magic.wav")
+  failures = failures + reject(recognizer, "zero_channels.wav")
+  failures = failures + reject(recognizer, "zero_rate.wav")
+  failures = failures + reject(recognizer, "float_format.wav")
+  failures = failures + reject(recognizer, "unsupported_bits.wav")
+  failures = failures + reject(recognizer, "bad_align.wav")
+  failures = failures + reject(recognizer, "bad_byte_rate.wav")
+  failures = failures + reject(recognizer, "partial_frame.wav")
+  failures = failures + reject(recognizer, "truncated_header.wav")
+  failures = failures + reject(recognizer, "truncated_data.wav")
+  failures = failures + reject(recognizer, "duplicate_fmt.wav")
+  failures = failures + reject(recognizer, "empty_data.wav")
+  failures = failures + reject(recognizer, "too_long.wav")
+  let samples:[int;3] = [-32768, 0, 32767]
+  unsafe:
+    if tts._tts_write_wav("build/speech-regression/fixtures/output.wav", &samples[0], 3, 16000) != 0: failures = failures + 1
+    if tts._tts_write_wav("build/speech-regression/fixtures/missing/output.wav", &samples[0], 3, 16000) == 0: failures = failures + 1
+  stt.stt_free(recognizer)
+  say "ASSERTION_FAILURES", failures
+  ret failures

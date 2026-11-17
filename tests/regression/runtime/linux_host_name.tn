@@ -1,0 +1,7 @@
+fn main() -> int:
+  unsafe:
+    name:str = os_name()
+    if len(name) != 5: ret 1
+    if name[0] != 'l' || name[4] != 'x': ret 2
+    free(name as *char)
+  ret 0

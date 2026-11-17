@@ -1,0 +1,21 @@
+import "npu"
+import "str"
+
+fn main() -> int:
+  if npu.available() != 0 || npu.device_count() != 0: ret 1
+  if npu.init() >= 0 || npu.set_device(0) >= 0: ret 2
+  if npu.supports_dxil() != 0 || str.str_eq(npu.backend_name(), "none") == 0: ret 3
+  if npu.model_load("missing.onnx") >= 0 || npu.model_free(1) >= 0: ret 4
+  data:[float;2] = [7.0, 11.0]
+  unsafe:
+    buf:*char = (&data[0]) as *char
+    if npu.alloc(8) != 0 as *char: ret 5
+    if npu.upload(buf, buf, 8) >= 0 || npu.download(buf, buf, 8) >= 0: ret 6
+    if npu.memset(buf, 0, 8) >= 0: ret 7
+    if npu.tn_npu_launch_1d(0, buf, 2) >= 0: ret 8
+    if npu.tn_npu_launch_dxil_1d(buf, 8, buf, 2) >= 0: ret 9
+    if npu.model_run(1, &data[0], 1, &data[1], 1) >= 0: ret 10
+    if npu.tn_npu_free(0 as *char) != 0: ret 11
+  if data[0] != 7.0 || data[1] != 11.0: ret 12
+  if npu.shutdown() != 0: ret 13
+  ret 0

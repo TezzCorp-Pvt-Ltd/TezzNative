@@ -1,0 +1,8 @@
+extern fn strcmp(left:str, right:str) -> int
+
+fn main() -> int:
+  compare:fn(str, str) -> int = strcmp
+  if compare("abc", "abc") != 0: ret 1
+  if compare("abc", "abd") >= 0: ret 2
+  if compare("abd", "abc") <= 0: ret 3
+  ret 0

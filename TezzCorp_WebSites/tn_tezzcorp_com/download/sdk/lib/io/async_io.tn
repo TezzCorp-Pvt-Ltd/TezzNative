@@ -1,0 +1,73 @@
+// io implementation: async io.
+
+import "io.state"
+
+fn aio_read_req(path:str, buf:*char, n:int, off:int) -> *AioReq:
+  if path == 0 || buf == 0 || n <= 0:
+    ret 0 as *AioReq
+  req:*AioReq = (*AioReq)malloc(sizeof(AioReq))
+  if req == 0:
+    ret 0 as *AioReq
+  (*req).buf = buf
+  (*req).n = n
+  (*req).off = off
+  (*req).kind = io.state._get_AIO_READ()
+  (*req).done = 0
+  (*req).result = 0
+  (*req).handle = 0 - 1
+  // Dispatch via runtime
+  h:*char = fopen(path, "rb")
+  if h == 0 as *char:
+    free(req)
+    ret 0 as *AioReq
+  if off > 0:
+    fseek(h, off, io.state._get_SEEK_SET())
+  r:int = fread(buf, 1, n, h)
+  fclose(h)
+  (*req).result = r
+  (*req).done = 1
+  ret req
+
+fn aio_write_req(path:str, buf:*char, n:int, off:int) -> *AioReq:
+  if path == 0 || buf == 0 || n <= 0:
+    ret 0 as *AioReq
+  req:*AioReq = (*AioReq)malloc(sizeof(AioReq))
+  if req == 0:
+    ret 0 as *AioReq
+  (*req).buf = buf
+  (*req).n = n
+  (*req).off = off
+  (*req).kind = io.state._get_AIO_WRITE()
+  (*req).done = 0
+  (*req).result = 0
+  (*req).handle = 0 - 1
+  mode:str = "wb"
+  if off > 0:
+    mode = "r+b"
+  h:*char = fopen(path, mode)
+  if h == 0 as *char:
+    free(req)
+    ret 0 as *AioReq
+  if off > 0:
+    fseek(h, off, io.state._get_SEEK_SET())
+  w:int = fwrite(buf, 1, n, h)
+  fclose(h)
+  (*req).result = w
+  (*req).done = 1
+  ret req
+
+fn aio_wait(req:*AioReq) -> int:
+  if req == 0:
+    ret 0 - 1
+  // Sync fallback: already done
+  ret (*req).result
+
+fn aio_free(req:*AioReq) -> int:
+  if req == 0:
+    ret 0 - 1
+  free(req)
+  ret 0
+
+// ─────────────────────────────────────────────────────────────
+// File convenience API
+// ─────────────────────────────────────────────────────────────

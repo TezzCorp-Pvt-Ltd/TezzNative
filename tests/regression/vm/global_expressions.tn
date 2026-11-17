@@ -1,0 +1,28 @@
+let ERROR_CODE:int = 0 - 7
+let NEGATIVE:int = -9
+let SCALE:float = 1.5 * 2.0
+let HALF:f16 = (0.5 + 0.25) as f16
+let MASK:int = (1 << 6) | 3
+let MESSAGE:str = "initialized"
+let NEXT:int = MASK + 1
+
+fn main() -> int:
+  failures:int = 0
+  if ERROR_CODE != -7 || NEGATIVE != -9:
+    say "FAIL signed global expressions"
+    failures = failures + 1
+  if SCALE != 3.0 || (HALF as float) != 0.75:
+    say "FAIL floating global expressions"
+    failures = failures + 1
+  if MASK != 67 || NEXT != 68:
+    say "FAIL dependent global expressions"
+    failures = failures + 1
+  unsafe:
+    if MESSAGE == 0 as str:
+      say "FAIL global string initialization"
+      failures = failures + 1
+    else:
+      if MESSAGE[0] != 105 || MESSAGE[11] != 0:
+        say "FAIL global string contents"
+        failures = failures + 1
+  ret failures

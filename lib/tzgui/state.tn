@@ -1,0 +1,479 @@
+// Shared types, constants, and state for tzgui.
+import "gui"
+import "frame"
+import "io"
+import "os"
+
+struct TzGuiTheme:
+  bg:int
+  panel:int
+  panel_title:int
+  text:int
+  button:int
+  button_inset:int
+  accent:int
+
+struct TzGuiEngine:
+  surf:GuiSurface
+  damage:*TzDamage
+  theme:TzGuiTheme
+  ready:int
+
+struct TzGuiCaps:
+  platform:str
+  backend:str
+  windowing:int
+  framebuffer:int
+  input:int
+  hidpi_scale_hint:int
+
+let TZ_WIDGET_MAX:int = 256
+
+let TZ_WIDGET_TEXT_MAX:int = 96
+
+let TZ_WIDGET_PANEL:int = 1
+
+let TZ_WIDGET_LABEL:int = 2
+
+let TZ_WIDGET_BUTTON:int = 3
+
+let TZ_UI_ICON_MENU:int = 1
+
+let TZ_UI_ICON_HISTORY:int = 2
+
+let TZ_UI_ICON_MODE:int = 3
+
+let TZ_UI_ICON_BACKSPACE:int = 4
+
+let TZ_UI_ICON_CALCULATOR:int = 5
+
+let TZ_UI_ICON_CLOSE:int = 6
+
+let TZ_UI_ICON_SETTINGS:int = 7
+
+let TZ_LAYOUT_ABSOLUTE:int = 0
+
+let TZ_LAYOUT_ROW:int = 1
+
+let TZ_LAYOUT_COLUMN:int = 2
+
+let TZ_JUSTIFY_START:int = 0
+
+let TZ_JUSTIFY_CENTER:int = 1
+
+let TZ_JUSTIFY_END:int = 2
+
+let TZ_JUSTIFY_BETWEEN:int = 3
+
+let TZ_ALIGN_START:int = 0
+
+let TZ_ALIGN_CENTER:int = 1
+
+let TZ_ALIGN_END:int = 2
+
+let TZ_ALIGN_STRETCH:int = 3
+
+let TZ_GRADIENT_NONE:int = 0
+
+let TZ_GRADIENT_VERTICAL:int = 1
+
+let TZ_GRADIENT_HORIZONTAL:int = 2
+
+let TZ_GUI_KEY_TAB:int = 9
+
+let TZ_GUI_KEY_ENTER:int = 13
+
+let TZ_GUI_KEY_SPACE:int = 32
+
+let TZ_GUI_KEY_ESCAPE:int = 27
+
+let TZ_GUI_MOD_SHIFT:int = 1
+
+let TZ_GUI_POINTER_PRIMARY:int = 1
+
+let TZ_GUI_EVENT_KEY:int = 1
+
+let TZ_GUI_EVENT_POINTER:int = 2
+
+let TZ_GUI_EVENT_BUTTON:int = 3
+
+let TZ_GUI_EVENT_SCROLL:int = 7
+
+let TZ_GUI_EVENT_TOUCH:int = 8
+
+let TZ_GUI_EVENT_TEXT:int = 9
+
+let TZ_GUI_EVENT_KEY_UP:int = 10
+
+let TZ_GUI_KEY_LEFT:int = 37
+
+let TZ_GUI_KEY_UP:int = 38
+
+let TZ_GUI_KEY_RIGHT:int = 39
+
+let TZ_GUI_KEY_DOWN:int = 40
+
+struct TzWidgetStyle:
+  bg:int
+  fg:int
+  border_color:int
+  border_width:int
+  radius:int
+  gradient_color:int
+  gradient_axis:int
+  shadow_color:int
+  shadow_size:int
+  text_align:int
+  hover_bg:int
+  pressed_bg:int
+  disabled_bg:int
+  focus_color:int
+  hover_border:int
+  text_scale:int
+  text_bold:int
+  font_size:int
+  font_weight:int
+  font_family:str
+
+struct TzWidgetLayout:
+  mode:int
+  gap:int
+  justify:int
+  align:int
+  pad_top:int
+  pad_right:int
+  pad_bottom:int
+  pad_left:int
+
+let TZ_FULL_REDRAW_NONE:int = 0
+
+let TZ_FULL_REDRAW_MODE_RESET:int = 1
+
+let TZ_FULL_REDRAW_THEME_RESET:int = 2
+
+let TZ_FULL_REDRAW_LAYOUT_RESET:int = 3
+
+let TZ_FULL_REDRAW_TREE_RESET:int = 4
+
+struct TzWidget:
+  id:int
+  parent:int
+  kind:int
+  x:int
+  y:int
+  w:int
+  h:int
+  z:int
+  order:int
+  visible:int
+  alive:int
+  dirty:int
+  bg:int
+  fg:int
+  design_x:int
+  design_y:int
+  design_w:int
+  design_h:int
+  requested_x:int
+  requested_y:int
+  requested_w:int
+  requested_h:int
+  grow:int
+  shrink:int
+  align_self:int
+  margin_top:int
+  margin_right:int
+  margin_bottom:int
+  margin_left:int
+  design_margin_top:int
+  design_margin_right:int
+  design_margin_bottom:int
+  design_margin_left:int
+  layout_mode:int
+  layout_gap:int
+  layout_justify:int
+  layout_align:int
+  pad_top:int
+  pad_right:int
+  pad_bottom:int
+  pad_left:int
+  design_pad_top:int
+  design_pad_right:int
+  design_pad_bottom:int
+  design_pad_left:int
+  design_layout_gap:int
+  border_color:int
+  border_width:int
+  radius:int
+  design_border_width:int
+  design_radius:int
+  gradient_color:int
+  gradient_axis:int
+  shadow_color:int
+  shadow_size:int
+  design_shadow_size:int
+  text_align:int
+  hover_bg:int
+  pressed_bg:int
+  disabled_bg:int
+  focus_color:int
+  hover_border:int
+  text_scale:int
+  text_bold:int
+  font_size:int
+  design_font_size:int
+  font_weight:int
+  font_family:*char
+  icon_id:int
+  icon_size:int
+  design_icon_size:int
+  icon_color:int
+  hit_testable:int
+  enabled:int
+  focusable:int
+  tab_index:int
+  text:*char
+  anim_active:int
+  anim_start_x:int
+  anim_start_y:int
+  anim_start_w:int
+  anim_start_h:int
+  anim_target_x:int
+  anim_target_y:int
+  anim_target_w:int
+  anim_target_h:int
+  anim_dur:int
+  anim_elapsed:int
+  anim_easing:int
+
+struct TzWidgetSpec:
+  parent:int
+  kind:int
+  x:int
+  y:int
+  w:int
+  h:int
+  z:int
+  visible:int
+  bg:int
+  fg:int
+  // Borrowed NUL-terminated text; prefer widget_add_text for explicit lifetime.
+  text:str
+
+struct TzWidgetTree:
+  width:int
+  height:int
+  design_width:int
+  design_height:int
+  clear_color:int
+  next_id:int
+  next_order:int
+  widget_count:int
+  full_redraw_reason:int
+  hovered_id:int
+  pressed_id:int
+  focus_id:int
+  pointer_buttons:int
+  pointer_x:int
+  pointer_y:int
+  active_touch_id:int
+  active_touch:int
+  present_x:int
+  present_y:int
+  present_w:int
+  present_h:int
+  widgets:*TzWidget
+  text_storage:*char
+  damage:*TzDamage
+
+@inline
+fn _get_TZ_WIDGET_MAX() -> int:
+  ret TZ_WIDGET_MAX
+
+@inline
+fn _get_TZ_WIDGET_TEXT_MAX() -> int:
+  ret TZ_WIDGET_TEXT_MAX
+
+@inline
+fn _get_TZ_WIDGET_PANEL() -> int:
+  ret TZ_WIDGET_PANEL
+
+@inline
+fn _get_TZ_WIDGET_LABEL() -> int:
+  ret TZ_WIDGET_LABEL
+
+@inline
+fn _get_TZ_WIDGET_BUTTON() -> int:
+  ret TZ_WIDGET_BUTTON
+
+@inline
+fn _get_TZ_UI_ICON_MENU() -> int:
+  ret TZ_UI_ICON_MENU
+
+@inline
+fn _get_TZ_UI_ICON_HISTORY() -> int:
+  ret TZ_UI_ICON_HISTORY
+
+@inline
+fn _get_TZ_UI_ICON_MODE() -> int:
+  ret TZ_UI_ICON_MODE
+
+@inline
+fn _get_TZ_UI_ICON_BACKSPACE() -> int:
+  ret TZ_UI_ICON_BACKSPACE
+
+@inline
+fn _get_TZ_UI_ICON_CALCULATOR() -> int:
+  ret TZ_UI_ICON_CALCULATOR
+
+@inline
+fn _get_TZ_UI_ICON_CLOSE() -> int:
+  ret TZ_UI_ICON_CLOSE
+
+@inline
+fn _get_TZ_UI_ICON_SETTINGS() -> int:
+  ret TZ_UI_ICON_SETTINGS
+
+@inline
+fn _get_TZ_LAYOUT_ABSOLUTE() -> int:
+  ret TZ_LAYOUT_ABSOLUTE
+
+@inline
+fn _get_TZ_LAYOUT_ROW() -> int:
+  ret TZ_LAYOUT_ROW
+
+@inline
+fn _get_TZ_LAYOUT_COLUMN() -> int:
+  ret TZ_LAYOUT_COLUMN
+
+@inline
+fn _get_TZ_JUSTIFY_START() -> int:
+  ret TZ_JUSTIFY_START
+
+@inline
+fn _get_TZ_JUSTIFY_CENTER() -> int:
+  ret TZ_JUSTIFY_CENTER
+
+@inline
+fn _get_TZ_JUSTIFY_END() -> int:
+  ret TZ_JUSTIFY_END
+
+@inline
+fn _get_TZ_JUSTIFY_BETWEEN() -> int:
+  ret TZ_JUSTIFY_BETWEEN
+
+@inline
+fn _get_TZ_ALIGN_START() -> int:
+  ret TZ_ALIGN_START
+
+@inline
+fn _get_TZ_ALIGN_CENTER() -> int:
+  ret TZ_ALIGN_CENTER
+
+@inline
+fn _get_TZ_ALIGN_END() -> int:
+  ret TZ_ALIGN_END
+
+@inline
+fn _get_TZ_ALIGN_STRETCH() -> int:
+  ret TZ_ALIGN_STRETCH
+
+@inline
+fn _get_TZ_GRADIENT_NONE() -> int:
+  ret TZ_GRADIENT_NONE
+
+@inline
+fn _get_TZ_GRADIENT_VERTICAL() -> int:
+  ret TZ_GRADIENT_VERTICAL
+
+@inline
+fn _get_TZ_GRADIENT_HORIZONTAL() -> int:
+  ret TZ_GRADIENT_HORIZONTAL
+
+@inline
+fn _get_TZ_GUI_KEY_TAB() -> int:
+  ret TZ_GUI_KEY_TAB
+
+@inline
+fn _get_TZ_GUI_KEY_ENTER() -> int:
+  ret TZ_GUI_KEY_ENTER
+
+@inline
+fn _get_TZ_GUI_KEY_SPACE() -> int:
+  ret TZ_GUI_KEY_SPACE
+
+@inline
+fn _get_TZ_GUI_KEY_ESCAPE() -> int:
+  ret TZ_GUI_KEY_ESCAPE
+
+@inline
+fn _get_TZ_GUI_MOD_SHIFT() -> int:
+  ret TZ_GUI_MOD_SHIFT
+
+@inline
+fn _get_TZ_GUI_POINTER_PRIMARY() -> int:
+  ret TZ_GUI_POINTER_PRIMARY
+
+@inline
+fn _get_TZ_GUI_EVENT_KEY() -> int:
+  ret TZ_GUI_EVENT_KEY
+
+@inline
+fn _get_TZ_GUI_EVENT_POINTER() -> int:
+  ret TZ_GUI_EVENT_POINTER
+
+@inline
+fn _get_TZ_GUI_EVENT_BUTTON() -> int:
+  ret TZ_GUI_EVENT_BUTTON
+
+@inline
+fn _get_TZ_GUI_EVENT_SCROLL() -> int:
+  ret TZ_GUI_EVENT_SCROLL
+
+@inline
+fn _get_TZ_GUI_EVENT_TOUCH() -> int:
+  ret TZ_GUI_EVENT_TOUCH
+
+@inline
+fn _get_TZ_GUI_EVENT_TEXT() -> int:
+  ret TZ_GUI_EVENT_TEXT
+
+@inline
+fn _get_TZ_GUI_EVENT_KEY_UP() -> int:
+  ret TZ_GUI_EVENT_KEY_UP
+
+@inline
+fn _get_TZ_GUI_KEY_LEFT() -> int:
+  ret TZ_GUI_KEY_LEFT
+
+@inline
+fn _get_TZ_GUI_KEY_UP() -> int:
+  ret TZ_GUI_KEY_UP
+
+@inline
+fn _get_TZ_GUI_KEY_RIGHT() -> int:
+  ret TZ_GUI_KEY_RIGHT
+
+@inline
+fn _get_TZ_GUI_KEY_DOWN() -> int:
+  ret TZ_GUI_KEY_DOWN
+
+@inline
+fn _get_TZ_FULL_REDRAW_NONE() -> int:
+  ret TZ_FULL_REDRAW_NONE
+
+@inline
+fn _get_TZ_FULL_REDRAW_MODE_RESET() -> int:
+  ret TZ_FULL_REDRAW_MODE_RESET
+
+@inline
+fn _get_TZ_FULL_REDRAW_THEME_RESET() -> int:
+  ret TZ_FULL_REDRAW_THEME_RESET
+
+@inline
+fn _get_TZ_FULL_REDRAW_LAYOUT_RESET() -> int:
+  ret TZ_FULL_REDRAW_LAYOUT_RESET
+
+@inline
+fn _get_TZ_FULL_REDRAW_TREE_RESET() -> int:
+  ret TZ_FULL_REDRAW_TREE_RESET

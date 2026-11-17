@@ -29,6 +29,7 @@ static void put_u64_le(unsigned char* p, uint64_t v){
   p[7] = (unsigned char)((v >> 56) & 0xFF);
 }
 
+
 enum {
   IMP_EXIT = 0,
   IMP_GETSTD,
@@ -86,6 +87,76 @@ enum {
   IMP_NET_RESOLVE,
   IMP_COUNT
 };
+
+typedef struct {
+  uint32_t interpreter;
+  uint32_t interpreter_size;
+  uint32_t dynamic;
+  uint32_t dynamic_size;
+} ElfNativeDynamic;
+
+static uint32_t native_string(unsigned char* buffer, uint32_t* offset, const char* text){
+  uint32_t result=*offset;
+  size_t size=strlen(text)+1;
+  memcpy(buffer+result,text,size); *offset+=(uint32_t)size;
+  return result;
+}
+
+static void native_dynamic_entry(unsigned char* buffer, uint32_t* offset, uint64_t tag, uint64_t value){
+  put_u64_le(buffer+*offset,tag); put_u64_le(buffer+*offset+8,value); *offset+=16;
+}
+
+static void build_native_dynamic(unsigned char* buffer, uint32_t* offset, uint32_t rva,
+                                 uint64_t base, TnNativeImports* imports, ElfNativeDynamic* result){
+  result->interpreter=*offset;
+  native_string(buffer,offset,"/lib64/ld-linux-x86-64.so.2");
+  result->interpreter_size=*offset-result->interpreter;
+  uint32_t strings=*offset;
+  buffer[(*offset)++]=0;
+  uint32_t needed[TN_NATIVE_LIBRARY_COUNT]={0}, symbol[TN_NATIVE_IMPORT_MAX];
+  for(int library=0;library<TN_NATIVE_LIBRARY_COUNT;library++){
+    for(int i=0;i<imports->count;i++) if(imports->entries[i].library==library){
+      needed[library]=native_string(buffer,offset,tn_native_library_name(library,0))-strings;
+      break;
+    }
+  }
+  uint32_t runpath=native_string(buffer,offset,"$ORIGIN")-strings;
+  for(int i=0;i<imports->count;i++) symbol[i]=native_string(buffer,offset,imports->entries[i].symbol)-strings;
+  uint32_t string_size=*offset-strings;
+  *offset=align_up_u32(*offset,8);
+  uint32_t symbols=*offset;
+  memset(buffer+*offset,0,(size_t)(imports->count+1)*24);
+  *offset+=(uint32_t)(imports->count+1)*24;
+  for(int i=0;i<imports->count;i++){
+    unsigned char* entry=buffer+symbols+(i+1)*24;
+    memcpy(entry,&symbol[i],4); entry[4]=0x12; // global undefined function
+  }
+  uint32_t hash=*offset, bucket_count=1, chain_count=(uint32_t)imports->count+1;
+  memcpy(buffer+*offset,&bucket_count,4); memcpy(buffer+*offset+4,&chain_count,4);
+  memset(buffer+*offset+8,0,(size_t)(chain_count+1)*4);
+  *offset+=8+(chain_count+1)*4;
+  *offset=align_up_u32(*offset,8);
+  uint32_t relocations=*offset;
+  for(int i=0;i<imports->count;i++){
+    imports->entries[i].iat=rva+(uint32_t)(IMP_COUNT+i)*8;
+    put_u64_le(buffer+*offset,base+imports->entries[i].iat);
+    put_u64_le(buffer+*offset+8,((uint64_t)(i+1)<<32)|6); // R_X86_64_GLOB_DAT
+    put_u64_le(buffer+*offset+16,0); *offset+=24;
+  }
+  result->dynamic=*offset;
+  for(int i=0;i<TN_NATIVE_LIBRARY_COUNT;i++) if(needed[i]) native_dynamic_entry(buffer,offset,1,needed[i]);
+  native_dynamic_entry(buffer,offset,5,base+rva+strings); // DT_STRTAB
+  native_dynamic_entry(buffer,offset,10,string_size);
+  native_dynamic_entry(buffer,offset,6,base+rva+symbols); // DT_SYMTAB
+  native_dynamic_entry(buffer,offset,11,24);
+  native_dynamic_entry(buffer,offset,4,base+rva+hash); // DT_HASH
+  native_dynamic_entry(buffer,offset,7,base+rva+relocations); // DT_RELA
+  native_dynamic_entry(buffer,offset,8,(uint64_t)imports->count*24);
+  native_dynamic_entry(buffer,offset,9,24);
+  native_dynamic_entry(buffer,offset,29,runpath); // DT_RUNPATH
+  native_dynamic_entry(buffer,offset,0,0);
+  result->dynamic_size=*offset-result->dynamic;
+}
 
 static void emit1(unsigned char* buf, size_t* off, unsigned char v){ buf[(*off)++] = v; }
 static void emit4(unsigned char* buf, size_t* off, uint32_t v){
@@ -198,7 +269,7 @@ static int build_linux_stubs(unsigned char* buf, size_t cap, uint32_t sys_write,
   if(!buf || !out) return -1;
   size_t o = 0;
 
-  // tn_exit(code) - Windows ABI (rcx)
+  // tn_exit(code) - Windows ABI (rcx), terminate all runtime worker threads.
   out->off_exit = o;
   emit_bytes(buf, &o, (const unsigned char*)"\x48\x89\xCF", 3); // mov rdi, rcx
   emit1(buf, &o, 0xB8); emit4(buf, &o, sys_exit);
@@ -243,11 +314,12 @@ static int build_linux_stubs(unsigned char* buf, size_t cap, uint32_t sys_write,
   emit_bytes(buf, &o, (const unsigned char*)"\x45\x39\xC8", 3); // cmp r8d, r9d
   emit_bytes(buf, &o, (const unsigned char*)"\x75\x0A", 2); // jne diff
   emit_bytes(buf, &o, (const unsigned char*)"\x45\x85\xC0", 3); // test r8d, r8d
-  emit_bytes(buf, &o, (const unsigned char*)"\x74\x0C", 2); // je equal
+  emit_bytes(buf, &o, (const unsigned char*)"\x74\x0E", 2); // je equal
   emit_bytes(buf, &o, (const unsigned char*)"\x48\xFF\xC0", 3); // inc rax
   emit_bytes(buf, &o, (const unsigned char*)"\xEB\xE7", 2); // jmp loop
   emit_bytes(buf, &o, (const unsigned char*)"\x44\x89\xC0", 3); // mov eax, r8d
-  emit_bytes(buf, &o, (const unsigned char*)"\x41\x29\xC8", 3); // sub eax, r9d
+  emit_bytes(buf, &o, (const unsigned char*)"\x44\x29\xC8", 3); // sub eax, r9d
+  emit_bytes(buf, &o, (const unsigned char*)"\x48\x98", 2); // cdqe: signed int result
   emit1(buf, &o, 0xC3);
   emit_bytes(buf, &o, (const unsigned char*)"\x31\xC0\xC3", 3); // xor eax,eax; ret
 
@@ -355,7 +427,7 @@ static int build_linux_stubs(unsigned char* buf, size_t cap, uint32_t sys_write,
   // tn_vfree(ptr) -> 0 (push to free list)
   out->off_vfree = o;
   emit_bytes(buf, &o, (const unsigned char*)"\x48\x85\xC9", 3); // test rcx, rcx
-  emit_bytes(buf, &o, (const unsigned char*)"\x74\x12", 2); // je done
+  emit_bytes(buf, &o, (const unsigned char*)"\x74\x18", 2); // je done (skip 24-byte free-list update)
   emit_bytes(buf, &o, (const unsigned char*)"\x48\x83\xE9\x10", 4); // sub rcx, 16
   emit_bytes(buf, &o, (const unsigned char*)"\x49\xB9", 2); emit8(buf, &o, heap_free_addr);
   emit_bytes(buf, &o, (const unsigned char*)"\x49\x8B\x01", 3); // mov rax, [r9]
@@ -1453,7 +1525,7 @@ static int build_linux_entry_stub(unsigned char* buf, size_t cap, uint64_t main_
   emit_bytes(buf, &o, (const unsigned char*)"\xFF\xD0", 2); // call rax
   emit_bytes(buf, &o, (const unsigned char*)"\x48\x83\xC4\x20", 4); // add rsp, 32
   emit_bytes(buf, &o, (const unsigned char*)"\x89\xC7", 2); // mov edi, eax
-  emit_bytes(buf, &o, (const unsigned char*)"\xB8\x3C\x00\x00\x00", 5); // mov eax, 60
+  emit_bytes(buf, &o, (const unsigned char*)"\xB8\xE7\x00\x00\x00", 5); // mov eax, 231 (exit_group)
   emit_bytes(buf, &o, (const unsigned char*)"\x0F\x05", 2); // syscall
   if(out_size) *out_size = o;
   return (o <= cap) ? 0 : -1;
@@ -1461,6 +1533,8 @@ static int build_linux_entry_stub(unsigned char* buf, size_t cap, uint64_t main_
 
 int ir_compile_to_elf_exe(IRModule* m, const char* out_exe){
   if(!m || !out_exe) return -1;
+  TnNativeImports native;
+  if(tn_native_collect(m,&native)!=0 || tn_native_deploy(&native,out_exe,0,0x3E)!=0) return -1;
 
   const uint64_t base = 0x400000;
   const uint32_t text_rva = 0x1000;
@@ -1493,7 +1567,7 @@ int ir_compile_to_elf_exe(IRModule* m, const char* out_exe){
     rdata = (unsigned char*)malloc(cap);
     if(!rdata) return -1;
     memset(rdata, 0, cap);
-    uint32_t off = (uint32_t)(IMP_COUNT * ptr_size); // import ptr table
+    uint32_t off = (uint32_t)((IMP_COUNT+native.count) * ptr_size); // import ptr table
 
     const char* fmt = "%lld";
     const char* fmtf = "%g";
@@ -1533,6 +1607,13 @@ int ir_compile_to_elf_exe(IRModule* m, const char* out_exe){
         off += len;
       }
     }
+    ElfNativeDynamic native_dynamic={0};
+    if(native.count>0){
+      need=off+(uint32_t)native.count*176u+4096u;
+      if(need>cap){ cap=need; rdata=(unsigned char*)realloc(rdata,cap); if(!rdata) return -1; }
+      memset(rdata+off,0,cap-off);
+      build_native_dynamic(rdata,&off,rdata_rva,base,&native,&native_dynamic);
+    }
     rdata_size = off;
 
     // data (globals)
@@ -1567,7 +1648,7 @@ int ir_compile_to_elf_exe(IRModule* m, const char* out_exe){
         }
         ginfo[i].rva = data_rva + doff;
         if(g->has_init){
-          if(g->ty && g->ty->k == TY_F64){
+          if(type_is_float(g->ty)){
             uint64_t bits = (uint64_t)g->init_fbits;
             for(int b=0;b<g->size && b<8;b++){
               data[doff + (uint32_t)b] = (unsigned char)((bits >> (8*b)) & 0xFF);
@@ -1694,6 +1775,14 @@ int ir_compile_to_elf_exe(IRModule* m, const char* out_exe){
     imp.iat_net_set_blocking  = rdata_rva + (uint32_t)(IMP_NET_SET_BLOCKING * ptr_size);
     imp.iat_net_set_timeout   = rdata_rva + (uint32_t)(IMP_NET_SET_TIMEOUT * ptr_size);
     imp.iat_net_resolve       = rdata_rva + (uint32_t)(IMP_NET_RESOLVE * ptr_size);
+    imp.native=native;
+    if(native.count>0){
+      for(int i=0;i<native.count;i++){
+        if(strcmp(native.entries[i].symbol,"tn_native_malloc")==0) imp.iat_valloc=native.entries[i].iat;
+        if(strcmp(native.entries[i].symbol,"tn_native_free")==0) imp.iat_vfree=native.entries[i].iat;
+      }
+      imp.runtime_flags|=PE_IMPORT_RUNTIME_TN_ALLOC;
+    }
 
     int ok = ir_x64_codegen(m, text_rva, str_rva, str_n, fmt_rva, fmtf_rva, nl_rva, sp_rva,
                             &imp, ginfo, gcount, &text, &text_size, &entry_off);
@@ -1703,7 +1792,7 @@ int ir_compile_to_elf_exe(IRModule* m, const char* out_exe){
     unsigned char stubs[16384];
     ElfStubInfo si;
     memset(&si, 0, sizeof(si));
-    if(build_linux_stubs(stubs, sizeof(stubs), 1u, 60u, heap_cur_addr, heap_end_addr, heap_free_addr,
+    if(build_linux_stubs(stubs, sizeof(stubs), 1u, 231u, heap_cur_addr, heap_end_addr, heap_free_addr,
                          err_addr, stdin_addr, stdout_addr, stderr_addr, &si) != 0){
       return -1;
     }
@@ -1714,7 +1803,7 @@ int ir_compile_to_elf_exe(IRModule* m, const char* out_exe){
     memcpy(text + text_size, stubs, si.size);
     text_size += (uint32_t)si.size;
 
-    // append entry stub that calls main then sys_exit
+    // append entry stub that calls main then exit_group
     {
       unsigned char entry_stub[128];
       size_t entry_sz = 0;
@@ -1803,7 +1892,7 @@ int ir_compile_to_elf_exe(IRModule* m, const char* out_exe){
     const uint32_t phoff = 64;
     const uint32_t ehsize = 64;
     const uint32_t phentsize = 56;
-    const uint32_t phnum = 2;
+    const uint32_t phnum = native.count>0 ? 5 : 2;
     uint32_t text_off = page;
     uint32_t rdata_off = align_up_u32(text_off + text_size, page);
     uint32_t data_pad = data_rva - (rdata_rva + rdata_size);
@@ -1835,14 +1924,25 @@ int ir_compile_to_elf_exe(IRModule* m, const char* out_exe){
     write_u16(f, 0);
     write_u16(f, 0);
 
-    // Program header: TEXT (R|X)
+    if(native.count>0){
+      // The loader needs the mapped program headers and interpreter path.
+      write_u32(f,6); write_u32(f,4); // PT_PHDR
+      write_u64(f,phoff); write_u64(f,base+phoff); write_u64(f,base+phoff);
+      write_u64(f,(uint64_t)phnum*phentsize); write_u64(f,(uint64_t)phnum*phentsize); write_u64(f,8);
+      write_u32(f,3); write_u32(f,4); // PT_INTERP
+      write_u64(f,rdata_off+native_dynamic.interpreter);
+      write_u64(f,base+rdata_rva+native_dynamic.interpreter);
+      write_u64(f,base+rdata_rva+native_dynamic.interpreter);
+      write_u64(f,native_dynamic.interpreter_size); write_u64(f,native_dynamic.interpreter_size); write_u64(f,1);
+    }
+    // Program header: TEXT (R|X), including mapped headers for dynamic loading.
     write_u32(f, 1);             // PT_LOAD
     write_u32(f, 5);             // R | X
-    write_u64(f, text_off);
-    write_u64(f, base + text_rva);
-    write_u64(f, base + text_rva);
-    write_u64(f, text_size);
-    write_u64(f, text_size);
+    write_u64(f, native.count>0 ? 0 : text_off);
+    write_u64(f, native.count>0 ? base : base + text_rva);
+    write_u64(f, native.count>0 ? base : base + text_rva);
+    write_u64(f, native.count>0 ? text_off+text_size : text_size);
+    write_u64(f, native.count>0 ? text_off+text_size : text_size);
     write_u64(f, page);
 
     // Program header: DATA (R|W)
@@ -1855,6 +1955,14 @@ int ir_compile_to_elf_exe(IRModule* m, const char* out_exe){
     write_u64(f, rw_span);
     write_u64(f, rw_span);
     write_u64(f, page);
+
+    if(native.count>0){
+      write_u32(f,2); write_u32(f,6); // PT_DYNAMIC
+      write_u64(f,rdata_off+native_dynamic.dynamic);
+      write_u64(f,base+rdata_rva+native_dynamic.dynamic);
+      write_u64(f,base+rdata_rva+native_dynamic.dynamic);
+      write_u64(f,native_dynamic.dynamic_size); write_u64(f,native_dynamic.dynamic_size); write_u64(f,8);
+    }
 
     // pad to text_off
     long cur = ftell(f);

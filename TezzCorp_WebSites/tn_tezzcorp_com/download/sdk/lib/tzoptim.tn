@@ -5,17 +5,29 @@ import "tztensor"
 // ── Adam Optimizer ────────────────────────────────────────────────────────────
 
 fn adam_create(numel: int, lr: float) -> int:
+  if numel <= 0 || lr < 0.0:
+    ret 0
   opt: int = tzcpu.tz_cpu_malloc(88)
   m_p: int = tzcpu.tz_cpu_zeros(numel)
   v_p: int = tzcpu.tz_cpu_zeros(numel)
+  if opt == 0 || m_p == 0 || v_p == 0:
+    tzcpu.tz_cpu_free(opt)
+    tzcpu.tz_cpu_free(m_p)
+    tzcpu.tz_cpu_free(v_p)
+    ret 0
   unsafe:
     (opt as *int)[0] = m_p
     (opt as *int)[1] = v_p
     (opt as *int)[2] = numel
+    (opt as *float)[3] = lr
+    (opt as *float)[4] = 1.0
+    (opt as *float)[5] = 1.0
     (opt as *int)[10] = 0
   ret opt
 
 fn adam_step(opt: int, t: int, max_grad_norm: float) -> int:
+  if opt == 0 || t == 0 || tztensor.tensor_device(t) != 0:
+    ret 0 - 1
   m_p: int = 0
   v_p: int = 0
   numel: int = tztensor.tensor_numel(t)
@@ -24,11 +36,17 @@ fn adam_step(opt: int, t: int, max_grad_norm: float) -> int:
   unsafe:
     m_p = (opt as *int)[0]
     v_p = (opt as *int)[1]
+    if (opt as *int)[2] != numel:
+      ret 0 - 1
   if grad_p == 0:
     ret 0
   if max_grad_norm > 0.0:
     tzcpu.tz_cpu_grad_clip_f32(grad_p, numel, max_grad_norm)
-  tzcpu.tz_cpu_adam_f32(param_p, grad_p, m_p, v_p, 0.01, 0.9, 0.999, 0.00000001, 0.9, 0.999, numel)
+  unsafe:
+    (opt as *float)[4] = (opt as *float)[4] * 0.9
+    (opt as *float)[5] = (opt as *float)[5] * 0.999
+    (opt as *int)[10] = (opt as *int)[10] + 1
+    tzcpu.tz_cpu_adam_f32(param_p, grad_p, m_p, v_p, (opt as *float)[3], 0.9, 0.999, 0.00000001, (opt as *float)[4], (opt as *float)[5], numel)
   ret 0
 
 fn adam_free(opt: int) -> int:

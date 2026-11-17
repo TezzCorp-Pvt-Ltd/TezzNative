@@ -1,0 +1,11 @@
+import "./support/lib/inheritance_owner.tn"
+
+fn main() -> int:
+  public_child:PublicChild = inheritance_owner.make_public()
+  private_child:PrivateChild = inheritance_owner.make_private()
+  if public_child.value != 10 || public_child.get() != 30: ret 1
+  public_child.value = 15
+  if public_child.get() != 35: ret 2
+  unsafe:
+    if inheritance_owner.read_private(&private_child) != 100: ret 3
+  ret 0

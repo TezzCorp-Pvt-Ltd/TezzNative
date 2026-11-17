@@ -1,0 +1,422 @@
+// io implementation: paths.
+
+import "io.state"
+
+fn path_join2(a:str, b:str) -> str:
+  ret path_join(a, b)
+
+fn path_sep_ch() -> int:
+  ret path_sep()
+
+fn path_base(p:str) -> str:
+  ret path_basename(p)
+
+fn path_dir(p:str) -> str:
+  ret path_dirname(p)
+
+fn path_norm(p:str) -> str:
+  ret path_normalize(p)
+
+fn norm_flag_preserve_sep() -> int:
+  ret 1
+
+fn norm_flag_lower_case() -> int:
+  ret 2
+
+fn norm_flag_resolve_symlinks() -> int:
+  ret 4
+
+fn path_norm_opts(p:str, flags:int) -> str:
+  ret path_normalize_opts(p, flags)
+
+fn path_has_ext(p:str, ext:str) -> int:
+  if p == 0 || ext == 0:
+    ret 0
+  pn:int = len(p)
+  en:int = len(ext)
+  if en >= pn:
+    ret 0
+  i:int = 0
+  while i < en:
+    pi:int = (p as *char)[pn - en + i] as int
+    ei:int = (ext as *char)[i] as int
+    if pi != ei:
+      ret 0
+    i = i + 1
+  ret 1
+
+fn path_strip_ext(p:str) -> str:
+  if p == 0:
+    ret 0 as str
+  n:int = len(p)
+  i:int = n - 1
+  while i >= 0:
+    c:int = (p as *char)[i] as int
+    if c == 46:  // '.'
+      out:*char = malloc(i + 1)
+      if out == 0:
+        ret 0 as str
+      unsafe:
+        memcpy(out, p as *char, i)
+      out[i] = 0 as char
+      ret out as str
+    if c == 47 || c == 92:  // '/' or '\'
+      break
+    i = i - 1
+  ret _str_dup(p)
+
+fn path_join_p(a:str, b:str) -> str:
+  ret path_join_portable(a, b)
+
+fn path_base_p(p:str) -> str:
+  ret path_base_portable(p)
+
+fn path_dir_p(p:str) -> str:
+  ret path_dir_portable(p)
+
+fn path_norm_p(p:str) -> str:
+  ret path_norm_portable(p)
+
+// ─────────────────────────────────────────────────────────────
+// Input helpers
+// ─────────────────────────────────────────────────────────────
+
+fn read_line_prompt(prompt:str) -> str:
+  if prompt != 0:
+    write_line(stdout(), prompt)
+  ret read_line(stdin())
+
+fn input_int(prompt:str) -> int:
+  s:str = read_line_prompt(prompt)
+  ret _parse_int(s)
+
+fn input_float(prompt:str) -> float:
+  s:str = read_line_prompt(prompt)
+  ret _parse_float(s)
+
+// ─────────────────────────────────────────────────────────────
+// Internal portable path implementation
+// ─────────────────────────────────────────────────────────────
+
+fn _is_sep(c:int) -> int:
+  if c == 47 || c == 92:
+    ret 1
+  ret 0
+
+fn _is_ws(c:int) -> int:
+  if c == 32 || c == 9 || c == 10 || c == 13:
+    ret 1
+  ret 0
+
+fn _is_digit(c:int) -> int:
+  if c >= 48 && c <= 57:
+    ret 1
+  ret 0
+
+fn _skip_ws(s:str, i:int) -> int:
+  j:int = i
+  while (s as *char)[j] != 0 as char && _is_ws((s as *char)[j] as int) != 0:
+    j = j + 1
+  ret j
+
+fn _parse_int(s:str) -> int:
+  if s == 0:
+    ret 0
+  i:int = _skip_ws(s, 0)
+  sign:int = 1
+  if (s as *char)[i] == 45 as char:
+    sign = 0 - 1
+    i = i + 1
+  n:int = 0
+  while (s as *char)[i] != 0 as char:
+    c:int = (s as *char)[i] as int
+    if c < 48 || c > 57:
+      break
+    n = n * 10 + (c - 48)
+    i = i + 1
+  ret n * sign
+
+fn _parse_float(s:str) -> float:
+  if s == 0:
+    ret 0.0
+  i:int = _skip_ws(s, 0)
+  sign:float = 1.0
+  if (s as *char)[i] == 45 as char:
+    sign = 0.0 - 1.0
+    i = i + 1
+  n:float = 0.0
+  while (s as *char)[i] != 0 as char:
+    c:int = (s as *char)[i] as int
+    if c < 48 || c > 57:
+      break
+    n = n * 10.0 + (c - 48) as float
+    i = i + 1
+  if (s as *char)[i] == 46 as char:
+    i = i + 1
+    div:float = 10.0
+    while (s as *char)[i] != 0 as char:
+      c2:int = (s as *char)[i] as int
+      if c2 < 48 || c2 > 57:
+        break
+      n = n + (c2 - 48) as float / div
+      div = div * 10.0
+      i = i + 1
+  ret n * sign
+
+fn _str_dup(s:str) -> str:
+  if s == 0:
+    ret 0 as str
+  n:int = len(s)
+  p:*char = malloc(n + 1)
+  if p == 0:
+    ret 0 as str
+  unsafe:
+    memcpy(p, s as *char, n)
+    p[n] = 0 as char
+  ret p as str
+
+fn _str_slice(s:str, a:int, b:int) -> str:
+  if s == 0:
+    ret 0 as str
+  n:int = len(s)
+  if a < 0:
+    a = 0
+  if b < 0 || b > n:
+    b = n
+  if b < a:
+    b = a
+  n2:int = b - a
+  p:*char = malloc(n2 + 1)
+  if p == 0:
+    ret 0 as str
+  if n2 > 0:
+    unsafe:
+      memcpy(p, (s as *char) + a, n2)
+  unsafe:
+    p[n2] = 0 as char
+  ret p as str
+
+fn _str_join2(a:str, b:str) -> str:
+  if a == 0:
+    ret _str_dup(b)
+  if b == 0:
+    ret _str_dup(a)
+  na:int = len(a)
+  nb:int = len(b)
+  p:*char = malloc(na + nb + 1)
+  if p == 0:
+    ret 0 as str
+  unsafe:
+    if na > 0:
+      memcpy(p, a as *char, na)
+    if nb > 0:
+      memcpy(p + na, b as *char, nb)
+    p[na + nb] = 0 as char
+  ret p as str
+
+fn _str_join3(a:str, b:str, c:str) -> str:
+  ab:str = _str_join2(a, b)
+  out:str = _str_join2(ab, c)
+  if ab != 0:
+    free(ab)
+  ret out
+
+fn path_join_portable(a:str, b:str) -> str:
+  if a == 0:
+    ret _str_dup(b)
+  if b == 0:
+    ret _str_dup(a)
+  na:int = len(a)
+  nb:int = len(b)
+  i:int = 0
+  while i < nb:
+    c:int = (b as *char)[i] as int
+    if _is_sep(c) == 0:
+      break
+    i = i + 1
+  nb2:int = nb - i
+  need_sep:int = 1
+  if na > 0:
+    c2:int = (a as *char)[na - 1] as int
+    if _is_sep(c2) != 0:
+      need_sep = 0
+  sep_len:int = 0
+  if need_sep != 0:
+    if nb2 > 0:
+      sep_len = 1
+  out:*char = malloc(na + sep_len + nb2 + 1)
+  if out == 0:
+    ret 0 as str
+  pos:int = 0
+  unsafe:
+    if na > 0:
+      memcpy(out, a as *char, na)
+      pos = na
+    if sep_len != 0:
+      out[pos] = 47 as char
+      pos = pos + 1
+    if nb2 > 0:
+      memcpy(out + pos, (b as *char) + i, nb2)
+      pos = pos + nb2
+    out[pos] = 0 as char
+  ret out as str
+
+fn path_base_portable(p:str) -> str:
+  if p == 0:
+    ret 0 as str
+  n:int = len(p)
+  if n <= 0:
+    ret _str_dup(p)
+  i:int = n - 1
+  while i >= 0:
+    c:int = (p as *char)[i] as int
+    if _is_sep(c) == 0:
+      break
+    i = i - 1
+  if i < 0:
+    ret _str_dup(p)
+  j:int = i
+  while j >= 0:
+    c2:int = (p as *char)[j] as int
+    if _is_sep(c2) != 0:
+      break
+    j = j - 1
+  ret _str_slice(p, j + 1, i + 1)
+
+fn path_dir_portable(p:str) -> str:
+  if p == 0:
+    ret 0 as str
+  n:int = len(p)
+  if n <= 0:
+    ret _str_dup(".")
+  i:int = n - 1
+  while i >= 0:
+    c:int = (p as *char)[i] as int
+    if _is_sep(c) == 0:
+      break
+    i = i - 1
+  while i >= 0:
+    c2:int = (p as *char)[i] as int
+    if _is_sep(c2) != 0:
+      break
+    i = i - 1
+  if i < 0:
+    ret _str_dup(".")
+  if i == 0:
+    ret _str_slice(p, 0, 1)
+  while i > 0:
+    c3:int = (p as *char)[i - 1] as int
+    if _is_sep(c3) == 0:
+      break
+    i = i - 1
+  ret _str_slice(p, 0, i)
+
+fn path_norm_portable(p:str) -> str:
+  if p == 0:
+    ret 0 as str
+  n:int = len(p)
+  if n <= 0:
+    ret _str_dup(p)
+  out:*char = malloc(n + 2)
+  if out == 0:
+    ret 0 as str
+  i:int = 0
+  has_root:int = 0
+  drive0:int = 0
+  unsafe:
+    if n >= 2:
+      c0:int = (p as *char)[0] as int
+      c1:int = (p as *char)[1] as int
+      if ((c0 >= 65 && c0 <= 90) || (c0 >= 97 && c0 <= 122)) && c1 == 58:
+        drive0 = c0
+        i = 2
+        if i < n:
+          c2:int = (p as *char)[i] as int
+          if c2 == 47 || c2 == 92:
+            has_root = 1
+            i = i + 1
+    if i == 0 && n > 0:
+      c3:int = (p as *char)[0] as int
+      if c3 == 47 || c3 == 92:
+        has_root = 1
+        i = 1
+  o:int = 0
+  unsafe:
+    if drive0 != 0:
+      out[o] = drive0 as char
+      out[o + 1] = 58 as char
+      o = o + 2
+      if has_root != 0:
+        out[o] = 47 as char
+        o = o + 1
+    else if has_root != 0:
+      out[o] = 47 as char
+      o = o + 1
+  root_len:int = o
+  while i < n:
+    c0:int = 0
+    unsafe:
+      c0 = (p as *char)[i] as int
+    if _is_sep(c0) == 0:
+      break
+    i = i + 1
+  while i < n:
+    while i < n:
+      c1:int = 0
+      unsafe:
+        c1 = (p as *char)[i] as int
+      if _is_sep(c1) == 0:
+        break
+      i = i + 1
+    if i >= n:
+      break
+    start:int = i
+    while i < n:
+      c2:int = 0
+      unsafe:
+        c2 = (p as *char)[i] as int
+      if _is_sep(c2) != 0:
+        break
+      i = i + 1
+    seglen:int = i - start
+    skip:int = 0
+    if seglen == 1:
+      unsafe:
+        if (p as *char)[start] == 46 as char:
+          skip = 1
+    if seglen == 2:
+      if skip == 0:
+        unsafe:
+          if (p as *char)[start] == 46 as char:
+            if (p as *char)[start + 1] == 46 as char:
+              skip = 1
+              if o > root_len:
+                if out[o - 1] == 47 as char:
+                  o = o - 1
+                keep_scanning:int = 1
+                while keep_scanning != 0:
+                  if o <= root_len:
+                    keep_scanning = 0
+                  else if out[o - 1] == 47 as char:
+                    keep_scanning = 0
+                  else:
+                    o = o - 1
+                if o > root_len:
+                  if out[o - 1] == 47 as char:
+                    o = o - 1
+    if skip == 0:
+      unsafe:
+        if o > 0:
+          if out[o - 1] != 47 as char:
+            out[o] = 47 as char
+            o = o + 1
+        if seglen > 0:
+          memcpy(out + o, (p as *char) + start, seglen)
+      o = o + seglen
+  if o == 0:
+    unsafe:
+      out[0] = 46 as char
+    o = 1
+  unsafe:
+    out[o] = 0 as char
+  ret out as str

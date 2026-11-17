@@ -3,7 +3,6 @@
 
 import "tensor"
 import "math"
-import "autograd"
 
 // ============================================================
 // 1. Learning Rate Schedulers
@@ -11,6 +10,8 @@ import "autograd"
 
 // Cosine Annealing Schedule: lr = min_lr + 0.5 * (base_lr - min_lr) * (1 + cos(pi * step / total_steps))
 fn lr_cosine_schedule(base_lr:float, min_lr:float, current_step:int, total_steps:int) -> float:
+  if current_step < 0: current_step = 0
+  if total_steps <= 0: ret min_lr
   if current_step >= total_steps:
     ret min_lr
   progress:float = (current_step as float) / (total_steps as float)
@@ -42,24 +43,8 @@ fn lr_warmup_cosine(base_lr:float, min_lr:float, warmup_steps:int, current_step:
 
 // Clips gradient of a single tensor by max_norm
 fn clip_grad_tensor(t:Tensor, max_norm:float) -> float:
-  unsafe:
-    if t.grad == 0 as *Tensor:
-      ret 0.0
-    g:*Tensor = t.grad
-    sq_sum:float = 0.0
-    i:int = 0
-    while i < (*g).size:
-      v:float = (*g).data[i]
-      sq_sum = sq_sum + v * v
-      i = i + 1
-    total_norm:float = math.sqrt(sq_sum)
-    if total_norm > max_norm && total_norm > 0.0:
-      scale:float = max_norm / (total_norm + 1.0e-6)
-      i = 0
-      while i < (*g).size:
-        (*g).data[i] = (*g).data[i] * scale
-        i = i + 1
-    ret total_norm
+  if t.grad == 0 as *Tensor: ret 0.0
+  ret grad_clip_norm(t.grad.data, t.grad.size, max_norm)
 
 
 // ============================================================
@@ -70,6 +55,9 @@ fn clip_grad_tensor(t:Tensor, max_norm:float) -> float:
 // v = momentum * v + grad + weight_decay * param
 // param = param - lr * v
 fn sgd_step(param:Tensor, vel:Tensor, lr:float, momentum:float, weight_decay:float) -> int:
+  if lr < 0.0 || momentum < 0.0 || momentum >= 1.0 || weight_decay < 0.0: ret 0 - 1
+  if param.grad != 0 as *Tensor:
+    if vel.size != param.size || vel.data == 0 as *float || param.data == 0 as *float || param.grad.size != param.size || param.grad.data == 0 as *float: ret 0 - 1
   unsafe:
     if param.grad == 0 as *Tensor:
       ret 0
@@ -112,6 +100,9 @@ fn sgd_step(param:Tensor, vel:Tensor, lr:float, momentum:float, weight_decay:flo
 // v = beta2 * v + (1 - beta2) * (grad ^ 2)
 // param = param - (lr * m_hat) / (sqrt(v_hat) + eps)
 fn adamw_step(param:Tensor, m_buf:Tensor, v_buf:Tensor, step:int, lr:float, beta1:float, beta2:float, eps:float, weight_decay:float) -> int:
+  if step <= 0 || lr < 0.0 || beta1 < 0.0 || beta1 >= 1.0 || beta2 < 0.0 || beta2 >= 1.0 || eps <= 0.0 || weight_decay < 0.0: ret 0 - 1
+  if param.grad != 0 as *Tensor:
+    if m_buf.size != param.size || v_buf.size != param.size || m_buf.data == 0 as *float || v_buf.data == 0 as *float || param.data == 0 as *float || param.grad.size != param.size || param.grad.data == 0 as *float: ret 0 - 1
   unsafe:
     if param.grad == 0 as *Tensor || step <= 0:
       ret 0
@@ -164,3 +155,148 @@ fn adamw_step(param:Tensor, m_buf:Tensor, v_buf:Tensor, step:int, lr:float, beta
 
       i = i + 1
   ret 0
+
+// Flat f64 optimizer states used by ai/grad. Tensor overloads above retain their
+// original signatures; these helpers use explicit raw parameter/gradient slabs.
+fn alloc_state(n:int) -> *float:
+  if n <= 0 || n > 1152921504606846975: ret 0 as *float
+  values:*float = (*float)malloc(n * 8)
+  if values == 0 as *float: ret values
+  zero_state(values, n)
+  ret values
+
+fn free_state(state:*float) -> int:
+  free(state as *char)
+  ret 0
+
+fn zero_state(state:*float, n:int) -> int:
+  if state == 0 as *float || n < 0: ret 0 - 1
+  i:int = 0
+  while i < n:
+    state[i] = 0.0
+    i = i + 1
+  ret 0
+
+fn _optim_finite(value:float) -> int:
+  ret value == value && (value - value) == 0.0
+
+fn grad_norm(values:*float, n:int) -> float:
+  if values == 0 as *float || n <= 0: ret 0.0
+  largest:float = 0.0
+  i:int = 0
+  while i < n:
+    value:float = math.absf(values[i])
+    if _optim_finite(value) == 0: ret value
+    if value > largest: largest = value
+    i = i + 1
+  if largest == 0.0: ret 0.0
+  sum:float = 0.0
+  i = 0
+  while i < n:
+    ratio:float = values[i] / largest
+    sum = sum + ratio * ratio
+    i = i + 1
+  ret largest * math.sqrt(sum)
+
+fn grad_clip_norm(values:*float, n:int, max_norm:float) -> float:
+  norm:float = grad_norm(values, n)
+  if values == 0 as *float || n <= 0 || max_norm < 0.0 || _optim_finite(max_norm) == 0: ret norm
+  if norm > max_norm && _optim_finite(norm) != 0:
+    factor:float = max_norm / norm
+    i:int = 0
+    while i < n:
+      values[i] = values[i] * factor
+      i = i + 1
+  ret norm
+
+fn grad_clip_value(values:*float, n:int, maximum:float) -> int:
+  if values == 0 as *float || n < 0 || maximum < 0.0 || _optim_finite(maximum) == 0: ret 0 - 1
+  i:int = 0
+  while i < n:
+    if values[i] > maximum: values[i] = maximum
+    if values[i] < 0.0 - maximum: values[i] = 0.0 - maximum
+    i = i + 1
+  ret 0
+
+fn sgd_simple(params:*float, grads:*float, n:int, lr:float) -> int:
+  if params == 0 as *float || grads == 0 as *float || n <= 0 || lr < 0.0 || _optim_finite(lr) == 0: ret 0 - 1
+  i:int = 0
+  while i < n:
+    if _optim_finite(grads[i]) == 0: ret 0 - 1
+    i = i + 1
+  i = 0
+  while i < n:
+    params[i] = params[i] - lr * grads[i]
+    i = i + 1
+  ret 0
+
+fn _adam_raw(params:*float, grads:*float, m:*float, v:*float, n:int, lr:float, step:int, decay:float) -> int:
+  if params == 0 as *float || grads == 0 as *float || m == 0 as *float || v == 0 as *float || n <= 0 || step <= 0 || lr < 0.0 || _optim_finite(lr) == 0: ret 0 - 1
+  i:int = 0
+  while i < n:
+    if _optim_finite(grads[i]) == 0: ret 0 - 1
+    i = i + 1
+  bc1:float = 1.0 - math.pow(0.9, step as float)
+  bc2:float = 1.0 - math.pow(0.999, step as float)
+  i = 0
+  while i < n:
+    m[i] = 0.9 * m[i] + 0.1 * grads[i]
+    v[i] = 0.999 * v[i] + 0.001 * grads[i] * grads[i]
+    update:float = (m[i] / bc1) / (math.sqrt(v[i] / bc2) + 0.00000001)
+    params[i] = params[i] * (1.0 - lr * decay) - lr * update
+    i = i + 1
+  ret 0
+
+fn adam_default(params:*float, grads:*float, m1:*float, m2:*float, n:int, lr:float, step:int) -> int:
+  ret _adam_raw(params, grads, m1, m2, n, lr, step, 0.0)
+
+fn adamw_default(params:*float, grads:*float, m1:*float, m2:*float, n:int, lr:float, step:int) -> int:
+  ret _adam_raw(params, grads, m1, m2, n, lr, step, 0.01)
+
+struct AdamState:
+  m:Tensor
+  v:Tensor
+  length:int
+  step:int
+  beta1:float
+  beta2:float
+  eps:float
+
+fn adam_init(length:int, beta1:float, beta2:float, eps:float) -> AdamState:
+  state:AdamState
+  state.m = tensor.tensor_zeros_1d(length)
+  state.v = tensor.tensor_zeros_1d(length)
+  state.length = length
+  state.step = 0
+  state.beta1 = beta1
+  state.beta2 = beta2
+  state.eps = eps
+  ret state
+
+fn adam_free(state:AdamState) -> int:
+  tensor.tensor_free_tensor(state.m)
+  tensor.tensor_free_tensor(state.v)
+  ret 0
+
+fn adam_step(param:*Tensor, state:*AdamState, lr:float) -> int:
+  if param == 0 as *Tensor || state == 0 as *AdamState: ret 0 - 1
+  if param.size != state.length || state.m.size != param.size || state.v.size != param.size: ret 0 - 1
+  if param.grad == 0 as *Tensor: ret 0
+  next_step:int = state.step + 1
+  status:int = adamw_step(*param, state.m, state.v, next_step, lr, state.beta1, state.beta2, state.eps, 0.0)
+  if status == 0: state.step = next_step
+  ret status
+
+fn sgd_tensor_simple(param:*Tensor, lr:float) -> int:
+  if param == 0 as *Tensor || lr < 0.0 || _optim_finite(lr) == 0: ret 0 - 1
+  if param.grad == 0 as *Tensor: ret 0
+  if param.grad.size != param.size || param.grad.data == 0 as *float || param.data == 0 as *float: ret 0 - 1
+  i:int = 0
+  while i < param.size:
+    offset:int = tensor._tensor_unravel_offset(*param, i)
+    param.data[offset] = param.data[offset] - lr * param.grad.data[i]
+    i = i + 1
+  ret 0
+
+fn sgd_step_simd(param:*Tensor, lr:float) -> int:
+  ret sgd_tensor_simple(param, lr)

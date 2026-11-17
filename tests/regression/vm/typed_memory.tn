@@ -1,0 +1,22 @@
+fn main() -> int:
+  x:f64 = 1.0
+  bits:u64 = 0
+  unsafe:
+    bits = *((&x) as *u64)
+  if bits != 4607182418800017408:
+    say "FAIL float memory reinterpreted as integer bits"
+    ret 1
+  raw:u64 = 4612811918334230528
+  value:f64 = 0.0
+  unsafe:
+    value = *((&raw) as *f64)
+  if value != 2.5:
+    say "FAIL integer bits reinterpreted as float memory", value
+    ret 2
+  copied:f64 = 0.0
+  unsafe:
+    memcpy((&copied) as *char, (&raw) as *char, 8)
+  if copied != 2.5:
+    say "FAIL byte copies must preserve floating representation"
+    ret 3
+  ret 0

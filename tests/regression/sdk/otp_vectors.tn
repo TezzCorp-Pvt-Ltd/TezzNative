@@ -1,0 +1,33 @@
+import "otp"
+
+fn main() -> int:
+  secret:str = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+  expected:[str;10] = ["755224", "287082", "359152", "969429", "338314", "254676", "287922", "162583", "399871", "520489"]
+  i:int = 0
+  unsafe:
+    while i < 10:
+      code:str = otp.generate_hotp(secret, i, 6)
+      if code == 0 || strcmp(code, expected[i]) != 0:
+        say "FAIL: RFC 4226 counter", i
+        ret 1
+      free(code)
+      i = i + 1
+    times:[int;6] = [59, 1111111109, 1111111111, 1234567890, 2000000000, 20000000000]
+    totp:[str;6] = ["94287082", "07081804", "14050471", "89005924", "69279037", "65353130"]
+    i = 0
+    while i < 6:
+      code:str = otp.generate_totp_at(secret, times[i], 8)
+      if code == 0 || strcmp(code, totp[i]) != 0:
+        say "FAIL: RFC 6238 timestamp", times[i]
+        ret 2
+      if otp.matched_step(secret, code, times[i], 0, 8) != times[i] / 30: ret 3
+      free(code)
+      i = i + 1
+  if otp.hash_totp_step(secret, 0) != 755224: ret 4
+  if otp.verify_totp_at(secret, "287082", 59, 0) != 1: ret 5
+  if otp.verify_totp_at(secret, "755224", 59, 0) != 0: ret 6
+  if otp.verify_totp_at(secret, "755224", 59, 1) != 1: ret 7
+  if otp.matched_step(secret, "755224", 59, 1, 6) != 0: ret 8
+  if otp.verify_totp_at(secret, "359152", 59, 1) != 1: ret 9
+  if otp.verify_totp_at(secret, "000000", 59, 1) != 0: ret 10
+  ret 0

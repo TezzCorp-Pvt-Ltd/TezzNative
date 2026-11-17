@@ -1,0 +1,4 @@
+import "./support/lib/os_api.tn"
+
+fn main() -> int:
+  ret os_api.exercise()

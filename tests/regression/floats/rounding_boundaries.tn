@@ -1,0 +1,44 @@
+let half_carry:f16 = 1.9997
+let half_tie:f16 = 1.00146484375
+let fp8_upper:f8 = 256.0
+let fp8_tie:f8 = 1.1875
+
+fn half_from(x:f32) -> f16:
+  ret x as f16
+
+fn fp8_from(x:f32) -> f8:
+  ret x as f8
+
+fn main() -> int:
+  failures:int = 0
+  if (half_carry as f64) != 2.0:
+    say "FAIL f16 rounded significand carry", half_carry
+    failures += 1
+  if (half_tie as f64) != 1.001953125:
+    say "FAIL f16 ties to even", half_tie
+    failures += 1
+  if (half_from(1.9997 as f32) as f64) != 2.0:
+    say "FAIL runtime f16 rounded carry"
+    failures += 1
+  if (half_from(1.00146484375 as f32) as f64) != 1.001953125:
+    say "FAIL runtime f16 ties to even"
+    failures += 1
+  if (half_from(0.000000059604644775390625 as f32) as f64) != 0.000000059604644775390625:
+    say "FAIL f16 smallest subnormal"
+    failures += 1
+  if (fp8_upper as f64) != 256.0:
+    say "FAIL fp8 upper finite exponent", fp8_upper
+    failures += 1
+  if (fp8_tie as f64) != 1.25:
+    say "FAIL fp8 ties to even", fp8_tie
+    failures += 1
+  if (fp8_from(256.0 as f32) as f64) != 256.0:
+    say "FAIL runtime fp8 upper finite exponent"
+    failures += 1
+  if (fp8_from(1.1875 as f32) as f64) != 1.25:
+    say "FAIL runtime fp8 ties to even"
+    failures += 1
+  if (fp8_from(0.001953125 as f32) as f64) != 0.001953125:
+    say "FAIL fp8 smallest subnormal"
+    failures += 1
+  ret failures

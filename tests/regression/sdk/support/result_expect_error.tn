@@ -1,0 +1,4 @@
+import "result"
+
+fn main() -> int:
+  ret result.result_expect(result.err("original error"), "expected failure")

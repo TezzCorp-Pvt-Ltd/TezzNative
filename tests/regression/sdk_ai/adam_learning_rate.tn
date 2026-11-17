@@ -1,0 +1,21 @@
+import "tztensor"
+import "tzoptim"
+import "tzcpu"
+import "math"
+import "./support/lib/values.tn"
+
+fn main() -> int:
+  x:int = tztensor.tensor_new_1d(1, 1)
+  values.write(x, 0, 1.0)
+  tzcpu.tz_cpu_fill_f32(tztensor.tensor_grad(x), 1, 2.0)
+  optimizer:int = tzoptim.adam_create(1, 0.1)
+  tzoptim.adam_step(optimizer, x, 0.0)
+  first:float = values.read(x, 0)
+  tzoptim.adam_step(optimizer, x, 0.0)
+  second:float = values.read(x, 0)
+  tzoptim.adam_free(optimizer)
+  tztensor.tensor_free(x)
+  if math.absf(first - 0.9) > 0.00001 || math.absf(second - 0.8) > 0.00001:
+    say "FAIL: SDK Adam learning rate/bias correction; got ", first, ", ", second
+    ret 1
+  ret 0

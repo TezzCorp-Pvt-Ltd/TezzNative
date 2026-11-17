@@ -1,25 +1,8 @@
-// kernel module — TezzNative 2.0 OS Kernel Infrastructure
-//
-// Low-level kernel primitives for building operating systems,
-// bare-metal programs, and hypervisors in TezzNative.
-//
-// Targets:
-//   x86_64  — full IDT, GDT, APIC, page tables
-//   aarch64 — exception vectors, MMU, GICv3
-//   riscv64 — trap handler, PLIC, SBI interface
-//
-// Compile bare-metal: tezzc buildexe --target=x86_64-bare main.tn kernel.elf
-//
-// Usage:
-//   import "kernel"
-//   fn main() -> int:
-//     kernel.gdt_init()
-//     kernel.idt_init()
-//     kernel.pic_remap(0x20, 0x28)
-//     kernel.sti()
-//     kernel.vfs_mount("/", ramdisk_driver)
-//     while 1: kernel.hlt()
-//     ret 0
+// tezz-unavailable-module: kernel
+// Legacy kernel API source; these broad primitives remain unimplemented.
+// Use hardware with --target pc-x86_64 or riscv64-virt and --freestanding.
+// Importing this distributed module is an explicit compile-time error.
+// Existing os/sys freestanding APIs have a separate build contract.
 
 // ─────────────────────────────────────────────────────────────
 // CPU state & low-level primitives

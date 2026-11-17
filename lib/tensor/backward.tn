@@ -1,0 +1,525 @@
+// tensor implementation: backward.
+import "simd"
+import "math"
+import "io"
+import "str"
+import "tensor.numeric"
+import "tensor.operators"
+import "tensor.state"
+import "tensor.storage"
+import "tensor.tape"
+
+fn _tape_mark_gradient(gradient:*Tensor, before:int) -> int:
+  if gradient == 0 as *Tensor: ret 0
+  tape:*TapeNode = tensor.tape.tape_get()
+  i:int = before
+  while i >= 0:
+    node:*TapeNode = tape + i
+    if node.out_grad == gradient:
+      node.active = 1
+      ret 0
+    i = i - 1
+  ret 0
+
+// Invert a positive-stride view layout without assuming that its axes are contiguous.
+
+fn _tensor_layout_index(layout:Tensor, storage_offset:int) -> int:
+  coords:[int;8]
+  used:[int;8]
+  axis:int = 0
+  while axis < 8:
+    coords[axis] = 0
+    used[axis] = 0
+    axis = axis + 1
+  remaining:int = storage_offset - layout.offset
+  if remaining < 0: ret 0 - 1
+  pass:int = 0
+  while pass < layout.ndim:
+    best:int = 0 - 1
+    best_stride:int = 0
+    axis = 0
+    while axis < layout.ndim:
+      stride:int = tensor.storage.tensor_stride(layout, axis)
+      if used[axis] == 0 && (best < 0 || stride > best_stride):
+        best = axis
+        best_stride = stride
+      axis = axis + 1
+    if best < 0: ret 0 - 1
+    used[best] = 1
+    if tensor.storage.tensor_shape(layout, best) > 1:
+      if best_stride <= 0: ret 0 - 1
+      coordinate:int = remaining / best_stride
+      if coordinate >= tensor.storage.tensor_shape(layout, best): ret 0 - 1
+      coords[best] = coordinate
+      remaining = remaining - coordinate * best_stride
+    pass = pass + 1
+  if remaining != 0: ret 0 - 1
+  result:int = 0
+  axis = 0
+  while axis < layout.ndim:
+    result = result * tensor.storage.tensor_shape(layout, axis) + coords[axis]
+    axis = axis + 1
+  ret result
+
+fn _tensor_backward_view(node:*TapeNode, out_grad:Tensor) -> int:
+  if node.arg0_grad == 0 as *Tensor: ret 0
+  parent:Tensor = tensor.tape.tensor_load_p(node.arg0)
+  view:Tensor = tensor.tape.tensor_load_p(node.saved_out)
+  grad:Tensor = tensor.storage._tensor_zeros_like(parent)
+  if grad.data == 0 as *float: ret 0 - 1
+  i:int = 0
+  while i < out_grad.size:
+    source_index:int = _tensor_layout_index(parent, tensor.storage._tensor_unravel_offset(view, i))
+    if source_index < 0 || source_index >= grad.size:
+      tensor.storage.tensor_free_tensor(grad)
+      (*tensor.state._state__tape_error()) = 1
+      ret 0 - 1
+    grad.data[source_index] = grad.data[source_index] + out_grad.data[i]
+    i = i + 1
+  tensor.tape.tensor_accumulate_grad(node.arg0_grad, grad)
+  tensor.storage.tensor_free_tensor(grad)
+  ret 0
+
+fn _tensor_backward_reduce(node:*TapeNode, out_grad:Tensor) -> int:
+  if node.arg0_grad == 0 as *Tensor: ret 0
+  source:Tensor = tensor.tape.tensor_load_p(node.arg0)
+  grad:Tensor = tensor.storage._tensor_zeros_like(source)
+  if grad.data == 0 as *float: ret 0 - 1
+  inner:int = tensor.numeric._tensor_axis_inner(source, node.axis)
+  width:int = tensor.storage.tensor_shape(source, node.axis) * inner
+  i:int = 0
+  while i < grad.size:
+    output_index:int = (i / width) * inner + (i % inner)
+    grad.data[i] = out_grad.data[output_index] * node.scalar_val
+    i = i + 1
+  tensor.tape.tensor_accumulate_grad(node.arg0_grad, grad)
+  tensor.storage.tensor_free_tensor(grad)
+  ret 0
+
+fn _tensor_backward_softmax(node:*TapeNode, out_grad:Tensor) -> int:
+  if node.arg0_grad == 0 as *Tensor: ret 0
+  probs:Tensor = tensor.tape.tensor_load_p(node.saved_out)
+  grad:Tensor = tensor.storage._tensor_zeros_like(probs)
+  if grad.data == 0 as *float: ret 0 - 1
+  d:int = tensor.storage.tensor_shape(probs, node.axis)
+  inner:int = tensor.numeric._tensor_axis_inner(probs, node.axis)
+  outer:int = 0
+  while outer < probs.size / (d * inner):
+    lane:int = 0
+    while lane < inner:
+      base:int = outer * d * inner + lane
+      dot:float = 0.0
+      j:int = 0
+      while j < d:
+        index:int = base + j * inner
+        dot = dot + out_grad.data[index] * probs.data[index]
+        j = j + 1
+      j = 0
+      while j < d:
+        index:int = base + j * inner
+        grad.data[index] = probs.data[index] * (out_grad.data[index] - dot)
+        j = j + 1
+      lane = lane + 1
+    outer = outer + 1
+  tensor.tape.tensor_accumulate_grad(node.arg0_grad, grad)
+  tensor.storage.tensor_free_tensor(grad)
+  ret 0
+
+fn _tensor_backward_norm(node:*TapeNode, out_grad:Tensor, centered:int) -> int:
+  x:Tensor = tensor.tape.tensor_load_p(node.arg0)
+  weight:Tensor = tensor.tape.tensor_load_p(node.arg1)
+  beta:Tensor = tensor.storage.tensor_empty_raw(0, 0, 0, 0, 0)
+  if node.arg2 != 0 as *Tensor: beta = tensor.tape.tensor_load_p(node.arg2)
+  gx:Tensor = tensor.storage._tensor_zeros_like(x)
+  gw:Tensor = tensor.storage._tensor_zeros_like(weight)
+  gb:Tensor = tensor.storage._tensor_zeros_like(beta)
+  if gx.data == 0 as *float: ret 0 - 1
+  d:int = tensor.storage.tensor_shape(x, x.ndim - 1)
+  row:int = 0
+  while row < x.size / d:
+    mean:float = 0.0
+    j:int = 0
+    if centered != 0:
+      while j < d:
+        mean = mean + x.data[row * d + j]
+        j = j + 1
+      mean = mean / (d as float)
+    ss:float = 0.0
+    j = 0
+    while j < d:
+      value:float = x.data[row * d + j] - mean
+      ss = ss + value * value
+      j = j + 1
+    inv:float = 1.0 / math.sqrt(ss / (d as float) + node.scalar_val)
+    sum_g:float = 0.0
+    sum_gx:float = 0.0
+    j = 0
+    while j < d:
+      scale:float = 1.0
+      if weight.data != 0 as *float: scale = weight.data[j]
+      upstream:float = out_grad.data[row * d + j] * scale
+      sum_g = sum_g + upstream
+      sum_gx = sum_gx + upstream * (x.data[row * d + j] - mean)
+      j = j + 1
+    j = 0
+    while j < d:
+      scale:float = 1.0
+      if weight.data != 0 as *float: scale = weight.data[j]
+      value:float = x.data[row * d + j] - mean
+      upstream:float = out_grad.data[row * d + j]
+      correction:float = value * inv * inv * sum_gx / (d as float)
+      if centered != 0: correction = correction + sum_g / (d as float)
+      gx.data[row * d + j] = inv * (upstream * scale - correction)
+      if gw.data != 0 as *float: gw.data[j] = gw.data[j] + upstream * value * inv
+      if gb.data != 0 as *float: gb.data[j] = gb.data[j] + upstream
+      j = j + 1
+    row = row + 1
+  if node.arg0_grad != 0 as *Tensor: tensor.tape.tensor_accumulate_grad(node.arg0_grad, gx)
+  if node.arg1_grad != 0 as *Tensor: tensor.tape.tensor_accumulate_grad(node.arg1_grad, gw)
+  if node.arg2_grad != 0 as *Tensor: tensor.tape.tensor_accumulate_grad(node.arg2_grad, gb)
+  tensor.storage.tensor_free_tensor(gx)
+  tensor.storage.tensor_free_tensor(gw)
+  tensor.storage.tensor_free_tensor(gb)
+  ret 0
+
+fn _tensor_backward_cross_entropy(node:*TapeNode, out_grad:Tensor) -> int:
+  logits:Tensor = tensor.tape.tensor_load_p(node.arg0)
+  target:Tensor = tensor.tape.tensor_load_p(node.arg1)
+  probs:Tensor = tensor.tape.tensor_load_p(node.saved_out)
+  grad_logits:Tensor = tensor.storage._tensor_zeros_like(logits)
+  grad_target:Tensor = tensor.storage._tensor_zeros_like(target)
+  if grad_logits.data == 0 as *float || grad_target.data == 0 as *float:
+    tensor.storage.tensor_free_tensor(grad_logits)
+    tensor.storage.tensor_free_tensor(grad_target)
+    ret 0 - 1
+  d:int = tensor.storage.tensor_shape(logits, logits.ndim - 1)
+  scale:float = out_grad.data[0] / node.scalar_val
+  row:int = 0
+  while row < logits.size / d:
+    target_sum:float = 0.0
+    max_v:float = logits.data[row * d]
+    j:int = 0
+    while j < d:
+      target_sum = target_sum + target.data[row * d + j]
+      if logits.data[row * d + j] > max_v: max_v = logits.data[row * d + j]
+      j = j + 1
+    sum_exp:float = 0.0
+    j = 0
+    while j < d:
+      sum_exp = sum_exp + math.exp(logits.data[row * d + j] - max_v)
+      j = j + 1
+    log_sum:float = math.log(sum_exp)
+    j = 0
+    while j < d:
+      index:int = row * d + j
+      grad_logits.data[index] = scale * (probs.data[index] * target_sum - target.data[index])
+      grad_target.data[index] = (0.0 - scale) * ((logits.data[index] - max_v) - log_sum)
+      j = j + 1
+    row = row + 1
+  if node.arg0_grad != 0 as *Tensor: tensor.tape.tensor_accumulate_grad(node.arg0_grad, grad_logits)
+  if node.arg1_grad != 0 as *Tensor: tensor.tape.tensor_accumulate_grad(node.arg1_grad, grad_target)
+  tensor.storage.tensor_free_tensor(grad_logits)
+  tensor.storage.tensor_free_tensor(grad_target)
+  ret 0
+
+fn _tensor_backward_mse(node:*TapeNode, out_grad:Tensor) -> int:
+  pred:Tensor = tensor.tape.tensor_load_p(node.arg0)
+  target:Tensor = tensor.tape.tensor_load_p(node.arg1)
+  diff:Tensor = tensor.numeric._tensor_sub_raw(pred, target)
+  if diff.size <= 0: ret 0 - 1
+  scale:float = 2.0 * out_grad.data[0] / (diff.size as float)
+  if node.arg0_grad != 0 as *Tensor:
+    scaled:Tensor = tensor.numeric._tensor_scale_raw(diff, scale)
+    grad:Tensor = tensor.tape.tensor_collapse_to_shape(scaled, pred)
+    tensor.tape.tensor_accumulate_grad(node.arg0_grad, grad)
+    tensor.storage.tensor_free_tensor(grad)
+    tensor.storage.tensor_free_tensor(scaled)
+  if node.arg1_grad != 0 as *Tensor:
+    scaled_target:Tensor = tensor.numeric._tensor_scale_raw(diff, 0.0 - scale)
+    grad_target:Tensor = tensor.tape.tensor_collapse_to_shape(scaled_target, target)
+    tensor.tape.tensor_accumulate_grad(node.arg1_grad, grad_target)
+    tensor.storage.tensor_free_tensor(grad_target)
+    tensor.storage.tensor_free_tensor(scaled_target)
+  tensor.storage.tensor_free_tensor(diff)
+  ret 0
+
+fn tensor_backward(loss:Tensor) -> int:
+  if (*tensor.state._state__tape_error()) != 0 || loss.grad == 0 as *Tensor || loss.requires_grad == 0:
+    ret 0 - 1
+  tape:*TapeNode = tensor.tape.tape_get()
+  if tape == 0 as *TapeNode: ret 0 - 1
+  i:int = 0
+  while i < (*tensor.state._state__tape_len()):
+    node:*TapeNode = tape + i
+    node.active = 0
+    i = i + 1
+  _tape_mark_gradient(loss.grad, (*tensor.state._state__tape_len()) - 1)
+  found:int = 0
+  i = (*tensor.state._state__tape_len()) - 1
+  while i >= 0:
+    node:*TapeNode = tape + i
+    if node.active != 0:
+      found = 1
+      _tape_mark_gradient(node.arg0_grad, i - 1)
+      _tape_mark_gradient(node.arg1_grad, i - 1)
+      _tape_mark_gradient(node.arg2_grad, i - 1)
+    i = i - 1
+  if found == 0:
+    seed:Tensor = tensor.storage._tensor_zeros_like(loss)
+    tensor.storage.tensor_fill(seed, 1.0)
+    result:int = tensor.tape.tensor_accumulate_grad(loss.grad, seed)
+    tensor.storage.tensor_free_tensor(seed)
+    ret result
+  i = 0
+  while i < (*tensor.state._state__tape_len()):
+    node:*TapeNode = tape + i
+    if node.active != 0 && node.out_grad != 0 as *Tensor:
+      value:Tensor = tensor.tape.tensor_load_p(node.out_grad)
+      tensor.storage.tensor_fill(value, 0.0)
+    i = i + 1
+  loss_grad:Tensor = tensor.tape.tensor_load_p(loss.grad)
+  tensor.storage.tensor_fill(loss_grad, 1.0)
+  previous_recording:int = (*tensor.state._state__tape_enabled())
+  (*tensor.state._state__tape_enabled()) = 0
+
+  step:int = (*tensor.state._state__tape_len()) - 1
+  while step >= 0:
+    unsafe:
+      node:*TapeNode = tape + step
+      if node.active != 0 && node.out_grad != 0 as *Tensor && node.out_grad.data != 0 as *float:
+        out_g:Tensor = tensor.tape.tensor_load_p(node.out_grad)
+
+        if node.op_type == (*tensor.state._state_AUTOGRAD_OP_ADD()):
+          a0:Tensor = tensor.tape.tensor_load_p(node.arg0)
+          a1:Tensor = tensor.tape.tensor_load_p(node.arg1)
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            g0:Tensor = tensor.tape.tensor_collapse_to_shape(out_g, a0)
+            tensor.tape.tensor_accumulate_grad(node.arg0_grad, g0)
+            tensor.storage.tensor_free_tensor(g0)
+          if node.has_arg1 != 0 && node.arg1_grad != 0 as *Tensor:
+            g1:Tensor = tensor.tape.tensor_collapse_to_shape(out_g, a1)
+            tensor.tape.tensor_accumulate_grad(node.arg1_grad, g1)
+            tensor.storage.tensor_free_tensor(g1)
+
+        else if node.op_type == (*tensor.state._state_AUTOGRAD_OP_SUB()):
+          a0:Tensor = tensor.tape.tensor_load_p(node.arg0)
+          a1:Tensor = tensor.tape.tensor_load_p(node.arg1)
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            g0:Tensor = tensor.tape.tensor_collapse_to_shape(out_g, a0)
+            tensor.tape.tensor_accumulate_grad(node.arg0_grad, g0)
+            tensor.storage.tensor_free_tensor(g0)
+          if node.has_arg1 != 0 && node.arg1_grad != 0 as *Tensor:
+            neg_g:Tensor = tensor.operators.tensor_neg(out_g)
+            g1:Tensor = tensor.tape.tensor_collapse_to_shape(neg_g, a1)
+            tensor.tape.tensor_accumulate_grad(node.arg1_grad, g1)
+            tensor.storage.tensor_free_tensor(neg_g)
+            tensor.storage.tensor_free_tensor(g1)
+
+        else if node.op_type == (*tensor.state._state_AUTOGRAD_OP_MUL()):
+          a0:Tensor = tensor.tape.tensor_load_p(node.arg0)
+          a1:Tensor = tensor.tape.tensor_load_p(node.arg1)
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            prod0:Tensor = tensor.operators.tensor_mul(out_g, a1)
+            g0:Tensor = tensor.tape.tensor_collapse_to_shape(prod0, a0)
+            tensor.tape.tensor_accumulate_grad(node.arg0_grad, g0)
+            tensor.storage.tensor_free_tensor(prod0)
+            tensor.storage.tensor_free_tensor(g0)
+          if node.has_arg1 != 0 && node.arg1_grad != 0 as *Tensor:
+            prod1:Tensor = tensor.operators.tensor_mul(out_g, a0)
+            g1:Tensor = tensor.tape.tensor_collapse_to_shape(prod1, a1)
+            tensor.tape.tensor_accumulate_grad(node.arg1_grad, g1)
+            tensor.storage.tensor_free_tensor(prod1)
+            tensor.storage.tensor_free_tensor(g1)
+
+        else if node.op_type == (*tensor.state._state_AUTOGRAD_OP_DIV()):
+          a0:Tensor = tensor.tape.tensor_load_p(node.arg0)
+          a1:Tensor = tensor.tape.tensor_load_p(node.arg1)
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            d0:Tensor = tensor.operators.tensor_div(out_g, a1)
+            g0:Tensor = tensor.tape.tensor_collapse_to_shape(d0, a0)
+            tensor.tape.tensor_accumulate_grad(node.arg0_grad, g0)
+            tensor.storage.tensor_free_tensor(d0)
+            tensor.storage.tensor_free_tensor(g0)
+          if node.has_arg1 != 0 && node.arg1_grad != 0 as *Tensor:
+            b_sq:Tensor = tensor.operators.tensor_mul(a1, a1)
+            num:Tensor = tensor.operators.tensor_mul(out_g, a0)
+            d1:Tensor = tensor.operators.tensor_div(num, b_sq)
+            neg_d1:Tensor = tensor.operators.tensor_neg(d1)
+            g1:Tensor = tensor.tape.tensor_collapse_to_shape(neg_d1, a1)
+            tensor.tape.tensor_accumulate_grad(node.arg1_grad, g1)
+            tensor.storage.tensor_free_tensor(b_sq)
+            tensor.storage.tensor_free_tensor(num)
+            tensor.storage.tensor_free_tensor(d1)
+            tensor.storage.tensor_free_tensor(neg_d1)
+            tensor.storage.tensor_free_tensor(g1)
+
+        else if node.op_type == (*tensor.state._state_AUTOGRAD_OP_MATMUL()):
+          a0:Tensor = tensor.tape.tensor_load_p(node.arg0)
+          a1:Tensor = tensor.tape.tensor_load_p(node.arg1)
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            ax0:int = a1.ndim - 2
+            ax1:int = a1.ndim - 1
+            if ax0 < 0: ax0 = 0
+            if ax1 < 0: ax1 = 1
+            bt:Tensor = tensor.storage.tensor_transpose(a1, ax0, ax1)
+            ga:Tensor = tensor.operators.tensor_matmul(out_g, bt)
+            ga_c:Tensor = tensor.tape.tensor_collapse_to_shape(ga, a0)
+            tensor.tape.tensor_accumulate_grad(node.arg0_grad, ga_c)
+            tensor.storage.tensor_free_tensor(bt)
+            tensor.storage.tensor_free_tensor(ga)
+            tensor.storage.tensor_free_tensor(ga_c)
+          if node.has_arg1 != 0 && node.arg1_grad != 0 as *Tensor:
+            ax0:int = a0.ndim - 2
+            ax1:int = a0.ndim - 1
+            if ax0 < 0: ax0 = 0
+            if ax1 < 0: ax1 = 1
+            at:Tensor = tensor.storage.tensor_transpose(a0, ax0, ax1)
+            gb:Tensor = tensor.operators.tensor_matmul(at, out_g)
+            gb_c:Tensor = tensor.tape.tensor_collapse_to_shape(gb, a1)
+            tensor.tape.tensor_accumulate_grad(node.arg1_grad, gb_c)
+            tensor.storage.tensor_free_tensor(at)
+            tensor.storage.tensor_free_tensor(gb)
+            tensor.storage.tensor_free_tensor(gb_c)
+
+        else if node.op_type == (*tensor.state._state_AUTOGRAD_OP_SCALE()):
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            ga:Tensor = tensor.operators.tensor_scale(out_g, node.scalar_val)
+            tensor.tape.tensor_accumulate_grad(node.arg0_grad, ga)
+            tensor.storage.tensor_free_tensor(ga)
+
+        else if node.op_type == (*tensor.state._state_AUTOGRAD_OP_NEG()):
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            ga:Tensor = tensor.operators.tensor_neg(out_g)
+            tensor.tape.tensor_accumulate_grad(node.arg0_grad, ga)
+            tensor.storage.tensor_free_tensor(ga)
+
+        else if node.op_type == (*tensor.state._state_AUTOGRAD_OP_RELU()):
+          a0:Tensor = tensor.tape.tensor_load_p(node.arg0)
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            ga:Tensor = tensor.storage._tensor_clone_raw(out_g)
+            i:int = 0
+            while i < ga.size:
+              if a0.data[i] <= 0.0:
+                ga.data[i] = 0.0
+              i = i + 1
+            tensor.tape.tensor_accumulate_grad(node.arg0_grad, ga)
+            tensor.storage.tensor_free_tensor(ga)
+
+        else if node.op_type == (*tensor.state._state_AUTOGRAD_OP_SIGMOID()):
+          y_out:Tensor = tensor.tape.tensor_load_p(node.saved_out)
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            ga:Tensor = tensor.storage._tensor_clone_raw(out_g)
+            i:int = 0
+            while i < ga.size:
+              y_v:float = y_out.data[i]
+              ga.data[i] = ga.data[i] * y_v * (1.0 - y_v)
+              i = i + 1
+            tensor.tape.tensor_accumulate_grad(node.arg0_grad, ga)
+            tensor.storage.tensor_free_tensor(ga)
+
+        else if node.op_type == (*tensor.state._state_AUTOGRAD_OP_TANH()):
+          y_out:Tensor = tensor.tape.tensor_load_p(node.saved_out)
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            ga:Tensor = tensor.storage._tensor_clone_raw(out_g)
+            i:int = 0
+            while i < ga.size:
+              y_v:float = y_out.data[i]
+              ga.data[i] = ga.data[i] * (1.0 - y_v * y_v)
+              i = i + 1
+            tensor.tape.tensor_accumulate_grad(node.arg0_grad, ga)
+            tensor.storage.tensor_free_tensor(ga)
+
+        else if node.op_type == (*tensor.state._state_AUTOGRAD_OP_SILU()):
+          a0:Tensor = tensor.tape.tensor_load_p(node.arg0)
+          y_out:Tensor = tensor.tape.tensor_load_p(node.saved_out)
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            ga:Tensor = tensor.storage._tensor_clone_raw(out_g)
+            i:int = 0
+            while i < ga.size:
+              x_val:float = a0.data[i]
+              sig:float = 1.0 / (1.0 + math.exp(0.0 - x_val))
+              c_val:float = y_out.data[i]
+              deriv:float = sig + c_val * (1.0 - sig)
+              ga.data[i] = ga.data[i] * deriv
+              i = i + 1
+            tensor.tape.tensor_accumulate_grad(node.arg0_grad, ga)
+            tensor.storage.tensor_free_tensor(ga)
+
+        else if node.op_type == (*tensor.state._state_AUTOGRAD_OP_GELU()):
+          a0:Tensor = tensor.tape.tensor_load_p(node.arg0)
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            ga:Tensor = tensor.storage._tensor_clone_raw(out_g)
+            c_const:float = 0.7978845608028654
+            i:int = 0
+            while i < ga.size:
+              x_val:float = a0.data[i]
+              u:float = c_const * (x_val + 0.044715 * x_val * x_val * x_val)
+              th:float = math.tanh(u)
+              u_p:float = c_const * (1.0 + 0.134145 * x_val * x_val)
+              deriv:float = 0.5 * (1.0 + th) + 0.5 * x_val * (1.0 - th * th) * u_p
+              ga.data[i] = ga.data[i] * deriv
+              i = i + 1
+            tensor.tape.tensor_accumulate_grad(node.arg0_grad, ga)
+            tensor.storage.tensor_free_tensor(ga)
+
+        else if node.op_type == (*tensor.state._state_AUTOGRAD_OP_SUM_ALL()):
+          a0:Tensor = tensor.tape.tensor_load_p(node.arg0)
+          grad_val:float = out_g.data[0]
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            ga:Tensor = tensor.storage._tensor_clone_raw(a0)
+            tensor.storage.tensor_fill(ga, grad_val)
+            tensor.tape.tensor_accumulate_grad(node.arg0_grad, ga)
+            tensor.storage.tensor_free_tensor(ga)
+
+        else if node.op_type == (*tensor.state._state_AUTOGRAD_OP_MEAN_ALL()):
+          a0:Tensor = tensor.tape.tensor_load_p(node.arg0)
+          grad_val:float = out_g.data[0]
+          if node.has_arg0 != 0 && node.arg0_grad != 0 as *Tensor:
+            ga:Tensor = tensor.storage._tensor_clone_raw(a0)
+            scale_val:float = grad_val / (a0.size as float)
+            tensor.storage.tensor_fill(ga, scale_val)
+            tensor.tape.tensor_accumulate_grad(node.arg0_grad, ga)
+            tensor.storage.tensor_free_tensor(ga)
+
+        else if node.op_type == (*tensor.state._state_AUTOGRAD_OP_MSE_LOSS()):
+          _tensor_backward_mse(node, out_g)
+
+        else if node.op_type == (*tensor.state._state_AUTOGRAD_OP_CROSS_ENTROPY()):
+          _tensor_backward_cross_entropy(node, out_g)
+
+        else if node.op_type == (*tensor.state._state_AUTOGRAD_OP_VIEW()):
+          _tensor_backward_view(node, out_g)
+        else if node.op_type == (*tensor.state._state_AUTOGRAD_OP_COPY()):
+          if node.arg0_grad != 0 as *Tensor:
+            source:Tensor = tensor.tape.tensor_load_p(node.arg0)
+            grad:Tensor = tensor.storage._tensor_zeros_like(source)
+            if grad.size == out_g.size && grad.data != 0 as *float:
+              j:int = 0
+              while j < grad.size:
+                grad.data[j] = out_g.data[j]
+                j = j + 1
+              tensor.tape.tensor_accumulate_grad(node.arg0_grad, grad)
+            tensor.storage.tensor_free_tensor(grad)
+        else if node.op_type == (*tensor.state._state_AUTOGRAD_OP_CLAMP()):
+          if node.arg0_grad != 0 as *Tensor:
+            mask:Tensor = tensor.tape.tensor_load_p(node.saved_out)
+            grad:Tensor = tensor.numeric._tensor_mul_raw(out_g, mask)
+            tensor.tape.tensor_accumulate_grad(node.arg0_grad, grad)
+            tensor.storage.tensor_free_tensor(grad)
+        else if node.op_type == (*tensor.state._state_AUTOGRAD_OP_SUM()) || node.op_type == (*tensor.state._state_AUTOGRAD_OP_MEAN()):
+          _tensor_backward_reduce(node, out_g)
+        else if node.op_type == (*tensor.state._state_AUTOGRAD_OP_SOFTMAX()):
+          _tensor_backward_softmax(node, out_g)
+        else if node.op_type == (*tensor.state._state_AUTOGRAD_OP_RMSNORM()):
+          _tensor_backward_norm(node, out_g, 0)
+        else if node.op_type == (*tensor.state._state_AUTOGRAD_OP_LAYERNORM()):
+          _tensor_backward_norm(node, out_g, 1)
+
+    step = step - 1
+  (*tensor.state._state__tape_enabled()) = previous_recording
+  if (*tensor.state._state__tape_error()) != 0: ret 0 - 1
+  ret 0
+
+// -------------------------------------------------------------
+// Autograd-Aware Math Operations
+// -------------------------------------------------------------

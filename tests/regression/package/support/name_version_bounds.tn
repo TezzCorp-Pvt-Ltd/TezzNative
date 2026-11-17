@@ -1,0 +1,29 @@
+import "../../../../tools/tezz.tn"
+
+fn main() -> int:
+  unsafe:
+    token:[char;512]
+    name:[char;512]
+    version:[char;512]
+    i:int = 0
+    while i < 200:
+      token[i] = 97 as char
+      i = i + 1
+    token[200] = 64 as char
+    token[201] = 49 as char
+    token[202] = 0 as char
+    failures:int = 0
+    if tools.tezz.parse_namever_token(&token[0], &name[0], &version[0]) != 0: failures = failures + 1
+    token[0] = 97 as char
+    token[1] = 64 as char
+    i = 2
+    while i < 80:
+      token[i] = 49 as char
+      i = i + 1
+    token[80] = 0 as char
+    if tools.tezz.parse_namever_token(&token[0], &name[0], &version[0]) != 0: failures = failures + 1
+    if tools.tezz.parse_namever_token("../escape@1.0.0", &name[0], &version[0]) != 0: failures = failures + 1
+    if tools.tezz.parse_namever_token("valid@1.2.3-alpha+build.7", &name[0], &version[0]) != 1: failures = failures + 1
+    if strcmp(&name[0], "valid") != 0 || strcmp(&version[0], "1.2.3-alpha+build.7") != 0: failures = failures + 1
+    say "PACKAGE_NAME_VERSION_BOUNDS", failures
+    ret failures

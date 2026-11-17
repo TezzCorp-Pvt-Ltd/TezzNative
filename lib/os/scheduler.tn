@@ -1,0 +1,223 @@
+// os implementation: scheduler.
+import "sys"
+import "os.state"
+
+fn timer_now_ns() -> int:
+  // Platform time source
+  ret sys.sys_time_ns()
+
+fn timer_ticks() -> int:
+  ret os.state.arch_rdtsc()
+
+fn timer_sleep_ticks(ticks:int) -> int:
+  start:int = os.state.arch_rdtsc()
+  while (os.state.arch_rdtsc() - start) < ticks:
+    // spin
+    0
+  ret 0
+
+fn timer_irq_init(hz:int) -> int:
+  if os.state.apic_available() != 0:
+    os.state.apic_init()
+  ret os.state.timer_init(hz)
+
+fn timer_apic_init(hz:int) -> int:
+  if os.state.apic_available() == 0:
+    ret 0 - 1
+  os.state.apic_init()
+  ret os.state.apic_timer_init(hz)
+
+fn timer_hpet_init() -> int:
+  ret os.state.hpet_init()
+
+fn timer_hpet_ns() -> int:
+  ret os.state.hpet_time_ns()
+
+fn timer_hpet_autodetect() -> int:
+  base:int = os.state.acpi_hpet_base()
+  if base == 0:
+    ret 0 - 1
+  os.state.hpet_set_base(base)
+  ret os.state.hpet_init()
+
+fn timer_irq_ticks() -> int:
+  ret os.state.timer_ticks_irq()
+
+fn sched_init() -> int:
+  (*os.state._get_g_task_count()) = 0
+  (*os.state._get_g_sched_inited()) = 1
+  (*os.state._get_g_rhead()) = 0
+  (*os.state._get_g_rtail()) = 0
+  ret 0
+
+fn sched_ready_count() -> int:
+  if (*os.state._get_g_rhead()) == (*os.state._get_g_rtail()):
+    ret 0
+  if (*os.state._get_g_rtail()) > (*os.state._get_g_rhead()):
+    ret (*os.state._get_g_rtail()) - (*os.state._get_g_rhead())
+  ret (64 - (*os.state._get_g_rhead())) + (*os.state._get_g_rtail())
+
+fn sched_task_count() -> int:
+  ret (*os.state._get_g_task_count())
+
+fn sched_task_active(idx:int) -> int:
+  if idx < 0 || idx >= (*os.state._get_g_task_count()):
+    ret 0
+  if (*os.state._get_g_tasks())[idx].active != 0:
+    ret 1
+  ret 0
+
+fn sched_task_state(idx:int) -> int:
+  if idx < 0 || idx >= (*os.state._get_g_task_count()):
+    ret 0
+  ret (*os.state._get_g_tasks())[idx].state
+
+fn sched_task_last_tick(idx:int) -> int:
+  if idx < 0 || idx >= (*os.state._get_g_task_count()):
+    ret 0
+  ret (*os.state._get_g_tasks())[idx].last_tick
+
+fn sched_task_runs(idx:int) -> int:
+  if idx < 0 || idx >= (*os.state._get_g_task_count()):
+    ret 0
+  ret (*os.state._get_g_tasks())[idx].runs
+
+fn sched_enqueue(idx:int) -> int:
+  next:int = ((*os.state._get_g_rtail()) + 1) % 64
+  if next == (*os.state._get_g_rhead()):
+    ret 0 - 1
+  (*os.state._get_g_runq())[(*os.state._get_g_rtail())] = idx
+  (*os.state._get_g_rtail()) = next
+  ret 0
+
+fn sched_dequeue(idx:*int) -> int:
+  if (*os.state._get_g_rhead()) == (*os.state._get_g_rtail()):
+    ret 0
+  unsafe:
+    idx[0] = (*os.state._get_g_runq())[(*os.state._get_g_rhead())]
+  (*os.state._get_g_rhead()) = ((*os.state._get_g_rhead()) + 1) % 64
+  ret 1
+
+fn sched_spawn(entry:*char, arg:*char) -> int:
+  if (*os.state._get_g_sched_inited()) == 0:
+    ret 0 - 1
+  if (*os.state._get_g_task_count()) >= 64:
+    ret 0 - 1
+  unsafe:
+    (*os.state._get_g_tasks())[(*os.state._get_g_task_count())].entry = entry
+    (*os.state._get_g_tasks())[(*os.state._get_g_task_count())].arg = arg
+    (*os.state._get_g_tasks())[(*os.state._get_g_task_count())].active = 1
+    (*os.state._get_g_tasks())[(*os.state._get_g_task_count())].recycle = 1
+    (*os.state._get_g_tasks())[(*os.state._get_g_task_count())].state = 1
+    (*os.state._get_g_tasks())[(*os.state._get_g_task_count())].last_tick = 0
+    (*os.state._get_g_tasks())[(*os.state._get_g_task_count())].runs = 0
+  sched_enqueue((*os.state._get_g_task_count()))
+  (*os.state._get_g_task_count()) = (*os.state._get_g_task_count()) + 1
+  ret (*os.state._get_g_task_count()) - 1
+
+fn sched_task_requeue(idx:int) -> int:
+  if (*os.state._get_g_sched_inited()) == 0:
+    ret 0
+  if idx < 0 || idx >= (*os.state._get_g_task_count()):
+    ret 0
+  if (*os.state._get_g_tasks())[idx].active == 0:
+    (*os.state._get_g_tasks())[idx].active = 1
+    (*os.state._get_g_tasks())[idx].state = 1
+    sched_enqueue(idx)
+    ret 1
+  // already active; don't duplicate
+  ret 0
+
+fn sched_task_stop(idx:int) -> int:
+  if (*os.state._get_g_sched_inited()) == 0:
+    ret 0
+  if idx < 0 || idx >= (*os.state._get_g_task_count()):
+    ret 0
+  if (*os.state._get_g_tasks())[idx].active == 0:
+    (*os.state._get_g_tasks())[idx].state = 0
+    ret 0
+  (*os.state._get_g_tasks())[idx].active = 0
+  (*os.state._get_g_tasks())[idx].state = 0
+  (*os.state._get_g_tasks())[idx].recycle = 0
+  ret 1
+
+fn sched_yield() -> int:
+  sys.sys_yield()
+  ret 0
+
+fn cpu_halt() -> int:
+  ret os.state.irq_enable() + os.state.halt()
+
+fn sched_run_once() -> int:
+  if (*os.state._get_g_sched_inited()) == 0:
+    ret 0 - 1
+  idx:int = 0
+  if sched_dequeue(&idx) == 0:
+    ret 0
+  if idx < 0 || idx >= (*os.state._get_g_task_count()):
+    ret 0
+  if (*os.state._get_g_tasks())[idx].active == 0:
+    ret 0
+  t:*char = (*os.state._get_g_tasks())[idx].entry
+  a:*char = (*os.state._get_g_tasks())[idx].arg
+  if t != 0:
+    unsafe:
+      // entry returns nonzero to stay runnable
+      retfn:fn(*char)->int = t as fn(*char)->int
+      (*os.state._get_g_tasks())[idx].state = 2
+      (*os.state._get_g_tasks())[idx].last_tick = timer_ticks()
+      (*os.state._get_g_tasks())[idx].runs = (*os.state._get_g_tasks())[idx].runs + 1
+      keep:int = retfn(a)
+      if keep != 0:
+        (*os.state._get_g_tasks())[idx].state = 1
+        sched_enqueue(idx)
+      else:
+        (*os.state._get_g_tasks())[idx].active = 0
+        (*os.state._get_g_tasks())[idx].state = 0
+  ret 0
+
+fn sched_run_loop(max_iters:int) -> int:
+  if (*os.state._get_g_sched_inited()) == 0:
+    ret 0 - 1
+  i:int = 0
+  while 1:
+    if max_iters > 0 && i >= max_iters:
+      break
+    if sched_ready_count() == 0:
+      break
+    sched_run_once()
+    i = i + 1
+  ret i
+
+fn syscall_register(num:int, fnptr:*char) -> int:
+  if (*os.state._get_g_sys_count()) >= 64:
+    ret 0 - 1
+  (*os.state._get_g_syscalls())[(*os.state._get_g_sys_count())].num = num
+  (*os.state._get_g_syscalls())[(*os.state._get_g_sys_count())].fnptr = fnptr
+  (*os.state._get_g_sys_count()) = (*os.state._get_g_sys_count()) + 1
+  ret 0
+
+fn syscall_invoke(num:int, a:int, b:int, c:int, d:int) -> int:
+  i:int = 0
+  while i < (*os.state._get_g_sys_count()):
+    if (*os.state._get_g_syscalls())[i].num == num:
+      fptr:*char = (*os.state._get_g_syscalls())[i].fnptr
+      if fptr == 0:
+        ret 0 - 1
+      unsafe:
+        fnc:fn(int,int,int,int)->int = fptr as fn(int,int,int,int)->int
+        ret fnc(a,b,c,d)
+    i = i + 1
+  ret 0 - 1
+
+
+// -------------------------------------------------
+// Memory Mapping API (cross-platform)
+// Allows fast zero-copy loading of huge files (e.g. 8GB+ .gguf LLM models).
+// -------------------------------------------------
+
+// Map a file into virtual address space without loading it into RAM.
+// On Windows: uses CreateFileMappingA + MapViewOfFile.
+// On Linux/macOS: uses mmap(2) with MAP_PRIVATE|PROT_READ.
+// Returns a pointer to the read-only memory view.
+// out_size is set to the file byte length. Returns null on failure.

@@ -2,7 +2,7 @@
 // Stores internal actor states and mailboxes cleanly inside `.log/` directory.
 
 import "str"
-import "sys"
+import "time"
 import "io"
 
 // OTP Process States
@@ -69,7 +69,7 @@ fn recv_msg(pid:int) -> str:
 // Spawn lightweight actor process inside `.log/` directory
 fn spawn_actor(name:str, parent_pid:int) -> int:
   ensure_log_dir()
-  time_ns:int = sys.time_ns()
+  time_ns:int = time.now_ns()
   pid:int = (time_ns % 9000) + 1000
 
   state_key:str = ".log/otp_proc_"
@@ -93,11 +93,14 @@ fn process_status(pid:int) -> str:
   if meta == 0 as str || str.str_len(meta) == 0:
     ret "DEAD"
   
-  if str.str_contains(meta, "STATUS=ALIVE") != 0:
-    ret "ALIVE"
   if str.str_contains(meta, "STATUS=CRASHED") != 0:
+    free(meta)
     ret "CRASHED"
+  if str.str_contains(meta, "STATUS=ALIVE") != 0:
+    free(meta)
+    ret "ALIVE"
 
+  free(meta)
   ret "TERMINATED"
 
 // Mark process crashed (for supervisor trap)

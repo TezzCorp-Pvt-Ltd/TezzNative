@@ -1,0 +1,251 @@
+// tzgui implementation: interaction.
+import "gui"
+import "frame"
+import "io"
+import "os"
+import "tzgui.state"
+import "tzgui.geometry"
+
+fn tree_hit_test(tree:*TzWidgetTree, x:int, y:int) -> int:
+  if tree == 0:
+    ret 0
+  best_slot:int = 0 - 1
+  i:int = 0
+  while i < tzgui.state._get_TZ_WIDGET_MAX():
+    if tree[0].widgets[i].alive != 0 && tree[0].widgets[i].visible != 0 && tree[0].widgets[i].hit_testable != 0 && tzgui.geometry._tree_effective_visible(tree, i) != 0 && tzgui.geometry._tree_effective_enabled(tree, i) != 0:
+      if x >= tree[0].widgets[i].x && y >= tree[0].widgets[i].y && x < tree[0].widgets[i].x + tree[0].widgets[i].w && y < tree[0].widgets[i].y + tree[0].widgets[i].h:
+        if best_slot < 0 || tree[0].widgets[i].z > tree[0].widgets[best_slot].z || (tree[0].widgets[i].z == tree[0].widgets[best_slot].z && tree[0].widgets[i].order > tree[0].widgets[best_slot].order):
+          best_slot = i
+    i = i + 1
+  if best_slot < 0:
+    ret 0
+  ret tree[0].widgets[best_slot].id
+
+fn tree_focus_set(tree:*TzWidgetTree, widget_id:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  if widget_id < 0:
+    ret 0 - 2
+  if widget_id > 0:
+    slot:int = tzgui.geometry._tree_widget_slot_by_id(tree, widget_id)
+    if slot < 0 || tree[0].widgets[slot].focusable == 0 || tzgui.geometry._tree_effective_visible(tree, slot) == 0 || tzgui.geometry._tree_effective_enabled(tree, slot) == 0:
+      ret 0 - 2
+  old_id:int = tree[0].focus_id
+  if old_id == widget_id:
+    ret 0
+  tree[0].focus_id = widget_id
+  tzgui.geometry._tree_mark_interaction(tree, old_id)
+  tzgui.geometry._tree_mark_interaction(tree, widget_id)
+  ret 0
+
+fn tree_focus_get(tree:*TzWidgetTree) -> int:
+  if tree == 0:
+    ret 0
+  ret tree[0].focus_id
+
+fn tree_hovered_get(tree:*TzWidgetTree) -> int:
+  if tree == 0:
+    ret 0
+  ret tree[0].hovered_id
+
+fn tree_pressed_get(tree:*TzWidgetTree) -> int:
+  if tree == 0:
+    ret 0
+  ret tree[0].pressed_id
+
+fn tree_focus_next(tree:*TzWidgetTree, reverse:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  slots:[int;256]
+  n:int = 0
+  i:int = 0
+  while i < tzgui.state._get_TZ_WIDGET_MAX():
+    if tree[0].widgets[i].alive != 0 && tree[0].widgets[i].focusable != 0 && tree[0].widgets[i].visible != 0 && tzgui.geometry._tree_effective_visible(tree, i) != 0 && tzgui.geometry._tree_effective_enabled(tree, i) != 0:
+      slots[n] = i
+      n = n + 1
+    i = i + 1
+  if n <= 0:
+    tree_focus_set(tree, 0)
+    ret 0
+  i = 1
+  while i < n:
+    key_slot:int = slots[i]
+    j:int = i - 1
+    while j >= 0:
+      prev_slot:int = slots[j]
+      prev_tab:int = tree[0].widgets[prev_slot].tab_index
+      key_tab:int = tree[0].widgets[key_slot].tab_index
+      if prev_tab < key_tab || (prev_tab == key_tab && tree[0].widgets[prev_slot].order < tree[0].widgets[key_slot].order):
+        break
+      slots[j + 1] = slots[j]
+      j = j - 1
+    slots[j + 1] = key_slot
+    i = i + 1
+  current_idx:int = 0 - 1
+  i = 0
+  while i < n:
+    if tree[0].widgets[slots[i]].id == tree[0].focus_id:
+      current_idx = i
+      break
+    i = i + 1
+  step:int = 1
+  while step <= n:
+    next_idx:int = 0
+    if reverse != 0:
+      if current_idx < 0:
+        next_idx = n - step
+      else:
+        next_idx = current_idx - step
+        if next_idx < 0:
+          next_idx = next_idx + n
+    else:
+      if current_idx < 0:
+        next_idx = step - 1
+      else:
+        next_idx = current_idx + step
+        if next_idx >= n:
+          next_idx = next_idx - n
+    if tree_focus_set(tree, tree[0].widgets[slots[next_idx]].id) == 0:
+      ret tree[0].widgets[slots[next_idx]].id
+    step = step + 1
+  ret 0
+
+fn widget_set_focusable(tree:*TzWidgetTree, widget_id:int, focusable:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  slot:int = tzgui.geometry._tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  if tree[0].widgets[slot].focusable != 0 && focusable == 0:
+    tzgui.geometry._tree_widget_mark_rect(tree, slot)
+  tree[0].widgets[slot].focusable = 0
+  if focusable != 0:
+    tree[0].widgets[slot].focusable = 1
+  if tree[0].widgets[slot].focusable == 0 && tree[0].focus_id == widget_id:
+    tree_focus_set(tree, 0)
+  tree[0].widgets[slot].dirty = 1
+  ret 0
+
+fn widget_set_focus_order(tree:*TzWidgetTree, widget_id:int, tab_index:int) -> int:
+  if tree == 0 || tab_index < 0:
+    ret 0 - 1
+  slot:int = tzgui.geometry._tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  tree[0].widgets[slot].tab_index = tab_index
+  ret 0
+
+fn widget_set_enabled(tree:*TzWidgetTree, widget_id:int, enabled:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  slot:int = tzgui.geometry._tree_widget_slot_by_id(tree, widget_id)
+  if slot < 0:
+    ret 0 - 1
+  new_enabled:int = 0
+  if enabled != 0:
+    new_enabled = 1
+  if tree[0].widgets[slot].enabled == new_enabled:
+    ret 0
+  tree[0].widgets[slot].enabled = new_enabled
+  if tree[0].focus_id > 0:
+    focus_slot:int = tzgui.geometry._tree_widget_slot_by_id(tree, tree[0].focus_id)
+    if focus_slot < 0 || tzgui.geometry._tree_effective_enabled(tree, focus_slot) == 0:
+      tree_focus_set(tree, 0)
+  if tree[0].hovered_id > 0:
+    hover_slot:int = tzgui.geometry._tree_widget_slot_by_id(tree, tree[0].hovered_id)
+    if hover_slot < 0 || tzgui.geometry._tree_effective_enabled(tree, hover_slot) == 0:
+      tzgui.geometry._tree_mark_interaction(tree, tree[0].hovered_id)
+      tree[0].hovered_id = 0
+  if tree[0].pressed_id > 0:
+    press_slot:int = tzgui.geometry._tree_widget_slot_by_id(tree, tree[0].pressed_id)
+    if press_slot < 0 || tzgui.geometry._tree_effective_enabled(tree, press_slot) == 0:
+      tzgui.geometry._tree_mark_interaction(tree, tree[0].pressed_id)
+      tree[0].pressed_id = 0
+  ret tzgui.geometry.tree_request_full_redraw(tree, tzgui.state._get_TZ_FULL_REDRAW_TREE_RESET())
+
+fn tree_pointer_update(tree:*TzWidgetTree, x:int, y:int, buttons:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  previous_buttons:int = tree[0].pointer_buttons
+  previous_hover:int = tree[0].hovered_id
+  previous_pressed:int = tree[0].pressed_id
+  hit_id:int = tree_hit_test(tree, x, y)
+  tree[0].pointer_x = x
+  tree[0].pointer_y = y
+  tree[0].hovered_id = hit_id
+  if previous_hover != hit_id:
+    tzgui.geometry._tree_mark_interaction(tree, previous_hover)
+    tzgui.geometry._tree_mark_interaction(tree, hit_id)
+  was_down:int = previous_buttons & tzgui.state._get_TZ_GUI_POINTER_PRIMARY()
+  is_down:int = buttons & tzgui.state._get_TZ_GUI_POINTER_PRIMARY()
+  activated:int = 0
+  if was_down == 0 && is_down != 0:
+    tree[0].pressed_id = hit_id
+    if hit_id > 0:
+      hit_slot:int = tzgui.geometry._tree_widget_slot_by_id(tree, hit_id)
+      if hit_slot >= 0 && tree[0].widgets[hit_slot].focusable != 0:
+        // Avoid routing pointer focus through the public setter while the
+        // pointer packet queue is being drained; mark damage with the common
+        // interaction path after updating focus.
+        old_focus:int = tree[0].focus_id
+        tree[0].focus_id = hit_id
+        if old_focus != hit_id:
+          tzgui.geometry._tree_mark_interaction(tree, old_focus)
+          tzgui.geometry._tree_mark_interaction(tree, hit_id)
+      else:
+        tree[0].focus_id = 0
+  if was_down != 0 && is_down == 0:
+    if previous_pressed > 0 && previous_pressed == hit_id:
+      activated = previous_pressed
+    tree[0].pressed_id = 0
+  if previous_pressed != tree[0].pressed_id:
+    tzgui.geometry._tree_mark_interaction(tree, previous_pressed)
+    tzgui.geometry._tree_mark_interaction(tree, tree[0].pressed_id)
+  tree[0].pointer_buttons = buttons
+  ret activated
+
+fn tree_key_event(tree:*TzWidgetTree, key:int, mods:int) -> int:
+  if tree == 0:
+    ret 0 - 1
+  if key == tzgui.state._get_TZ_GUI_KEY_TAB():
+    tree_focus_next(tree, mods & tzgui.state._get_TZ_GUI_MOD_SHIFT())
+    ret 0
+  if key == tzgui.state._get_TZ_GUI_KEY_LEFT() || key == tzgui.state._get_TZ_GUI_KEY_UP():
+    tree_focus_next(tree, 1)
+    ret 0
+  if key == tzgui.state._get_TZ_GUI_KEY_RIGHT() || key == tzgui.state._get_TZ_GUI_KEY_DOWN():
+    tree_focus_next(tree, 0)
+    ret 0
+  if key == tzgui.state._get_TZ_GUI_KEY_ENTER() || key == tzgui.state._get_TZ_GUI_KEY_SPACE():
+    focus_id:int = tree[0].focus_id
+    slot:int = tzgui.geometry._tree_widget_slot_by_id(tree, focus_id)
+    if slot >= 0 && tree[0].widgets[slot].enabled != 0 && tree[0].widgets[slot].focusable != 0 && tzgui.geometry._tree_effective_visible(tree, slot) != 0 && tzgui.geometry._tree_effective_enabled(tree, slot) != 0:
+      ret focus_id
+  ret 0
+
+// Route one GuiEvent through retained focus and pointer handling. Returns the
+// activated widget ID, zero for no activation, or a negative error code.
+
+fn tree_process_event(tree:*TzWidgetTree, ev:*GuiEvent) -> int:
+  if tree == 0 || ev == 0:
+    ret 0 - 1
+  if ev[0].kind == tzgui.state._get_TZ_GUI_EVENT_KEY():
+    ret tree_key_event(tree, ev[0].key, ev[0].mods)
+  if ev[0].kind == tzgui.state._get_TZ_GUI_EVENT_POINTER() || ev[0].kind == tzgui.state._get_TZ_GUI_EVENT_BUTTON():
+    ret tree_pointer_update(tree, ev[0].x, ev[0].y, ev[0].buttons)
+  if ev[0].kind == tzgui.state._get_TZ_GUI_EVENT_TOUCH():
+    if ev[0].buttons == 1:
+      if tree[0].active_touch == 0:
+        tree[0].active_touch = 1
+        tree[0].active_touch_id = ev[0].key
+        ret tree_pointer_update(tree, ev[0].x, ev[0].y, tzgui.state._get_TZ_GUI_POINTER_PRIMARY())
+      ret 0
+    if tree[0].active_touch != 0 && tree[0].active_touch_id == ev[0].key:
+      if ev[0].buttons == 2:
+        ret tree_pointer_update(tree, ev[0].x, ev[0].y, tzgui.state._get_TZ_GUI_POINTER_PRIMARY())
+      if ev[0].buttons == 3:
+        activated:int = tree_pointer_update(tree, ev[0].x, ev[0].y, 0)
+        tree[0].active_touch = 0
+        tree[0].active_touch_id = 0
+        ret activated
+  ret 0

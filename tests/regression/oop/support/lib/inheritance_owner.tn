@@ -1,0 +1,23 @@
+struct ParentRecord:
+  pub value:int
+  priv secret:int
+
+  fn get(self:*ParentRecord) -> int:
+    ret self.value + self.secret
+
+struct PublicChild:
+  pub base:ParentRecord
+  pub tag:int
+
+struct PrivateChild:
+  priv base:ParentRecord
+  pub tag:int
+
+fn make_public() -> PublicChild:
+  ret PublicChild{base:ParentRecord{value:10, secret:20}, tag:1}
+
+fn make_private() -> PrivateChild:
+  ret PrivateChild{base:ParentRecord{value:30, secret:40}, tag:2}
+
+fn read_private(child:*PrivateChild) -> int:
+  ret child.value + child.get()

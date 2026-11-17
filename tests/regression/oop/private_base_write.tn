@@ -1,0 +1,6 @@
+import "./support/lib/inheritance_owner.tn"
+
+fn main() -> int:
+  child:PrivateChild = inheritance_owner.make_private()
+  child.value = 999
+  ret 0

@@ -1,0 +1,54 @@
+import "tls"
+
+extern fn get_env(name:str) -> str
+
+fn number(name:str) -> int:
+  text:str = get_env(name)
+  value:int = 0
+  i:int = 0
+  while i < len(text):
+    unsafe:
+      value = value * 10 + (text[i] as int) - 48
+    i = i + 1
+  ret value
+
+fn main() -> int:
+  unsafe:
+    host:str = get_env("TEZZ_TLS_HOST")
+    pin:str = get_env("TEZZ_TLS_PIN")
+    mode:int = number("TEZZ_TLS_MODE")
+    port:int = number("TEZZ_TLS_PORT")
+    minimum:int = number("TEZZ_TLS_MIN")
+    timeout:int = number("TEZZ_TLS_TIMEOUT")
+    expected:int = number("TEZZ_TLS_EXPECT")
+    tls.policy_reset()
+    connection:*Tls = 0 as *Tls
+    if mode == 0:
+      connection = tls.connect(host, port)
+    else if mode == 1:
+      connection = tls.connect_with_policy(host, port, minimum, timeout, pin)
+    else if mode == 2:
+      if tls.policy_set_min(minimum) != 0: ret 10
+      if tls.policy_set_handshake_timeout(timeout) != 0: ret 11
+      if tls.policy_set_pin_sha256(pin) != 0: ret 12
+      if tls.policy_get_min() != minimum: ret 13
+      if tls.policy_get_handshake_timeout() != timeout: ret 14
+      connection = tls.connect(host, port)
+    else:
+      tls.policy_set_min(13)
+      tls.policy_set_pin_sha256("0000000000000000000000000000000000000000000000000000000000000000")
+      connection = tls.connect_with_policy(host, port, minimum, timeout, pin)
+      if tls.policy_get_min() != 13: ret 15
+      if tls.policy_pin_enabled() != 1: ret 16
+    if expected == 0:
+      if connection != 0:
+        tls.close(connection)
+        ret 1
+      ret 0
+    if connection == 0: ret 2
+    buffer:[char;4]
+    unsafe:
+      if tls.recv(connection, &buffer[0], 4) != 4: ret 3
+    tls.close(connection)
+    if buffer[0] != 'o' || buffer[3] != 'y': ret 4
+    ret 0

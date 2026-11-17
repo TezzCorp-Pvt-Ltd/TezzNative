@@ -1,0 +1,304 @@
+import "stt_temporal.state"
+import "tzcpu"
+import "tzgpu"
+import "math"
+
+struct TemporalWork:
+  device:i64
+  x:i64
+  a0:i64
+  a1:i64
+  a2:i64
+  logits:i64
+  g0:i64
+  g1:i64
+  g2:i64
+  gl:i64
+  input_host:i64
+  logits_host:i64
+  gradient_host:i64
+
+extern fn speech_ctc_loss_f32(logits:i64, frames:i64, classes:i64, labels:*i64, count:i64, gradient:i64, loss:*f64)
+extern fn speech_ctc_decode_f32(logits:i64, frames:i64, classes:i64, width:i64, labels:*i64, capacity:i64)
+fn work_free(work:*TemporalWork):
+  if work == 0:
+    ret 0
+  unsafe:
+    stt_temporal.state.buffer_free((*work).x, (*work).device)
+    stt_temporal.state.buffer_free((*work).a0, (*work).device)
+    stt_temporal.state.buffer_free((*work).a1, (*work).device)
+    stt_temporal.state.buffer_free((*work).a2, (*work).device)
+    stt_temporal.state.buffer_free((*work).logits, (*work).device)
+    stt_temporal.state.buffer_free((*work).g0, (*work).device)
+    stt_temporal.state.buffer_free((*work).g1, (*work).device)
+    stt_temporal.state.buffer_free((*work).g2, (*work).device)
+    stt_temporal.state.buffer_free((*work).gl, (*work).device)
+    tzcpu.tz_cpu_free((*work).input_host)
+    tzcpu.tz_cpu_free((*work).logits_host)
+    tzcpu.tz_cpu_free((*work).gradient_host)
+    free(work as *u8)
+  ret 0
+
+fn work_new(frames:i64, hidden:i64, device:i64) -> *TemporalWork:
+  if frames < 1 || frames > 3000 || hidden < 8 || hidden > 256 || device < 0 || device > 1:
+    ret 0 as *TemporalWork
+  unsafe:
+    let work:*TemporalWork = malloc(sizeof(TemporalWork)) as *TemporalWork
+    if work == 0:
+      ret work
+    let bytes:*u8 = work as *u8
+    let i = 0
+    while i < sizeof(TemporalWork):
+      bytes[i] = 0 as u8
+      i = i + 1
+    (*work).device = device
+    (*work).x = stt_temporal.state.buffer_new(frames * 80, device)
+    (*work).a0 = stt_temporal.state.buffer_new(frames * hidden, device)
+    (*work).a1 = stt_temporal.state.buffer_new(frames * hidden, device)
+    (*work).a2 = stt_temporal.state.buffer_new(frames * hidden, device)
+    (*work).logits = stt_temporal.state.buffer_new(frames * 29, device)
+    (*work).g0 = stt_temporal.state.buffer_new(frames * hidden, device)
+    (*work).g1 = stt_temporal.state.buffer_new(frames * hidden, device)
+    (*work).g2 = stt_temporal.state.buffer_new(frames * hidden, device)
+    (*work).gl = stt_temporal.state.buffer_new(frames * 29, device)
+    (*work).input_host = tzcpu.tz_cpu_zeros(frames * 80)
+    (*work).logits_host = tzcpu.tz_cpu_zeros(frames * 29)
+    (*work).gradient_host = tzcpu.tz_cpu_zeros(frames * 29)
+    if (*work).x == 0 || (*work).a0 == 0 || (*work).a1 == 0 || (*work).a2 == 0 || (*work).logits == 0 || (*work).g0 == 0 || (*work).g1 == 0 || (*work).g2 == 0 || (*work).gl == 0 || (*work).input_host == 0 || (*work).logits_host == 0 || (*work).gradient_host == 0:
+      work_free(work)
+      ret 0 as *TemporalWork
+    ret work
+
+fn conv(device:i64, x:i64, weights:i64, bias:i64, out:i64, frames:i64, inputs:i64, outputs:i64, kernel_size:i64, dilation:i64):
+  if device == 0:
+    ret tzcpu.tz_cpu_conv1d_f32(x, weights, bias, out, 1, frames, inputs, outputs, kernel_size, 1, dilation)
+  if device == 1:
+    ret tzgpu.tz_gpu_conv1d_f32(x, weights, bias, out, 1, frames, inputs, outputs, kernel_size, 1, dilation)
+  ret -1
+
+fn conv_backward(device:i64, dy:i64, x:i64, weights:i64, dx:i64, dw:i64, db:i64, frames:i64, inputs:i64, outputs:i64, kernel_size:i64, dilation:i64):
+  if device == 0:
+    ret tzcpu.tz_cpu_conv1d_bwd_f32(dy, x, weights, dx, dw, db, 1, frames, inputs, outputs, kernel_size, 1, dilation)
+  if device == 1:
+    ret tzgpu.tz_gpu_conv1d_bwd_f32(dy, x, weights, dx, dw, db, 1, frames, inputs, outputs, kernel_size, 1, dilation)
+  ret -1
+
+fn relu(device:i64, data:i64, count:i64):
+  if device == 0:
+    ret tzcpu.tz_cpu_relu_f32(data, data, count)
+  if device == 1:
+    ret tzgpu.tz_gpu_relu_f32(data, data, count)
+  ret -1
+
+fn relu_backward(device:i64, gradient:i64, activation:i64, count:i64):
+  if device == 0:
+    ret tzcpu.tz_cpu_relu_bwd_f32(gradient, activation, gradient, count)
+  if device == 1:
+    ret tzgpu.tz_gpu_relu_bwd_f32(gradient, activation, gradient, count)
+  ret -1
+
+fn forward(model:*TemporalStt, mel:*f64, frames:i64, work:*TemporalWork):
+  if stt_temporal.state.valid(model) == 0 || mel == 0 || work == 0 || frames < 1 || frames > 3000:
+    ret -1
+  unsafe:
+    let device = (*model).device
+    let hidden = (*model).hidden
+    if (*work).device != device:
+      ret -1
+    let input:*f32 = (*work).input_host as *f32
+    let i = 0
+    while i < frames * 80:
+      let value:f64 = mel[i]
+      if stt_temporal.state.finite(value) == 0:
+        ret -1
+      value = (value + 10) * 0.10000000000000001
+      if value > 5:
+        value = 5
+      if value < -5:
+        value = -5
+      input[i] = value as f32
+      i = i + 1
+    if stt_temporal.state.from_host((*work).x, (*work).input_host, frames * 80, device) != 0:
+      ret -1
+    let p = (*model).params
+    if conv(device, (*work).x, stt_temporal.state.offset(p, (*model).w0), stt_temporal.state.offset(p, (*model).b0), (*work).a0, frames, 80, hidden, 5, 1) != 0:
+      ret -1
+    if relu(device, (*work).a0, frames * hidden) != 0:
+      ret -1
+    if conv(device, (*work).a0, stt_temporal.state.offset(p, (*model).w1), stt_temporal.state.offset(p, (*model).b1), (*work).a1, frames, hidden, hidden, 5, 4) != 0:
+      ret -1
+    if relu(device, (*work).a1, frames * hidden) != 0:
+      ret -1
+    if conv(device, (*work).a1, stt_temporal.state.offset(p, (*model).w2), stt_temporal.state.offset(p, (*model).b2), (*work).a2, frames, hidden, hidden, 5, 16) != 0:
+      ret -1
+    if relu(device, (*work).a2, frames * hidden) != 0:
+      ret -1
+    if conv(device, (*work).a2, stt_temporal.state.offset(p, (*model).w3), stt_temporal.state.offset(p, (*model).b3), (*work).logits, frames, hidden, 29, 1, 1) != 0:
+      ret -1
+    if stt_temporal.state.to_host((*work).logits_host, (*work).logits, frames * 29, device) != 0:
+      ret -1
+    if tzcpu.tz_cpu_check_finite_f32((*work).logits_host, frames * 29) != 1:
+      ret -1
+  ret 0
+
+fn backward_layers(model:*TemporalStt, frames:i64, work:*TemporalWork):
+  unsafe:
+    let device = (*model).device
+    let hidden = (*model).hidden
+    let p = (*model).params
+    let g = (*model).gradient
+    if stt_temporal.state.clear(g, (*model).count, device) != 0:
+      ret -1
+    if stt_temporal.state.from_host((*work).gl, (*work).gradient_host, frames * 29, device) != 0:
+      ret -1
+    if conv_backward(device, (*work).gl, (*work).a2, stt_temporal.state.offset(p, (*model).w3), (*work).g2, stt_temporal.state.offset(g, (*model).w3), stt_temporal.state.offset(g, (*model).b3), frames, hidden, 29, 1, 1) != 0:
+      ret -1
+    if relu_backward(device, (*work).g2, (*work).a2, frames * hidden) != 0:
+      ret -1
+    if conv_backward(device, (*work).g2, (*work).a1, stt_temporal.state.offset(p, (*model).w2), (*work).g1, stt_temporal.state.offset(g, (*model).w2), stt_temporal.state.offset(g, (*model).b2), frames, hidden, hidden, 5, 16) != 0:
+      ret -1
+    if relu_backward(device, (*work).g1, (*work).a1, frames * hidden) != 0:
+      ret -1
+    if conv_backward(device, (*work).g1, (*work).a0, stt_temporal.state.offset(p, (*model).w1), (*work).g0, stt_temporal.state.offset(g, (*model).w1), stt_temporal.state.offset(g, (*model).b1), frames, hidden, hidden, 5, 4) != 0:
+      ret -1
+    if relu_backward(device, (*work).g0, (*work).a0, frames * hidden) != 0:
+      ret -1
+    ret conv_backward(device, (*work).g0, (*work).x, stt_temporal.state.offset(p, (*model).w0), 0, stt_temporal.state.offset(g, (*model).w0), stt_temporal.state.offset(g, (*model).b0), frames, 80, hidden, 5, 1)
+
+fn adam_update(model:*TemporalStt, rate_ppm:i64):
+  if stt_temporal.state.valid(model) == 0 || rate_ppm < 1 || rate_ppm > 100000:
+    ret -1
+  unsafe:
+    if (*model).step >= 1000000000:
+      ret -1
+    let count = (*model).count
+    let device = (*model).device
+    let host = tzcpu.tz_cpu_zeros(count)
+    if host == 0:
+      ret -1
+    let status = stt_temporal.state.to_host(host, (*model).gradient, count, device)
+    if status == 0 && tzcpu.tz_cpu_check_finite_f32(host, count) != 1:
+      status = -1
+    let norm:f64 = 0
+    let i = 0
+    if status == 0:
+      let values:*f32 = host as *f32
+      while i < count:
+        let value:f64 = values[i] as f64
+        norm = norm + value * value
+        i = i + 1
+    tzcpu.tz_cpu_free(host)
+    if status != 0:
+      ret -1
+    norm = math.sqrt(norm)
+    if stt_temporal.state.finite(norm) == 0:
+      ret -1
+    if norm > 5:
+      if device == 0:
+        status = tzcpu.tz_cpu_scale_f32((*model).gradient, (*model).gradient, count, 5 / norm)
+      else:
+        status = tzgpu.tz_gpu_scale_f32((*model).gradient, (*model).gradient, count, 5 / norm)
+    if status != 0:
+      ret -1
+    let power1:f64 = (*model).beta1_power * 0.90000000000000002
+    let power2:f64 = (*model).beta2_power * 0.999
+    let rate:f64 = rate_ppm as f64 * 9.9999999999999995e-07
+    if device == 0:
+      status = tzcpu.tz_cpu_adam_f32((*model).params, (*model).gradient, (*model).moment, (*model).variance, rate, 0.90000000000000002, 0.999, 1e-08, power1, power2, count)
+    else:
+      status = tzgpu.tz_gpu_adam_f32((*model).params, (*model).gradient, (*model).moment, (*model).variance, rate, 0.90000000000000002, 0.999, 1e-08, power1, power2, count)
+      if status == 0:
+        status = tzgpu.tz_cuda_sync()
+    if status != 0:
+      ret -1
+    (*model).beta1_power = power1
+    (*model).beta2_power = power2
+    (*model).step = (*model).step + 1
+  ret 0
+
+fn objective(model:*TemporalStt, mel:*f64, frames:i64, labels:*i64, count:i64, loss:*f64, gradient:i64, rate_ppm:i64):
+  if stt_temporal.state.valid(model) == 0 || mel == 0 || labels == 0 || loss == 0 || frames < 1 || frames > 3000 || count < 1 || count > 448 || rate_ppm < 0 || rate_ppm > 100000:
+    ret -1
+  if gradient < 0 || gradient > 1 || rate_ppm > 0 && gradient == 0:
+    ret -1
+  unsafe:
+    let minimum = count
+    let i = 0
+    while i < count:
+      if labels[i] < 1 || labels[i] > 28:
+        ret -1
+      if i > 0 && labels[i] == labels[i - 1]:
+        minimum = minimum + 1
+      i = i + 1
+    if frames < minimum:
+      ret -1
+    let work:*TemporalWork = work_new(frames, (*model).hidden, (*model).device)
+    if work == 0:
+      ret -1
+    let status = forward(model, mel, frames, work)
+    let value:f64 = 0
+    if status == 0:
+      let output_gradient = 0
+      if gradient != 0:
+        output_gradient = (*work).gradient_host
+      status = speech_ctc_loss_f32((*work).logits_host, frames, 29, labels, count, output_gradient, &value)
+    if status == 0:
+      value = value / count as f64
+      if stt_temporal.state.finite(value) == 0 || value < 0:
+        status = -1
+    if status == 0 && gradient != 0:
+      status = tzcpu.tz_cpu_scale_f32((*work).gradient_host, (*work).gradient_host, frames * 29, 1 / count as f64)
+      if status == 0:
+        status = backward_layers(model, frames, work)
+    if status == 0 && rate_ppm > 0:
+      status = adam_update(model, rate_ppm)
+    work_free(work)
+    if status == 0:
+      *loss = value
+    ret status
+
+fn predict(model:*TemporalStt, mel:*f64, frames:i64, text:*u8, capacity:i64, beam:i64):
+  if stt_temporal.state.valid(model) == 0 || text == 0 || capacity < 1 || capacity > 65536 || frames < 1 || frames > 3000 || beam < 1 || beam > 128:
+    ret -1
+  unsafe:
+    text[0] = 0 as u8
+    if (*model).step == 0:
+      ret -1
+    let work:*TemporalWork = work_new(frames, (*model).hidden, (*model).device)
+    if work == 0:
+      ret -1
+    let labels:*i64 = malloc(frames * sizeof(i64)) as *i64
+    if labels == 0:
+      work_free(work)
+      ret -1
+    let count = -1
+    if forward(model, mel, frames, work) == 0:
+      count = speech_ctc_decode_f32((*work).logits_host, frames, 29, beam, labels, frames)
+    let length = 0
+    if count >= 0:
+      let i = 0
+      while i < count:
+        let code = labels[i] + 94
+        if labels[i] == 1:
+          code = 32
+        else:
+          if labels[i] == 2:
+            code = 39
+        if code != 32 || length > 0 && text[length - 1] != 32 as u8:
+          if length + 1 >= capacity:
+            count = -1
+            break
+          text[length] = code as u8
+          length = length + 1
+        i = i + 1
+    if count < 0:
+      length = 0
+    if length > 0 && text[length - 1] == 32 as u8:
+      length = length - 1
+    text[length] = 0 as u8
+    free(labels as *u8)
+    work_free(work)
+    if count < 0:
+      ret -1
+    ret length
+

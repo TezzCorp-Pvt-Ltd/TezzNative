@@ -1,0 +1,17 @@
+// Native password and session primitives; returned strings are caller-owned.
+extern fn tn_security_password_hash(password:str) -> str
+extern fn tn_security_password_verify(password:str, record:str) -> int
+extern fn tn_security_random_token() -> str
+extern fn tn_security_token_hash(token:str) -> str
+
+fn password_hash(password:str) -> str:
+  ret tn_security_password_hash(password)
+
+fn password_verify(password:str, record:str) -> int:
+  ret tn_security_password_verify(password, record)
+
+fn random_token() -> str:
+  ret tn_security_random_token()
+
+fn token_hash(token:str) -> str:
+  ret tn_security_token_hash(token)

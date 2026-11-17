@@ -1,0 +1,13 @@
+fn main() -> int:
+  unsafe:
+    postfix:*int = malloc(16) as *int
+    prefix:*int = (*int)malloc(16)
+    sugar:*char = malloc 16
+    if postfix == 0 || prefix == 0 || sugar == 0: ret 1
+    postfix[0] = 7
+    prefix[0] = 9
+    if postfix[0] + prefix[0] != 16: ret 2
+    free(postfix as *char)
+    free(prefix as *char)
+    free sugar
+  ret 0

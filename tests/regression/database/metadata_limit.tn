@@ -1,0 +1,26 @@
+import "tezzdb"
+
+fn main() -> int:
+  unsafe:
+    remove("metadata_limit.tdb")
+    remove("metadata_limit.tdb.wal")
+    db:*TezzDb = tezzdb.open("metadata_limit.tdb")
+    if db == 0: ret 1
+    failed:int = 0
+    i:int = 0
+    while i < 102:
+      number:str = tezzdb._db_itoa(i)
+      name:str = tezzdb._db_join2("t", number)
+      if tezzdb.table_create(db, name) != 0: failed = 1
+      free(name)
+      free(number)
+      i = i + 1
+    if tezzdb.table_create(db, "one_too_many") != 0 - 4: failed = 1
+    if tezzdb.db_table_count(db) != 102: failed = 1
+    tezzdb.close(db)
+    db = tezzdb.open("metadata_limit.tdb")
+    if db == 0: ret 2
+    if tezzdb.db_table_count(db) != 102 || tezzdb.table_exists(db, "t101") == 0: failed = 1
+    tezzdb.close(db)
+    if failed != 0: say "FAIL: database metadata must enforce its on-disk capacity"
+    ret failed

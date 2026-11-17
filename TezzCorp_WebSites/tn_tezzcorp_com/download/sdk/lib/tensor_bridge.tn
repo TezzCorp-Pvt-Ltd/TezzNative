@@ -1,0 +1,113 @@
+// Explicit owning CPU conversions between public f64 tensors and tztensor f32.
+// Layouts and tapes are distinct. Ordinary conversions reject tracked tensors;
+// *_detached explicitly copies values without gradients or tape connections.
+// Invalid shape/dtype/device and finite-to-infinity narrowing return an empty
+// result. IEEE f32 rounding may lose precision or underflow; NaN/Inf categories
+// and signed zero are preserved. Source allocations must remain live while read.
+import "tensor"
+import "tztensor"
+
+fn _valid_public(source:Tensor) -> int:
+  if source.data == 0 as *float || source.dtype != tensor.tensor_dtype_f64(): ret 0
+  if source.ndim < 1 || source.ndim > 4 || source.size <= 0 || source.offset < 0: ret 0
+  limit:int = 1152921504606846974
+  span:int = source.offset
+  if span > limit: ret 0
+  count:int = 1
+  axis:int = 0
+  while axis < source.ndim:
+    extent:int = tensor.tensor_shape(source, axis)
+    stride:int = tensor.tensor_stride(source, axis)
+    if extent <= 0 || stride < 0 || count > limit / extent: ret 0
+    count = count * extent
+    if extent > 1:
+      if stride > (limit - span) / (extent - 1): ret 0
+      span = span + (extent - 1) * stride
+    axis = axis + 1
+  if count != source.size: ret 0
+  ret 1
+
+fn _f32_dim(source:int, axis:int) -> int:
+  if axis == 0: ret tztensor.tensor_d0(source)
+  if axis == 1: ret tztensor.tensor_d1(source)
+  if axis == 2: ret tztensor.tensor_d2(source)
+  ret tztensor.tensor_d3(source)
+
+fn _valid_tztensor(source:int) -> int:
+  if source == 0: ret 0
+  if tztensor.tensor_device(source) != 0 || tztensor.tensor_data(source) == 0: ret 0
+  rank:int = tztensor.tensor_ndim(source)
+  if rank < 1 || rank > 4: ret 0
+  count:int = 1
+  axis:int = 0
+  while axis < 4:
+    extent:int = _f32_dim(source, axis)
+    if extent <= 0 || count > 1152921504606846974 / extent: ret 0
+    if axis >= rank && extent != 1: ret 0
+    count = count * extent
+    axis = axis + 1
+  if count != tztensor.tensor_numel(source): ret 0
+  ret 1
+
+fn _f32_shape(source:Tensor) -> int:
+  if source.ndim == 1: ret tztensor.tensor_new_1d(source.shape0, 0)
+  if source.ndim == 2: ret tztensor.tensor_new_2d(source.shape0, source.shape1, 0)
+  if source.ndim == 3: ret tztensor.tensor_new_3d(source.shape0, source.shape1, source.shape2, 0)
+  ret tztensor.tensor_new_4d(source.shape0, source.shape1, source.shape2, source.shape3, 0)
+
+fn _to_tztensor(source:Tensor, detach:int) -> int:
+  if _valid_public(source) == 0: ret 0
+  if detach == 0 && source.requires_grad != 0: ret 0
+  result:int = _f32_shape(source)
+  if result == 0: ret 0
+  unsafe:
+    output:*f32 = tztensor.tensor_data(result) as *f32
+    index:int = 0
+    while index < source.size:
+      value:float = source.data[tensor._tensor_unravel_offset(source, index)]
+      narrowed:f32 = value as f32
+      widened:float = narrowed as float
+      // Infinity is allowed only when the source was already infinite.
+      finite:int = 0
+      if value == value && value - value == 0.0: finite = 1
+      if finite != 0 && (widened > 3.4028234663852886e38 || widened < -3.4028234663852886e38):
+        tztensor.tensor_free(result)
+        ret 0
+      output[index] = narrowed
+      index = index + 1
+  ret result
+
+fn to_tztensor(source:Tensor) -> int:
+  ret _to_tztensor(source, 0)
+
+fn to_tztensor_detached(source:Tensor) -> int:
+  ret _to_tztensor(source, 1)
+
+fn _to_tensor(source:int, detach:int) -> Tensor:
+  empty:Tensor = tensor.tensor_empty_raw(0, 0, 0, 0, 0)
+  if _valid_tztensor(source) == 0: ret empty
+  if detach == 0 && tztensor.tensor_requires_grad(source) != 0: ret empty
+  rank:int = tztensor.tensor_ndim(source)
+  d0:int = tztensor.tensor_d0(source)
+  d1:int = 0
+  d2:int = 0
+  d3:int = 0
+  if rank >= 2: d1 = tztensor.tensor_d1(source)
+  if rank >= 3: d2 = tztensor.tensor_d2(source)
+  if rank >= 4: d3 = tztensor.tensor_d3(source)
+  result:Tensor = tensor.tensor_empty_raw(rank, d0, d1, d2, d3)
+  if result.data == 0 as *float: ret result
+  unsafe:
+    input:*f32 = tztensor.tensor_data(source) as *f32
+    index:int = 0
+    while index < result.size:
+      result.data[index] = input[index] as float
+      index = index + 1
+  ret result
+
+fn to_tensor(source:int) -> Tensor:
+  ret _to_tensor(source, 0)
+
+fn to_tensor_detached(source:int) -> Tensor:
+  ret _to_tensor(source, 1)
+

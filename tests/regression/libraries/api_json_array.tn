@@ -1,0 +1,14 @@
+import "tezzapi"
+
+fn main() -> int:
+  unsafe:
+    items:[str;2] = ["1", "2"]
+    empty:str = tezzapi.json_array(&items[0], 0)
+    if empty == 0 || strcmp(empty, "[]") != 0:
+      ret 1
+    free(empty)
+    values:str = tezzapi.json_array(&items[0], 2)
+    if values == 0 || strcmp(values, "[1,2]") != 0:
+      ret 2
+    free(values)
+    ret 0

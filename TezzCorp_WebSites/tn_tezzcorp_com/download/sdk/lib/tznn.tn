@@ -5,7 +5,7 @@
 // Architecture:
 //   tznn.tn   (this file) -- layer API, Sequential model
 //     → tzgpu.tn           -- low-level CUDA wrappers
-//     → tzgpu_kernels.cu   -- RTX 3060 sm_86 CUDA kernels
+//     → tzgpu_kernels.cu   -- native CUDA device kernels (build for the selected SM)
 //
 // All tensors are f32 device pointers (int) unless noted.
 // Shapes are passed explicitly (no dynamic shape tracking yet).
@@ -21,6 +21,7 @@
 //   tznn.nn_model_free(model)
 
 import "tzgpu"
+import "tzcpu"
 
 // ── Redeclare GPU externs for direct (unqualified) call within tznn ───────────
 // (Remote tezzc rule: qualified module calls produce 'module.fn' names in the
@@ -79,49 +80,30 @@ let NN_LAYER_STRIDE: int = 8
 // Simple deterministic init: w = alternating +/-sqrt(2/(fan_in+fan_out))
 // (Production would use Box-Muller or cuRAND — this is a CPU fallback)
 
-fn _nn_xavier_fill(host: int, n: int, fan_in: int, fan_out: int) -> int:
-  // Write f32 values at host pointer using bit-pattern trick
-  // scale = sqrt(2.0 / (fan_in + fan_out))
-  // We approximate with rational scale
-  scale: float = 1.0
-  sum: int = fan_in + fan_out
-  if sum > 0:
-    // rough Xavier: 1/sqrt(sum) approximation via scale = 1.4 / sqrt(sum)
-    // For now seed with ±0.01 * (i mod 7 - 3) pattern
-    scale = 1.0
-  // Write alternating sign pattern as float bits
-  // (Actual values: small random-ish weights ~[-0.1, 0.1])
-  ret 0
+fn _nn_xavier_fill(host:int, n:int, fan_in:int, fan_out:int) -> int:
+  if host == 0 || n <= 0 || fan_in <= 0 || fan_out <= 0: ret 0 - 1
+  if fan_in > 2147483647 - fan_out: ret 0 - 1
+  ret tzcpu.tz_cpu_xavier_init_f32(host, n, fan_in + fan_out, 1337)
 
 // ── Dense Layer ───────────────────────────────────────────────────────────────
 
 // Create a dense layer: W[out x in] + b[out], Xavier init on GPU
 // Returns layer handle (host-allocated int array as int pointer)
-fn nn_dense_create(in_dim: int, out_dim: int) -> int:
-  // Allocate W and b on GPU (f32)
-  W: int = tzgpu.gpu_zeros_f32(out_dim * in_dim)
-  b: int = tzgpu.gpu_zeros_f32(out_dim)
-  // Xavier scale: approximate sqrt(2.0/(in+out)) ≈ 0.1 for typical dims
-  // Fill W with small non-zero weights using scale trick
-  if W != 0:
-    // seed with scale 0.1 / in_dim, fill using axpy trick: W += 0.1*ones
-    tz_gpu_fill_f32(W, out_dim * in_dim, 0.01)
-    // alternate signs: scale by -1 on odd elements via layernorm trick
-    // (simplified: keep as 0.01 uniform — works for demo)
-  // Allocate Adam moment buffers (zero-initialized)
-  mW: int = tzgpu.gpu_zeros_f32(out_dim * in_dim)
-  vW: int = tzgpu.gpu_zeros_f32(out_dim * in_dim)
-  // Pack into host int array: [type, in_dim, out_dim, W, b, mW, vW, 0]
-  desc: int = 0
-  // We return W as the layer handle (simplified — in production use malloc struct)
-  // Pack: encode in handle as W ptr (caller uses nn_dense_fwd)
+fn nn_dense_create(in_dim:int, out_dim:int) -> int:
+  if in_dim <= 0 || out_dim <= 0 || in_dim > 2147483647 / out_dim: ret 0
+  W:int = tzgpu.gpu_malloc_f32(out_dim * in_dim)
+  if W == 0: ret 0
+  if tz_gpu_xavier_init_f32(W, out_dim * in_dim, in_dim, 1337) != 0:
+    tzgpu.gpu_free(W)
+    ret 0
+  // The returned weight pointer is the complete allocation owned by this API.
   ret W
 
 // Free dense layer buffers
 fn nn_dense_free(W: int, b: int) -> int:
-  tzgpu.gpu_free(W)
-  tzgpu.gpu_free(b)
-  ret 0
+  status:int = tzgpu.gpu_free(W)
+  status = status | tzgpu.gpu_free(b)
+  ret status
 
 // Forward: y = x @ W^T + b  (x: [batch x in], W: [out x in], b: [out])
 fn nn_dense_fwd(x: int, W: int, b: int, batch: int, in_dim: int, out_dim: int) -> int:
@@ -133,64 +115,74 @@ fn nn_relu_fwd(x: int, n: int) -> int:
   out: int = tzgpu.gpu_malloc_f32(n)
   if out == 0:
     ret 0
-  tz_gpu_relu_f32(x, out, n)
+  if tz_gpu_relu_f32(x, out, n) != 0:
+    tzgpu.gpu_free(out)
+    ret 0
   ret out
 
 fn nn_relu_inplace(x: int, n: int) -> int:
   // relu in-place: use x as both in and out
-  tz_gpu_relu_f32(x, x, n)
+  if tz_gpu_relu_f32(x, x, n) != 0: ret 0
   ret x
 
 fn nn_gelu_fwd(x: int, n: int) -> int:
   out: int = tzgpu.gpu_malloc_f32(n)
   if out == 0:
     ret 0
-  tz_gpu_gelu_f32(x, out, n)
+  if tz_gpu_gelu_f32(x, out, n) != 0:
+    tzgpu.gpu_free(out)
+    ret 0
   ret out
 
 fn nn_gelu_inplace(x: int, n: int) -> int:
-  tz_gpu_gelu_f32(x, x, n)
+  if tz_gpu_gelu_f32(x, x, n) != 0: ret 0
   ret x
 
 fn nn_sigmoid_fwd(x: int, n: int) -> int:
   out: int = tzgpu.gpu_malloc_f32(n)
   if out == 0:
     ret 0
-  tz_gpu_sigmoid_f32(x, out, n)
+  if tz_gpu_sigmoid_f32(x, out, n) != 0:
+    tzgpu.gpu_free(out)
+    ret 0
   ret out
 
 fn nn_tanh_fwd(x: int, n: int) -> int:
   out: int = tzgpu.gpu_malloc_f32(n)
   if out == 0:
     ret 0
-  tz_gpu_tanh_f32(x, out, n)
+  if tz_gpu_tanh_f32(x, out, n) != 0:
+    tzgpu.gpu_free(out)
+    ret 0
   ret out
 
 // Softmax (in-place, row-wise)
 fn nn_softmax(x: int, rows: int, cols: int) -> int:
-  tz_gpu_softmax_f32(x, rows, cols)
+  if tz_gpu_softmax_f32(x, rows, cols) != 0: ret 0
   ret x
 
 // Layer norm (in-place, no learnable gamma/beta for simple case)
 fn nn_layernorm(x: int, rows: int, cols: int) -> int:
   // gamma=0, beta=0 → no learnable scale/shift
-  tz_gpu_layernorm_f32(x, 0, 0, rows, cols, 0.000001)
+  if tz_gpu_layernorm_f32(x, 0, 0, rows, cols, 0.000001) != 0: ret 0
   ret x
 
 // ── Dropout (training only) ───────────────────────────────────────────────────
 
 fn nn_dropout(x: int, mask: int, n: int, rate: float, seed: int) -> int:
-  tz_gpu_dropout_f32(x, mask, n, rate, seed)
+  if tz_gpu_dropout_f32(x, mask, n, rate, seed) != 0: ret 0
   ret x
 
 // ── Loss functions ────────────────────────────────────────────────────────────
 
-// Cross-entropy loss (returns device scalar = sum of per-sample losses)
+// Cross-entropy loss (returns batch per-sample losses; nn_sum_loss reduces them)
 fn nn_cross_entropy(logits: int, labels: int, batch: int, classes: int) -> int:
   loss_buf: int = tzgpu.gpu_zeros_f32(batch)
   if loss_buf == 0:
     ret 0
-  tz_gpu_cross_entropy_f32(logits, labels, loss_buf, batch, classes)
+  if tz_gpu_cross_entropy_f32(logits, labels, loss_buf, batch, classes) != 0:
+    tzgpu.gpu_free(loss_buf)
+    ret 0
   ret loss_buf
 
 // MSE loss buffer (n float32 per-element squared errors)
@@ -198,7 +190,9 @@ fn nn_mse(pred: int, target: int, n: int) -> int:
   loss_buf: int = tzgpu.gpu_malloc_f32(n)
   if loss_buf == 0:
     ret 0
-  tz_gpu_mse_loss_f32(pred, target, loss_buf, n)
+  if tz_gpu_mse_loss_f32(pred, target, loss_buf, n) != 0:
+    tzgpu.gpu_free(loss_buf)
+    ret 0
   ret loss_buf
 
 // ── Optimizer ─────────────────────────────────────────────────────────────────
@@ -206,13 +200,11 @@ fn nn_mse(pred: int, target: int, n: int) -> int:
 // Adam step for one parameter tensor
 // b1t = b1^t, b2t = b2^t (caller tracks t and precomputes)
 fn nn_adam_step(p: int, g: int, m: int, v: int, n: int, lr: float, b1t: float, b2t: float) -> int:
-  tz_gpu_adam_f32(p, g, m, v, lr, 0.9, 0.999, 0.000000001, b1t, b2t, n)
-  ret 0
+  ret tz_gpu_adam_f32(p, g, m, v, lr, 0.9, 0.999, 0.000000001, b1t, b2t, n)
 
 // SGD with momentum
 fn nn_sgd_step(p: int, g: int, vel: int, n: int, lr: float, momentum: float) -> int:
-  tz_gpu_sgd_f32(p, g, vel, lr, momentum, 0.0, n)
-  ret 0
+  ret tz_gpu_sgd_f32(p, g, vel, lr, momentum, 0.0, n)
 
 // ── Sequential Model API ──────────────────────────────────────────────────────
 // A lightweight sequential model that chains Dense + Activation layers.
@@ -232,48 +224,65 @@ static let _NN_GELU: int = 3
 
 // Create a standalone Dense+ReLU block with weights on GPU
 // Returns W pointer (use in nn_dense_relu_fwd)
-fn nn_make_dense_relu(in_dim: int, out_dim: int) -> int:
-  // Allocate weights with small uniform init
-  W: int = tzgpu.gpu_malloc_f32(out_dim * in_dim)
-  b: int = tzgpu.gpu_zeros_f32(out_dim)
-  if W != 0:
-    // Init W with 0.01 uniform (simple, works for verification)
-    tz_gpu_fill_f32(W, out_dim * in_dim, 0.01)
-  ret W
+fn nn_make_dense_relu(in_dim:int, out_dim:int) -> int:
+  ret nn_dense_create(in_dim, out_dim)
 
 // Forward pass: dense → relu
 fn nn_dense_relu_fwd(x: int, W: int, b: int, batch: int, in_dim: int, out_dim: int) -> int:
   y: int = tzgpu.gpu_linear_f32(x, W, b, batch, in_dim, out_dim)
   if y == 0:
     ret 0
-  nn_relu_inplace(y, batch * out_dim)
+  if nn_relu_inplace(y, batch * out_dim) == 0:
+    tzgpu.gpu_free(y)
+    ret 0
   ret y
 
 // ── Embedding lookup ──────────────────────────────────────────────────────────
 
 fn nn_embedding_fwd(indices: int, table: int, n: int, embed_dim: int) -> int:
+  if n <= 0 || embed_dim <= 0 || n > 2147483647 / embed_dim: ret 0
   out: int = tzgpu.gpu_malloc_f32(n * embed_dim)
   if out == 0:
     ret 0
-  tz_gpu_embedding_f32(indices, table, out, n, embed_dim)
+  if tz_gpu_embedding_f32(indices, table, out, n, embed_dim) != 0:
+    tzgpu.gpu_free(out)
+    ret 0
   ret out
 
 // ── Transformer block (single-head for simplicity) ───────────────────────────
 // Implements: LN → Q,K,V proj → Attention → Out proj → residual → LN → FFN
 
 fn nn_transformer_fwd(x: int, Wq: int, Wk: int, Wv: int, Wo: int, Wff1: int, Wff2: int, bff1: int, bff2: int, seq: int, dim: int, ff_dim: int, causal: int) -> int:
-  batch: int = 1  // single batch for simplicity
-  // 1. Layer norm on input
-  nn_layernorm(x, seq, dim)
+  if x == 0 || Wq == 0 || Wk == 0 || Wv == 0 || Wo == 0 || Wff1 == 0 || Wff2 == 0: ret 0
+  if seq <= 0 || dim <= 0 || ff_dim <= 0 || dim % 2 != 0: ret 0
+  if seq > 2147483647 / dim || seq > 2147483647 / ff_dim: ret 0
+  // Pre-norm attention keeps the caller's original input for its residual.
+  normalized:int = tzgpu.gpu_malloc_f32(seq * dim)
+  if normalized == 0: ret 0
+  if tz_gpu_copy_f32(x, normalized, seq * dim) != 0:
+    tzgpu.gpu_free(normalized)
+    ret 0
+  if nn_layernorm(normalized, seq, dim) == 0:
+    tzgpu.gpu_free(normalized)
+    ret 0
   // 2. Q,K,V projections
-  Q: int = tzgpu.gpu_linear_f32(x, Wq, 0, seq, dim, dim)
-  K: int = tzgpu.gpu_linear_f32(x, Wk, 0, seq, dim, dim)
-  V: int = tzgpu.gpu_linear_f32(x, Wv, 0, seq, dim, dim)
-  if Q == 0:
+  Q: int = tzgpu.gpu_linear_f32(normalized, Wq, 0, seq, dim, dim)
+  K: int = tzgpu.gpu_linear_f32(normalized, Wk, 0, seq, dim, dim)
+  V: int = tzgpu.gpu_linear_f32(normalized, Wv, 0, seq, dim, dim)
+  tzgpu.gpu_free(normalized)
+  if Q == 0 || K == 0 || V == 0:
+    tzgpu.gpu_free(Q)
+    tzgpu.gpu_free(K)
+    tzgpu.gpu_free(V)
     ret 0
   // 3. RoPE positional encoding
-  tz_gpu_rope_f32(Q, seq, 1, dim)
-  tz_gpu_rope_f32(K, seq, 1, dim)
+  status:int = tz_gpu_rope_f32(Q, seq, 1, dim)
+  status = status | tz_gpu_rope_f32(K, seq, 1, dim)
+  if status != 0:
+    tzgpu.gpu_free(Q)
+    tzgpu.gpu_free(K)
+    tzgpu.gpu_free(V)
+    ret 0
   // 4. Attention scores + softmax
   scores: int = tzgpu.gpu_attn_scores_f32(Q, K, 1, seq, dim, causal)
   tzgpu.gpu_free(Q)
@@ -293,23 +302,42 @@ fn nn_transformer_fwd(x: int, Wq: int, Wk: int, Wv: int, Wo: int, Wff1: int, Wff
   if proj == 0:
     ret 0
   // 7. Residual add: proj += x
-  tz_gpu_axpy_f32(proj, x, 1.0, seq * dim)
-  // 8. Layer norm before FFN
-  nn_layernorm(proj, seq, dim)
+  if tz_gpu_axpy_f32(proj, x, 1.0, seq * dim) != 0:
+    tzgpu.gpu_free(proj)
+    ret 0
+  // 8. Normalize a copy so the second residual retains the projection.
+  normalized = tzgpu.gpu_malloc_f32(seq * dim)
+  if normalized == 0:
+    tzgpu.gpu_free(proj)
+    ret 0
+  status = tz_gpu_copy_f32(proj, normalized, seq * dim)
+  if status == 0:
+    if nn_layernorm(normalized, seq, dim) == 0: status = 0 - 1
+  if status != 0:
+    tzgpu.gpu_free(normalized)
+    tzgpu.gpu_free(proj)
+    ret 0
   // 9. FFN: ff1 = gelu(proj @ Wff1^T + bff1), out = ff1 @ Wff2^T + bff2
-  ff1: int = tzgpu.gpu_linear_f32(proj, Wff1, bff1, seq, dim, ff_dim)
+  ff1: int = tzgpu.gpu_linear_f32(normalized, Wff1, bff1, seq, dim, ff_dim)
+  tzgpu.gpu_free(normalized)
   if ff1 == 0:
     tzgpu.gpu_free(proj)
     ret 0
-  nn_gelu_inplace(ff1, seq * ff_dim)
+  if nn_gelu_inplace(ff1, seq * ff_dim) == 0:
+    tzgpu.gpu_free(ff1)
+    tzgpu.gpu_free(proj)
+    ret 0
   ff2: int = tzgpu.gpu_linear_f32(ff1, Wff2, bff2, seq, ff_dim, dim)
   tzgpu.gpu_free(ff1)
   if ff2 == 0:
     tzgpu.gpu_free(proj)
     ret 0
   // 10. Residual: ff2 += proj
-  tz_gpu_axpy_f32(ff2, proj, 1.0, seq * dim)
+  status = tz_gpu_axpy_f32(ff2, proj, 1.0, seq * dim)
   tzgpu.gpu_free(proj)
+  if status != 0:
+    tzgpu.gpu_free(ff2)
+    ret 0
   ret ff2
 
 // ── MLP: 2-layer fully-connected network ─────────────────────────────────────
@@ -327,54 +355,39 @@ fn nn_mlp_fwd(x: int, W1: int, b1: int, in_dim: int, hidden: int, W2: int, b2: i
     ret 0
   // Optional softmax
   if do_softmax != 0:
-    tz_gpu_softmax_f32(logits, batch, out_dim)
+    if tz_gpu_softmax_f32(logits, batch, out_dim) != 0:
+      tzgpu.gpu_free(logits)
+      ret 0
   ret logits
 
 // ── Training step for MLP ─────────────────────────────────────────────────────
 // Returns loss buffer (caller reads/frees)
 
-fn nn_mlp_train_step(x: int, labels: int, W1: int, b1: int, in_dim: int, hidden: int, W2: int, b2: int, out_dim: int, mW1: int, vW1: int, mW2: int, vW2: int, batch: int, lr: float, b1t: float, b2t: float) -> int:
-  // Forward
-  h: int = nn_dense_relu_fwd(x, W1, b1, batch, in_dim, hidden)
-  if h == 0:
-    ret 0
-  logits: int = tzgpu.gpu_linear_f32(h, W2, b2, batch, hidden, out_dim)
-  if logits == 0:
-    tzgpu.gpu_free(h)
-    ret 0
-
-  // Loss
-  loss_buf: int = nn_cross_entropy(logits, labels, batch, out_dim)
-
-  // Backward: grad at logits = softmax(logits) - one_hot(labels)
-  grad_logits: int = tzgpu.gpu_malloc_f32(batch * out_dim)
-  if grad_logits != 0:
-    tz_gpu_cross_entropy_bwd_f32(logits, labels, grad_logits, batch, out_dim)
-    // dW2 = h^T @ grad_logits  (simplified: skip for now, do param update directly)
-    // Adam update W2: p=W2, g=grad_logits (approximate)
-    tz_gpu_adam_f32(W2, grad_logits, mW2, vW2, lr, 0.9, 0.999, 0.000000001, b1t, b2t, hidden * out_dim)
-    tzgpu.gpu_free(grad_logits)
-
-  // Backward through relu+dense1 (simplified gradient)
-  grad_h: int = tzgpu.gpu_malloc_f32(batch * hidden)
-  if grad_h != 0:
-    tz_gpu_fill_f32(grad_h, batch * hidden, 0.001)
-    tz_gpu_adam_f32(W1, grad_h, mW1, vW1, lr, 0.9, 0.999, 0.000000001, b1t, b2t, in_dim * hidden)
-    tzgpu.gpu_free(grad_h)
-
-  tzgpu.gpu_free(h)
-  tzgpu.gpu_free(logits)
-  ret loss_buf
+fn nn_mlp_train_step(x:int, labels:int, W1:int, b1:int, in_dim:int, hidden:int, W2:int, b2:int, out_dim:int, mW1:int, vW1:int, mW2:int, vW2:int, batch:int, lr:float, b1t:float, b2t:float) -> int:
+  // This API supplies Adam state for weights only; biases use SGD.
+  ret _nn_mlp_train(x, labels, W1, b1, W2, b2, mW1, vW1, mW2, vW2, 0, 0, 0, 0, batch, in_dim, hidden, out_dim, lr, b1t, b2t)
 
 // ── Utility: device scalar sum (for loss reporting) ───────────────────────────
 // Copies n f32 values from device to host and sums them (host-side)
 
-fn nn_sum_loss(loss_buf: int, n: int) -> float:
-  // Simple: sync and read first element as proxy for total
-  tz_cuda_sync()
-  // We can't easily read device memory in pure Tezz without unsafe
-  // Return 0.0 as placeholder (real loss in device buffer)
-  ret 0.0
+fn nn_sum_loss(loss_buf:int, n:int) -> float:
+  if n == 0: ret 0.0
+  zero:float = 0.0
+  if loss_buf == 0 || n < 0 || n > 2305843009213693951: ret zero / zero
+  host:int = tzcpu.tz_cpu_malloc(n * 4)
+  if host == 0: ret zero / zero
+  if tzgpu.tz_cuda_memcpy(host, loss_buf, n * 4, 2) != 0:
+    tzcpu.tz_cpu_free(host)
+    ret zero / zero
+  total:float = 0.0
+  unsafe:
+    values:*f32 = host as *f32
+    index:int = 0
+    while index < n:
+      total = total + (values[index] as float)
+      index = index + 1
+  tzcpu.tz_cpu_free(host)
+  ret total
 
 // =============================================================================
 //  BACKWARD PASS API (v2.1)
@@ -399,37 +412,33 @@ fn nn_sum_loss(loss_buf: int, n: int) -> float:
 // Equivalently: dW = dY^T @ X = gemm(dY^T[out x batch], X[batch x in])
 // We use tz_gpu_gemm_nt_f32(A=X, B=dY, C=dW, M=out_dim, K=batch, N=in_dim)
 // which computes dW[out x in] = dY^T[out x batch] @ X[batch x in]
-fn nn_dense_bwd_dW(dY: int, X: int, dW: int, batch: int, in_dim: int, out_dim: int) -> int:
-  // dW[out x in] = dY^T @ X = gemm_nt(dY, X, dW, M=out, K=batch, N=in)
-  tz_gpu_gemm_nt_f32(dY, X, dW, out_dim, batch, in_dim, 1.0, 1.0)
-  ret 0
+fn nn_dense_bwd_dW(dY:int, X:int, dW:int, batch:int, in_dim:int, out_dim:int) -> int:
+  // dW[out x in] += dY[batch x out]^T @ X[batch x in].
+  ret tz_gpu_gemm_tn_f32(dY, X, dW, out_dim, batch, in_dim, 1.0, 1.0)
 
 // db += sum_rows(dY)
 fn nn_dense_bwd_db(dY: int, db: int, batch: int, out_dim: int) -> int:
-  tz_gpu_reduce_sum_cols_f32(dY, db, batch, out_dim)
-  ret 0
+  ret tz_gpu_reduce_sum_cols_f32(dY, db, batch, out_dim)
 
 // dX = dY @ W   (batch x in = [batch x out] @ [out x in])
 fn nn_dense_bwd_dX(dY: int, W: int, dX: int, batch: int, in_dim: int, out_dim: int) -> int:
   // dX[batch x in] = dY[batch x out] @ W[out x in]
   // = gemm_nn(dY, W, dX, M=batch, K=out, N=in)
-  tz_gpu_gemm_f32(dY, W, dX, batch, out_dim, in_dim, 1.0, 0.0)
-  ret 0
+  ret tz_gpu_gemm_f32(dY, W, dX, batch, out_dim, in_dim, 1.0, 0.0)
 
 // ── ReLU backward ─────────────────────────────────────────────────────────────
 // mask = (pre_relu > 0) -- encoded in relu output (zero where input<=0)
 // dX[i] = dY[i] if relu_out[i] > 0 else 0
 
 fn nn_relu_bwd_wrap(dY: int, relu_out: int, dX: int, n: int) -> int:
-  tz_gpu_relu_bwd_f32(dY, relu_out, dX, n)
+  if tz_gpu_relu_bwd_f32(dY, relu_out, dX, n) != 0: ret 0
   ret dX
 
 // ── Xavier weight initialization ──────────────────────────────────────────────
 // He init: W ~ N(0, sqrt(2/fan_in)), good for ReLU networks
 
 fn nn_xavier_init(W: int, n: int, fan_in: int, seed: int) -> int:
-  tz_gpu_xavier_init_f32(W, n, fan_in, seed)
-  ret 0
+  ret tz_gpu_xavier_init_f32(W, n, fan_in, seed)
 
 // ── 2-layer MLP full training step ───────────────────────────────────────────
 // Architecture: X → Dense1(relu) → Dense2 → CrossEntropy
@@ -445,99 +454,70 @@ fn nn_xavier_init(W: int, n: int, fan_in: int, seed: int) -> int:
 //   mb1,vb1, mb2,vb2: Adam moments for biases
 //   t:      optimizer step counter (1-indexed)
 
-fn nn_mlp2_train_step(x: int, labels: int, W1: int, b1: int, W2: int, b2: int, mW1: int, vW1: int, mW2: int, vW2: int, mb1: int, vb1: int, mb2: int, vb2: int, batch: int, in_dim: int, hidden: int, out_dim: int, lr: float, b1t: float, b2t: float) -> int:
-  // ── Forward ──────────────────────────────────────────────────────────
-  // Layer 1: pre_act1 = X @ W1^T + b1
-  pre_act1: int = tzgpu.gpu_malloc_f32(batch * hidden)
-  if pre_act1 == 0:
-    ret 0
-  tz_gpu_fill_f32(pre_act1, batch * hidden, 0.0)
-  tz_gpu_gemm_f32(x, W1, pre_act1, batch, in_dim, hidden, 1.0, 0.0)
-  tz_gpu_add_bias_f32(pre_act1, b1, batch, hidden)
+fn nn_mlp2_train_step(x:int, labels:int, W1:int, b1:int, W2:int, b2:int, mW1:int, vW1:int, mW2:int, vW2:int, mb1:int, vb1:int, mb2:int, vb2:int, batch:int, in_dim:int, hidden:int, out_dim:int, lr:float, b1t:float, b2t:float) -> int:
+  if b1 != 0 && (mb1 == 0 || vb1 == 0): ret 0
+  if b2 != 0 && (mb2 == 0 || vb2 == 0): ret 0
+  ret _nn_mlp_train(x, labels, W1, b1, W2, b2, mW1, vW1, mW2, vW2, mb1, vb1, mb2, vb2, batch, in_dim, hidden, out_dim, lr, b1t, b2t)
 
-  // Layer 1 activation: h1 = relu(pre_act1)
-  h1: int = tzgpu.gpu_malloc_f32(batch * hidden)
-  if h1 == 0:
-    tzgpu.gpu_free(pre_act1)
-    ret 0
-  tz_gpu_relu_f32(pre_act1, h1, batch * hidden)
 
-  // Layer 2: logits = h1 @ W2^T + b2
-  logits: int = tzgpu.gpu_malloc_f32(batch * out_dim)
-  if logits == 0:
-    tzgpu.gpu_free(pre_act1)
-    tzgpu.gpu_free(h1)
-    ret 0
-  tz_gpu_fill_f32(logits, batch * out_dim, 0.0)
-  tz_gpu_gemm_f32(h1, W2, logits, batch, hidden, out_dim, 1.0, 0.0)
-  tz_gpu_add_bias_f32(logits, b2, batch, out_dim)
-
-  // ── Loss ─────────────────────────────────────────────────────────────
-  loss_buf: int = tzgpu.gpu_zeros_f32(batch)
-  if loss_buf != 0:
-    tz_gpu_cross_entropy_f32(logits, labels, loss_buf, batch, out_dim)
-
-  // ── Backward ─────────────────────────────────────────────────────────
-  // dlogits = softmax(logits) - one_hot(labels)  [batch x out_dim]
-  dlogits: int = tzgpu.gpu_malloc_f32(batch * out_dim)
-  if dlogits == 0:
-    tzgpu.gpu_free(pre_act1)
-    tzgpu.gpu_free(h1)
-    tzgpu.gpu_free(logits)
-    ret loss_buf
-
-  tz_gpu_cross_entropy_bwd_f32(logits, labels, dlogits, batch, out_dim)
-  tzgpu.gpu_free(logits)
-
-  // dW2 += dlogits^T @ h1, db2 += sum_rows(dlogits), dh1 = dlogits @ W2
-  dW2: int = tzgpu.gpu_zeros_f32(out_dim * hidden)
-  db2_g: int = tzgpu.gpu_zeros_f32(out_dim)
-  dh1: int = tzgpu.gpu_malloc_f32(batch * hidden)
-  if dW2 != 0:
-    nn_dense_bwd_dW(dlogits, h1, dW2, batch, hidden, out_dim)
-  if db2_g != 0:
-    nn_dense_bwd_db(dlogits, db2_g, batch, out_dim)
-  if dh1 != 0:
-    nn_dense_bwd_dX(dlogits, W2, dh1, batch, hidden, out_dim)
-  tzgpu.gpu_free(dlogits)
-  tzgpu.gpu_free(h1)
-
-  // dh1_relu = dh1 * (pre_act1 > 0)  [ReLU backward]
-  dh1_relu: int = tzgpu.gpu_malloc_f32(batch * hidden)
-  if dh1_relu != 0:
-    if dh1 != 0:
-      // Use pre_act1 as the activation cache (ReLU bwd needs the pre-activation)
-      tz_gpu_relu_bwd_f32(dh1, pre_act1, dh1_relu, batch * hidden)
-    else:
-      tz_gpu_fill_f32(dh1_relu, batch * hidden, 0.0)
-  tzgpu.gpu_free(pre_act1)
-  if dh1 != 0:
-    tzgpu.gpu_free(dh1)
-
-  // dW1, db1 from dh1_relu
-  dW1: int = tzgpu.gpu_zeros_f32(hidden * in_dim)
-  db1_g: int = tzgpu.gpu_zeros_f32(hidden)
-  if dW1 != 0:
-    if dh1_relu != 0:
-      nn_dense_bwd_dW(dh1_relu, x, dW1, batch, in_dim, hidden)
-  if db1_g != 0:
-    if dh1_relu != 0:
-      nn_dense_bwd_db(dh1_relu, db1_g, batch, hidden)
-  if dh1_relu != 0:
-    tzgpu.gpu_free(dh1_relu)
-
-  // ── Adam updates ─────────────────────────────────────────────────────
-  if dW1 != 0:
-    tz_gpu_adam_f32(W1, dW1, mW1, vW1, lr, 0.9, 0.999, 0.000000001, b1t, b2t, hidden * in_dim)
-    tzgpu.gpu_free(dW1)
-  if db1_g != 0:
-    tz_gpu_adam_f32(b1, db1_g, mb1, vb1, lr, 0.9, 0.999, 0.000000001, b1t, b2t, hidden)
-    tzgpu.gpu_free(db1_g)
-  if dW2 != 0:
-    tz_gpu_adam_f32(W2, dW2, mW2, vW2, lr, 0.9, 0.999, 0.000000001, b1t, b2t, out_dim * hidden)
-    tzgpu.gpu_free(dW2)
-  if db2_g != 0:
-    tz_gpu_adam_f32(b2, db2_g, mb2, vb2, lr, 0.9, 0.999, 0.000000001, b1t, b2t, out_dim)
-    tzgpu.gpu_free(db2_g)
-
-  ret loss_buf
+fn _nn_mlp_train(x:int, labels:int, W1:int, b1:int, W2:int, b2:int, mW1:int, vW1:int, mW2:int, vW2:int, mb1:int, vb1:int, mb2:int, vb2:int, batch:int, in_dim:int, hidden:int, out_dim:int, lr:float, b1t:float, b2t:float) -> int:
+  if x == 0 || labels == 0 || W1 == 0 || W2 == 0 || mW1 == 0 || vW1 == 0 || mW2 == 0 || vW2 == 0: ret 0
+  if batch <= 0 || in_dim <= 0 || hidden <= 0 || out_dim <= 0 || lr < 0.0: ret 0
+  if b1t < 0.0 || b1t >= 1.0 || b2t < 0.0 || b2t >= 1.0: ret 0
+  if batch > 2147483647 / hidden || batch > 2147483647 / out_dim: ret 0
+  if hidden > 2147483647 / in_dim || out_dim > 2147483647 / hidden: ret 0
+  // z1, h1, logits, loss, dlogits, dW2, db2, dh1, dz1, dW1, db1.
+  lengths:[int;11]
+  buffers:[int;11]
+  lengths[0] = batch * hidden
+  lengths[1] = batch * hidden
+  lengths[2] = batch * out_dim
+  lengths[3] = batch
+  lengths[4] = batch * out_dim
+  lengths[5] = out_dim * hidden
+  lengths[6] = out_dim
+  lengths[7] = batch * hidden
+  lengths[8] = batch * hidden
+  lengths[9] = hidden * in_dim
+  lengths[10] = hidden
+  status:int = 0
+  index:int = 0
+  while index < 11:
+    buffers[index] = tzgpu.gpu_zeros_f32(lengths[index])
+    if buffers[index] == 0: status = 0 - 1
+    index = index + 1
+  if status == 0:
+    status = status | tz_gpu_gemm_nt_f32(x, W1, buffers[0], batch, in_dim, hidden, 1.0, 0.0)
+    if b1 != 0: status = status | tz_gpu_add_bias_f32(buffers[0], b1, batch, hidden)
+    status = status | tz_gpu_relu_f32(buffers[0], buffers[1], batch * hidden)
+    status = status | tz_gpu_gemm_nt_f32(buffers[1], W2, buffers[2], batch, hidden, out_dim, 1.0, 0.0)
+    if b2 != 0: status = status | tz_gpu_add_bias_f32(buffers[2], b2, batch, out_dim)
+    status = status | tz_gpu_cross_entropy_f32(buffers[2], labels, buffers[3], batch, out_dim)
+    status = status | tz_gpu_cross_entropy_bwd_f32(buffers[2], labels, buffers[4], batch, out_dim)
+    status = status | nn_dense_bwd_dW(buffers[4], buffers[1], buffers[5], batch, hidden, out_dim)
+    status = status | tz_gpu_reduce_sum_cols_f32(buffers[4], buffers[6], batch, out_dim)
+    status = status | tz_gpu_gemm_f32(buffers[4], W2, buffers[7], batch, out_dim, hidden, 1.0, 0.0)
+    status = status | tz_gpu_relu_bwd_f32(buffers[7], buffers[0], buffers[8], batch * hidden)
+    status = status | nn_dense_bwd_dW(buffers[8], x, buffers[9], batch, in_dim, hidden)
+    status = status | tz_gpu_reduce_sum_cols_f32(buffers[8], buffers[10], batch, hidden)
+  if status == 0:
+    status = status | tz_gpu_adam_f32(W1, buffers[9], mW1, vW1, lr, 0.9, 0.999, 0.000000001, b1t, b2t, hidden * in_dim)
+    status = status | tz_gpu_adam_f32(W2, buffers[5], mW2, vW2, lr, 0.9, 0.999, 0.000000001, b1t, b2t, out_dim * hidden)
+    if b1 != 0:
+      if mb1 != 0 && vb1 != 0:
+        status = status | tz_gpu_adam_f32(b1, buffers[10], mb1, vb1, lr, 0.9, 0.999, 0.000000001, b1t, b2t, hidden)
+      else:
+        status = status | tz_gpu_axpy_f32(b1, buffers[10], 0.0 - lr, hidden)
+    if b2 != 0:
+      if mb2 != 0 && vb2 != 0:
+        status = status | tz_gpu_adam_f32(b2, buffers[6], mb2, vb2, lr, 0.9, 0.999, 0.000000001, b1t, b2t, out_dim)
+      else:
+        status = status | tz_gpu_axpy_f32(b2, buffers[6], 0.0 - lr, out_dim)
+  loss:int = 0
+  if status == 0: loss = buffers[3]
+  index = 0
+  while index < 11:
+    if index != 3 || status != 0:
+      if buffers[index] != 0: tzgpu.gpu_free(buffers[index])
+    index = index + 1
+  ret loss

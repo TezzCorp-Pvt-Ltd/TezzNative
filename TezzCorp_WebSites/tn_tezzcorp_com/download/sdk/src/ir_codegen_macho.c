@@ -165,11 +165,12 @@ static int build_macho_stubs(unsigned char* buf, size_t cap, uint32_t sys_write,
   emit_bytes(buf, &o, (const unsigned char*)"\x45\x39\xC8", 3);
   emit_bytes(buf, &o, (const unsigned char*)"\x75\x0A", 2);
   emit_bytes(buf, &o, (const unsigned char*)"\x45\x85\xC0", 3);
-  emit_bytes(buf, &o, (const unsigned char*)"\x74\x0C", 2);
+  emit_bytes(buf, &o, (const unsigned char*)"\x74\x0E", 2);
   emit_bytes(buf, &o, (const unsigned char*)"\x48\xFF\xC0", 3);
   emit_bytes(buf, &o, (const unsigned char*)"\xEB\xE7", 2);
   emit_bytes(buf, &o, (const unsigned char*)"\x44\x89\xC0", 3);
-  emit_bytes(buf, &o, (const unsigned char*)"\x41\x29\xC8", 3);
+  emit_bytes(buf, &o, (const unsigned char*)"\x44\x29\xC8", 3);
+  emit_bytes(buf, &o, (const unsigned char*)"\x48\x98", 2); // cdqe
   emit1(buf, &o, 0xC3);
   emit_bytes(buf, &o, (const unsigned char*)"\x31\xC0\xC3", 3);
 
@@ -256,7 +257,7 @@ static int build_macho_stubs(unsigned char* buf, size_t cap, uint32_t sys_write,
   // tn_vfree
   out->off_vfree = o;
   emit_bytes(buf, &o, (const unsigned char*)"\x48\x85\xC9", 3);
-  emit_bytes(buf, &o, (const unsigned char*)"\x74\x12", 2);
+  emit_bytes(buf, &o, (const unsigned char*)"\x74\x18", 2);
   emit_bytes(buf, &o, (const unsigned char*)"\x48\x83\xE9\x10", 4);
   emit_bytes(buf, &o, (const unsigned char*)"\x49\xB9", 2); emit8(buf, &o, heap_free_addr);
   emit_bytes(buf, &o, (const unsigned char*)"\x49\x8B\x01", 3);
@@ -917,6 +918,12 @@ static int build_macho_stubs(unsigned char* buf, size_t cap, uint32_t sys_write,
 
 int ir_compile_to_macho_exe(IRModule* m, const char* out_exe){
   if(!m || !out_exe) return -1;
+  TnNativeImports native;
+  if(tn_native_collect(m,&native)!=0) return -1;
+  if(native.count>0){
+    fprintf(stderr,"buildexe: native runtime library imports are not yet supported by the Mach-O backend\n");
+    return -1;
+  }
 
   const uint64_t base = 0x100000000ULL;
   const uint32_t text_rva = 0x1000;
@@ -1023,7 +1030,7 @@ int ir_compile_to_macho_exe(IRModule* m, const char* out_exe){
         }
         ginfo[i].rva = data_rva + doff;
         if(g->has_init){
-          if(g->ty && g->ty->k == TY_F64){
+          if(type_is_float(g->ty)){
             uint64_t bits = (uint64_t)g->init_fbits;
             for(int b=0;b<g->size && b<8;b++){
               data[doff + (uint32_t)b] = (unsigned char)((bits >> (8*b)) & 0xFF);

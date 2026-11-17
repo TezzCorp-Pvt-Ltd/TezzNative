@@ -1,0 +1,4 @@
+import "tezz_http_server"
+
+fn main() -> int:
+  ret tezz_http_server.run_server(tezz_http_server.get_server_port())

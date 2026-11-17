@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include "integer_codegen.h"
 
 enum { TN_CODEGEN_NAME_MAX = 4096, TN_CODEGEN_CALL_ARG_MAX = 1024 };
 
@@ -64,6 +65,10 @@ static const char* map_builtin_name(const char* name, int len, int* out_len){
     return name ? name : "";
   }
   name = sanitize_sym_name(name, &len);
+  if(len==6 && strncmp(name,"memcpy",6)==0){ *out_len=12; return "tn_ir_memcpy"; }
+  if(len==7 && strncmp(name,"memmove",7)==0){ *out_len=13; return "tn_ir_memmove"; }
+  if(len==6 && strncmp(name,"memset",6)==0){ *out_len=12; return "tn_ir_memset"; }
+  if(len==6 && strncmp(name,"memcmp",6)==0){ *out_len=12; return "tn_ir_memcmp"; }
   if(len==6 && strncmp(name,"strcmp",6)==0){ *out_len=9; return "tn_strcmp"; }
   if(len==10 && strncmp(name,"bit_popcnt",10)==0){ *out_len=13; return "tn_bit_popcnt"; }
   if(len==7 && strncmp(name,"bit_clz",7)==0){ *out_len=10; return "tn_bit_clz"; }
@@ -271,7 +276,8 @@ static void emit_c_string(FILE* f, const char* s){
     else if(c=='\r') fputs("\\r", f);
     else if(c=='\t') fputs("\\t", f);
     else if(c < 32 || c >= 127){
-      fprintf(f, "\\x%02x", (unsigned int)c);
+      /* C hex escapes consume following hex digits in the source string. */
+      fprintf(f, "\\%03o", (unsigned int)c);
     } else {
       fputc((char)c, f);
     }
@@ -321,8 +327,26 @@ static void emit_label(FILE* f, const char* fn, int id){
   fprintf(f, "L_%s_%d", fn, id);
 }
 
-void ir_compile_to_c(IRModule* m, const char* out_c){
+static void compile_c(IRModule* m, const char* out_c, int integer_only){
   if(!m || !out_c) return;
+  for(int i=0;i<m->global_n;i++){
+    if(integer_only && type_is_float(m->globals[i].ty))
+      die("arduino-uno: floating-point runtime storage is not supported by this toolchain");
+  }
+  for(int i=0;i<m->fn_n;i++){
+    IRFunc* fn=&m->fns[i];
+    if(integer_only && type_is_float(fn->ret_ty))
+      die("arduino-uno: floating-point runtime operations are not supported by this toolchain");
+    for(int j=0;j<fn->n;j++){
+      IRIns* in=&fn->ins[j];
+      if(in->op>=I_BF16_TO_F32 && in->op<=I_F32_TO_F8_E5M2)
+        die("C backend: this floating-point conversion is not implemented");
+      if(integer_only && (in->op==I_FCONST || (in->op>=I_FBIN && in->op<=I_F64_TO_F32) ||
+          ((in->op==I_LOAD || in->op==I_ALLOCA) &&
+           (in->load_kind==TY_F64 || in->load_kind==TY_F32 || in->load_kind==TY_F16 || in->load_kind==TY_BF16 || in->load_kind==TY_F8_E4M3 || in->load_kind==TY_F8_E5M2))))
+        die("arduino-uno: floating-point runtime operations are not supported by this toolchain");
+    }
+  }
   FILE* f = fopen(out_c, "wb");
   if(!f) die("ir_codegen_c: cannot open output");
 
@@ -339,8 +363,19 @@ void ir_compile_to_c(IRModule* m, const char* out_c){
   fputs("#else\n", f);
   fputs("#  define TN_ALIGN(N) __attribute__((aligned(N)))\n", f);
   fputs("#endif\n", f);
-  fputs("static inline double tn_bits_to_f(int64_t bits){ double x; memcpy(&x,&bits,8); return x; }\n", f);
-  fputs("static inline int64_t tn_f_to_bits(double x){ int64_t b; memcpy(&b,&x,8); return b; }\n", f);
+  emit_integer_prelude(f,0);
+  fputs("TN_INTEGER_FN int64_t tn_ir_memcpy(int64_t d,int64_t s,int64_t n){ return (int64_t)(uintptr_t)memcpy((void*)(uintptr_t)d,(const void*)(uintptr_t)s,(size_t)n); }\n",f);
+  fputs("TN_INTEGER_FN int64_t tn_ir_memmove(int64_t d,int64_t s,int64_t n){ return (int64_t)(uintptr_t)memmove((void*)(uintptr_t)d,(const void*)(uintptr_t)s,(size_t)n); }\n",f);
+  fputs("TN_INTEGER_FN int64_t tn_ir_memset(int64_t d,int64_t v,int64_t n){ return (int64_t)(uintptr_t)memset((void*)(uintptr_t)d,(int)v,(size_t)n); }\n",f);
+  fputs("TN_INTEGER_FN int64_t tn_ir_memcmp(int64_t a,int64_t b,int64_t n){ return memcmp((const void*)(uintptr_t)a,(const void*)(uintptr_t)b,(size_t)n); }\n",f);
+  if(!integer_only){
+  fputs("_Static_assert(sizeof(double)==8 && sizeof(float)==4, \"C backend requires binary64 double and binary32 float\");\n",f);
+  fputs("TN_INTEGER_FN double tn_bits_to_f(int64_t bits){ double x; memcpy(&x,&bits,8); return x; }\n", f);
+  fputs("TN_INTEGER_FN int64_t tn_f_to_bits(double x){ int64_t b; memcpy(&b,&x,8); return b; }\n", f);
+  fputs("TN_INTEGER_FN float tn_bits_to_f32(int64_t bits){ uint32_t b=(uint32_t)bits; float x; memcpy(&x,&b,4); return x; }\n", f);
+  fputs("TN_INTEGER_FN int64_t tn_f32_to_bits(float x){ uint32_t b; memcpy(&b,&x,4); return (int64_t)b; }\n", f);
+  fputs("TN_INTEGER_FN int64_t tn_float_to_integer(double x,int uns){ if(uns){ if(!(x>=0.0&&x<18446744073709551616.0))return INT64_MIN; return tn_ir_i64_bits((uint64_t)x); } if(!(x>=-9223372036854775808.0&&x<9223372036854775808.0))return INT64_MIN; return (int64_t)x; }\n", f);
+  }
   fputs("\n", f);
 
   // string constants
@@ -354,6 +389,7 @@ void ir_compile_to_c(IRModule* m, const char* out_c){
   // globals
   for(int i=0;i<m->global_n;i++){
     IRGlobal* g = &m->globals[i];
+    unsigned long long init_bits = (unsigned long long)(type_is_float(g->ty) ? g->init_fbits : g->init_int);
     char sym[512];
     mangle_sym(g->name, g->len, sym, (int)sizeof(sym));
     const char* storage = g->is_static ? "static " : "";
@@ -367,27 +403,19 @@ void ir_compile_to_c(IRModule* m, const char* out_c){
     }
     if(g->size==1){
       fprintf(f, "%sint8_t %s", storage, sym);
-      if(g->has_init) fprintf(f, " = (int8_t)%lld", g->init_int);
+      if(g->has_init) fprintf(f, " = (int8_t)0x%llXULL", init_bits);
       fputs(";\n", f);
     } else if(g->size==2){
       fprintf(f, "%sint16_t %s", storage, sym);
-      if(g->has_init) fprintf(f, " = (int16_t)%lld", g->init_int);
+      if(g->has_init) fprintf(f, " = (int16_t)0x%llXULL", init_bits);
       fputs(";\n", f);
     } else if(g->size==4){
       fprintf(f, "%sint32_t %s", storage, sym);
-      if(g->has_init) fprintf(f, " = (int32_t)%lld", g->init_int);
+      if(g->has_init) fprintf(f, " = (int32_t)0x%llXULL", init_bits);
       fputs(";\n", f);
     } else if(g->size==8){
       fprintf(f, "%sint64_t %s", storage, sym);
-      if(g->has_init){
-        if(g->init_fbits){
-          double x = 0.0;
-          memcpy(&x, &g->init_fbits, sizeof(double));
-          fprintf(f, " = tn_f_to_bits(%.*g)", 17, x);
-        } else {
-          fprintf(f, " = (int64_t)%lld", g->init_int);
-        }
-      }
+      if(g->has_init) fprintf(f, " = (int64_t)0x%llXULL", init_bits);
       fputs(";\n", f);
     } else {
       fprintf(f, "%sunsigned char %s[%d] = {0};\n", storage, sym, g->size);
@@ -504,9 +532,9 @@ void ir_compile_to_c(IRModule* m, const char* out_c){
       }
     }
 
-    // param mapping: r0,r2,r4...
+    // Aggregate results and aggregate parameters change incoming register IDs.
     for(int p=0;p<fn->param_count;p++){
-      int vreg = p * 2;
+      int vreg = fn->param_regs && p<fn->param_regs_n ? fn->param_regs[p] : p*2;
       if(vreg < regs){
         fprintf(f, "  r[%d] = a%d;\n", vreg, p);
       }
@@ -521,10 +549,10 @@ void ir_compile_to_c(IRModule* m, const char* out_c){
           fputs(":\n", f);
           break;
         case I_ICONST:
-          fprintf(f, "  r[%d] = %lld;\n", in->a, in->imm);
+          fprintf(f, "  r[%d] = tn_ir_i64_bits(UINT64_C(0x%llX));\n", in->a, (unsigned long long)in->imm);
           break;
         case I_FCONST:
-          fprintf(f, "  r[%d] = %lld;\n", in->a, in->immf);
+          fprintf(f, "  r[%d] = tn_ir_i64_bits(UINT64_C(0x%llX));\n", in->a, (unsigned long long)in->immf);
           break;
         case I_ADDRSYM: {
           char sym[512];
@@ -539,20 +567,7 @@ void ir_compile_to_c(IRModule* m, const char* out_c){
           fprintf(f, "  r[%d] = r[%d];\n", in->a, in->b);
           break;
         case I_BIN: {
-          const char* op = "+";
-          switch(in->binop){
-            case B_ADD: op="+"; break;
-            case B_SUB: op="-"; break;
-            case B_MUL: op="*"; break;
-            case B_DIV: op="/"; break;
-            case B_MOD: op="%"; break;
-            case B_AND: op="&"; break;
-            case B_OR:  op="|"; break;
-            case B_XOR: op="^"; break;
-            case B_SHL: op="<<"; break;
-            case B_SHR: op=">>"; break;
-          }
-          fprintf(f, "  r[%d] = (int64_t)(r[%d] %s r[%d]);\n", in->a, in->b, op, in->c);
+          emit_integer_binary(f,in);
           break;
         }
         case I_CMP: {
@@ -576,7 +591,8 @@ void ir_compile_to_c(IRModule* m, const char* out_c){
             case F_MUL: op="*"; break;
             case F_DIV: op="/"; break;
           }
-          fprintf(f, "  r[%d] = tn_f_to_bits(tn_bits_to_f(r[%d]) %s tn_bits_to_f(r[%d]));\n", in->a, in->b, op, in->c);
+          if(in->size==4) fprintf(f, "  r[%d] = tn_f32_to_bits(tn_bits_to_f32(r[%d]) %s tn_bits_to_f32(r[%d]));\n", in->a, in->b, op, in->c);
+          else fprintf(f, "  r[%d] = tn_f_to_bits(tn_bits_to_f(r[%d]) %s tn_bits_to_f(r[%d]));\n", in->a, in->b, op, in->c);
           break;
         }
         case I_FCMP: {
@@ -589,14 +605,22 @@ void ir_compile_to_c(IRModule* m, const char* out_c){
             case C_GT: op=">"; break;
             case C_GTE: op=">="; break;
           }
-          fprintf(f, "  r[%d] = (tn_bits_to_f(r[%d]) %s tn_bits_to_f(r[%d])) ? 1 : 0;\n", in->a, in->b, op, in->c);
+          if(in->size==4) fprintf(f, "  r[%d] = (tn_bits_to_f32(r[%d]) %s tn_bits_to_f32(r[%d])) ? 1 : 0;\n", in->a, in->b, op, in->c);
+          else fprintf(f, "  r[%d] = (tn_bits_to_f(r[%d]) %s tn_bits_to_f(r[%d])) ? 1 : 0;\n", in->a, in->b, op, in->c);
           break;
         }
         case I_I2F:
-          fprintf(f, "  r[%d] = tn_f_to_bits((double)r[%d]);\n", in->a, in->b);
+          if(in->size==4) fprintf(f, "  r[%d] = tn_f32_to_bits((float)%sr[%d]);\n", in->a, in->is_unsigned ? "(uint64_t)" : "", in->b);
+          else fprintf(f, "  r[%d] = tn_f_to_bits((double)%sr[%d]);\n", in->a, in->is_unsigned ? "(uint64_t)" : "", in->b);
           break;
         case I_F2I:
-          fprintf(f, "  r[%d] = (int64_t)tn_bits_to_f(r[%d]);\n", in->a, in->b);
+          fprintf(f, "  r[%d] = tn_float_to_integer(%s(r[%d]),%d);\n", in->a, in->size==4 ? "tn_bits_to_f32" : "tn_bits_to_f", in->b, in->is_unsigned);
+          break;
+        case I_F32_TO_F64:
+          fprintf(f,"  r[%d] = tn_f_to_bits((double)tn_bits_to_f32(r[%d]));\n",in->a,in->b);
+          break;
+        case I_F64_TO_F32:
+          fprintf(f,"  r[%d] = tn_f32_to_bits((float)tn_bits_to_f(r[%d]));\n",in->a,in->b);
           break;
         case I_CALL: {
           int maplen = 0;
@@ -675,7 +699,7 @@ void ir_compile_to_c(IRModule* m, const char* out_c){
           break;
         }
         case I_GEP:
-          if(in->imm!=0) fprintf(f, "  r[%d] = r[%d] + %lld;\n", in->a, in->b, in->imm);
+          if(in->imm!=0) fprintf(f, "  r[%d] = tn_ir_i64_add(r[%d],tn_ir_i64_bits(UINT64_C(0x%llX)));\n", in->a, in->b, (unsigned long long)in->imm);
           else fprintf(f, "  r[%d] = r[%d];\n", in->a, in->b);
           break;
         case I_JMP:
@@ -692,7 +716,7 @@ void ir_compile_to_c(IRModule* m, const char* out_c){
           fprintf(f, "  return r[%d];\n", in->a);
           break;
         default:
-          break;
+          die("C backend: unsupported IR operation");
       }
     }
 
@@ -701,4 +725,10 @@ void ir_compile_to_c(IRModule* m, const char* out_c){
   }
 
   fclose(f);
+}
+
+void ir_compile_to_c(IRModule* m, const char* out_c){ compile_c(m,out_c,0); }
+
+void ir_compile_to_c_hardware(IRModule* m, const char* out_c, const char* target){
+  compile_c(m,out_c,!strcmp(target,"arduino-uno"));
 }

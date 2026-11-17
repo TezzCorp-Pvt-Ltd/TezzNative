@@ -1,0 +1,48 @@
+import "nn"
+import "math"
+
+fn check_activation(activation:int, weight:float, target_value:float) -> int:
+  sizes:[float;2]
+  acts:[float;1]
+  input:[float;1]
+  output:[float;1]
+  target:[float;1]
+  sizes[0] = 1.0
+  sizes[1] = 1.0
+  acts[0] = activation as float
+  input[0] = 1.0
+  target[0] = target_value
+  unsafe:
+    network:*float = nn.nn_new_custom(&sizes[0], &acts[0], 1)
+    if network == 0:
+      ret 1
+    network[44] = weight
+    network[45] = 0.0
+    nn.nn_forward(network, &input[0], &output[0])
+    y:float = output[0]
+    derivative:float = 1.0
+    if activation == 0:
+      derivative = y * (1.0 - y)
+    if activation == 1 && y <= 0.0:
+      derivative = 0.0
+    if activation == 2:
+      derivative = 1.0 - y * y
+    expected:float = weight + 0.1 * (target_value - y) * derivative
+    loss:float = nn.nn_backward(network, &input[0], &target[0], 0.1)
+    actual:float = network[44]
+    nn.nn_free(network)
+    if math.absf(actual - expected) > 1.0e-12:
+      say "FAIL output activation derivative", activation, actual, expected
+      ret 1
+    if math.absf(loss - 0.5 * (target_value - y) * (target_value - y)) > 1.0e-12:
+      say "FAIL reported loss"
+      ret 1
+  ret 0
+
+fn main() -> int:
+  failures:int = check_activation(0, 0.3, 1.0)
+  failures += check_activation(1, -1.0, 1.0)
+  failures += check_activation(1, 0.5, 1.0)
+  failures += check_activation(2, 0.3, 1.0)
+  failures += check_activation(3, 0.3, 1.0)
+  ret failures

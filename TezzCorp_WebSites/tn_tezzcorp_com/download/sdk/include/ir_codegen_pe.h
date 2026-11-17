@@ -1,10 +1,12 @@
 // include/ir_codegen_pe.h
 #pragma once
 #include "ir.h"
+#include "native_imports.h"
 #include <stddef.h>
 #include <stdint.h>
 
 typedef struct {
+  TnNativeImports native;
   uint32_t runtime_flags;
   uint32_t import_size;
   uint32_t iat_exit;

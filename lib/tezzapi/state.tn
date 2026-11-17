@@ -1,0 +1,342 @@
+// Shared types, constants, and state for tezzapi.
+import "net"
+import "time"
+import "tls"
+
+let API_GET:int     = 1
+
+let API_POST:int    = 2
+
+let API_PUT:int     = 3
+
+let API_DELETE:int  = 4
+
+let API_PATCH:int   = 5
+
+let API_HEAD:int    = 6
+
+let API_OPTIONS:int = 7
+
+// ─────────────────────────────────────────────────────────────
+// Status codes
+// ─────────────────────────────────────────────────────────────
+
+let HTTP_200:int = 200
+
+let HTTP_201:int = 201
+
+let HTTP_204:int = 204
+
+let HTTP_400:int = 400
+
+let HTTP_401:int = 401
+
+let HTTP_403:int = 403
+
+let HTTP_404:int = 404
+
+let HTTP_405:int = 405
+
+let HTTP_409:int = 409
+
+let HTTP_413:int = 413
+
+let HTTP_429:int = 429
+
+let HTTP_500:int = 500
+
+let HTTP_501:int = 501
+
+let HTTP_503:int = 503
+
+// ─────────────────────────────────────────────────────────────
+// Core structs
+// ─────────────────────────────────────────────────────────────
+
+struct ApiHeader:
+  name:str
+  value:str
+
+struct ApiRequest:
+  method:int
+  path:str         // raw path e.g. "/users/42"
+  pattern:str      // matched pattern e.g. "/users/:id"
+  query:str        // raw query string "page=2&limit=50"
+  body:str         // raw request body (heap, caller frees)
+  body_len:int
+  headers:*ApiHeader
+  header_count:int
+  header_cap:int
+  client_ip:str
+  content_type:str
+  content_len:int
+  sock:int         // client socket fd
+
+struct ApiResponse:
+  status:int
+  headers:*ApiHeader
+  header_count:int
+  header_cap:int
+  body:str         // heap-allocated response body
+  body_len:int
+  sent:int         // 1 if already sent
+
+struct ApiRoute:
+  method:int
+  pattern:str   // e.g. "/users/:id"
+  handler:fn(*ApiRequest, *ApiResponse)->int
+
+struct ApiMiddleware:
+  before_fn:fn(*ApiRequest, *ApiResponse)->int
+  after_fn:fn(*ApiRequest, *ApiResponse)->int
+
+struct TezzApi:
+  port:int
+  routes:*ApiRoute
+  route_count:int
+  route_cap:int
+  middlewares:*ApiMiddleware
+  mw_count:int
+  mw_cap:int
+  // CORS settings
+  cors_origin:str
+  cors_methods:str
+  cors_headers:str
+  // Auth
+  bearer_validator:fn(str)->str   // fn(token)->username or 0
+  // Rate limiting
+  rate_limit_per_min:int
+  // Static file serving
+  static_dir:str
+  static_prefix:str
+  // WebSocket upgrade handler: fn(sock, path)->int
+  ws_handler:fn(int, str)->int
+  running:int
+  max_headers:int
+
+// ─────────────────────────────────────────────────────────────
+// Internal string helpers
+// ─────────────────────────────────────────────────────────────
+
+let MAX_PARAMS:int = 16
+
+let PARAM_NAME_LEN:int = 32
+
+let PARAM_VAL_LEN:int = 256
+
+struct RouteParams:
+  names:[char; 512]   // packed: 16 * 32 byte name slots
+  values:[char; 4096] // packed: 16 * 256 byte value slots
+  count:int
+
+let TNXB_MAGIC_0:int = 84   // 'T'
+
+let TNXB_MAGIC_1:int = 78   // 'N'
+
+let TNXB_MAGIC_2:int = 88   // 'X'
+
+let TNXB_MAGIC_3:int = 66   // 'B'
+
+let TNXB_VERSION:int = 1
+
+let TNXB_HEADER_SIZE:int = 16
+
+let TNXB_WIRE_HEADER_SIZE:int = 8
+
+let TNXB_MAX_PAYLOAD:int = 8388608
+
+let TNXB_OP_NONE:int = 0
+
+let TNXB_OP_CREATE:int = 1
+
+let TNXB_OP_READ:int = 2
+
+let TNXB_OP_UPDATE:int = 3
+
+let TNXB_OP_DELETE:int = 4
+
+let TNXB_TLS_MIN_DEFAULT:int = 0
+
+let TNXB_TLS_MIN_12:int = 12
+
+let TNXB_TLS_MIN_13:int = 13
+
+struct TnxbBuffer:
+  buf:*char
+  len:int
+
+struct TnxbPacket:
+  ok:int
+  op:int
+  route:str
+  body:str
+
+struct TnxbHttpReply:
+  ok:int
+  status:int
+  body:str
+
+struct TnxbTlsPolicy:
+  min_version:int
+  handshake_timeout_ms:int
+  pin_sha256:str
+
+@inline
+fn _get_API_GET() -> int:
+  ret API_GET
+
+@inline
+fn _get_API_POST() -> int:
+  ret API_POST
+
+@inline
+fn _get_API_PUT() -> int:
+  ret API_PUT
+
+@inline
+fn _get_API_DELETE() -> int:
+  ret API_DELETE
+
+@inline
+fn _get_API_PATCH() -> int:
+  ret API_PATCH
+
+@inline
+fn _get_API_HEAD() -> int:
+  ret API_HEAD
+
+@inline
+fn _get_API_OPTIONS() -> int:
+  ret API_OPTIONS
+
+@inline
+fn _get_HTTP_200() -> int:
+  ret HTTP_200
+
+@inline
+fn _get_HTTP_201() -> int:
+  ret HTTP_201
+
+@inline
+fn _get_HTTP_204() -> int:
+  ret HTTP_204
+
+@inline
+fn _get_HTTP_400() -> int:
+  ret HTTP_400
+
+@inline
+fn _get_HTTP_401() -> int:
+  ret HTTP_401
+
+@inline
+fn _get_HTTP_403() -> int:
+  ret HTTP_403
+
+@inline
+fn _get_HTTP_404() -> int:
+  ret HTTP_404
+
+@inline
+fn _get_HTTP_405() -> int:
+  ret HTTP_405
+
+@inline
+fn _get_HTTP_409() -> int:
+  ret HTTP_409
+
+@inline
+fn _get_HTTP_413() -> int:
+  ret HTTP_413
+
+@inline
+fn _get_HTTP_429() -> int:
+  ret HTTP_429
+
+@inline
+fn _get_HTTP_500() -> int:
+  ret HTTP_500
+
+@inline
+fn _get_HTTP_501() -> int:
+  ret HTTP_501
+
+@inline
+fn _get_HTTP_503() -> int:
+  ret HTTP_503
+
+@inline
+fn _get_MAX_PARAMS() -> int:
+  ret MAX_PARAMS
+
+@inline
+fn _get_PARAM_NAME_LEN() -> int:
+  ret PARAM_NAME_LEN
+
+@inline
+fn _get_PARAM_VAL_LEN() -> int:
+  ret PARAM_VAL_LEN
+
+@inline
+fn _get_TNXB_MAGIC_0() -> int:
+  ret TNXB_MAGIC_0
+
+@inline
+fn _get_TNXB_MAGIC_1() -> int:
+  ret TNXB_MAGIC_1
+
+@inline
+fn _get_TNXB_MAGIC_2() -> int:
+  ret TNXB_MAGIC_2
+
+@inline
+fn _get_TNXB_MAGIC_3() -> int:
+  ret TNXB_MAGIC_3
+
+@inline
+fn _get_TNXB_VERSION() -> int:
+  ret TNXB_VERSION
+
+@inline
+fn _get_TNXB_HEADER_SIZE() -> int:
+  ret TNXB_HEADER_SIZE
+
+@inline
+fn _get_TNXB_WIRE_HEADER_SIZE() -> int:
+  ret TNXB_WIRE_HEADER_SIZE
+
+@inline
+fn _get_TNXB_MAX_PAYLOAD() -> int:
+  ret TNXB_MAX_PAYLOAD
+
+@inline
+fn _get_TNXB_OP_NONE() -> int:
+  ret TNXB_OP_NONE
+
+@inline
+fn _get_TNXB_OP_CREATE() -> int:
+  ret TNXB_OP_CREATE
+
+@inline
+fn _get_TNXB_OP_READ() -> int:
+  ret TNXB_OP_READ
+
+@inline
+fn _get_TNXB_OP_UPDATE() -> int:
+  ret TNXB_OP_UPDATE
+
+@inline
+fn _get_TNXB_OP_DELETE() -> int:
+  ret TNXB_OP_DELETE
+
+@inline
+fn _get_TNXB_TLS_MIN_DEFAULT() -> int:
+  ret TNXB_TLS_MIN_DEFAULT
+
+@inline
+fn _get_TNXB_TLS_MIN_12() -> int:
+  ret TNXB_TLS_MIN_12
+
+@inline
+fn _get_TNXB_TLS_MIN_13() -> int:
+  ret TNXB_TLS_MIN_13

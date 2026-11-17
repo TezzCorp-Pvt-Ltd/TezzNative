@@ -1,0 +1,19 @@
+import "tensor"
+
+fn main() -> int:
+  tensor.tape_init()
+  x:Tensor = tensor.tensor_ones_1d(1)
+  x = tensor.tensor_require_grad(x)
+  y:Tensor = tensor.tensor_scale(x, 2.0)
+  tensor.tensor_backward(y)
+  borrowed:Tensor = tensor.tensor_get_grad(x)
+  tensor.tensor_free_tensor(borrowed)
+  failed:int = 0
+  if tensor.tensor_grad_item(x, 0) != 2.0:
+    failed = 1
+  tensor.tensor_free_tensor(y)
+  tensor.tensor_free_tensor(x)
+  tensor.tape_reset()
+  if failed != 0:
+    say "FAIL: borrowed gradients and tape-retained gradients must remain valid"
+  ret failed

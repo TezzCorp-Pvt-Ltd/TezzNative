@@ -1,0 +1,34 @@
+import "tztensor"
+import "./support/lib/values.tn"
+
+fn main() -> int:
+  x:int = tztensor.tensor_new_4d(1, 1, 2, 2, 0)
+  w:int = tztensor.tensor_new_4d(1, 1, 1, 1, 0)
+  out:int = tztensor.tensor_new_4d(1, 1, 2, 2, 0)
+  mask:int = tztensor.tensor_new_4d(1, 1, 2, 2, 0)
+  tztensor.tensor_fill(x, 2.0 as f32)
+  tztensor.tensor_fill(w, 3.0 as f32)
+  tztensor.tensor_fill(out, 17.0 as f32)
+  // Synthetic device tags test rejection before any CPU or device dereference.
+  unsafe:
+    (x as *int)[8] = 1
+    (w as *int)[8] = 1
+    (out as *int)[8] = 1
+    (mask as *int)[8] = 1
+  conv:int = tztensor.tensor_conv2d(x, w, 0, out, 0, 1)
+  pool:int = tztensor.tensor_maxpool2d(x, out, mask, 1, 1, 1)
+  unsafe:
+    (x as *int)[8] = 0
+    (w as *int)[8] = 0
+    (out as *int)[8] = 0
+    (mask as *int)[8] = 0
+  changed:int = 0
+  if values.read(out, 0) != 17.0: changed = 1
+  tztensor.tensor_free(x)
+  tztensor.tensor_free(w)
+  tztensor.tensor_free(out)
+  tztensor.tensor_free(mask)
+  if conv >= 0 || pool >= 0 || changed != 0:
+    say "FAIL: CNN dispatched device pointers to CPU kernels ", conv, " ", pool
+    ret 1
+  ret 0

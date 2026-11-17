@@ -1,0 +1,58 @@
+import "tensor_bridge"
+import "tensor"
+import "tztensor"
+
+fn main() -> int:
+  input64:Tensor = tensor.tensor_2d(4, 1)
+  target64:Tensor = tensor.tensor_2d(4, 1)
+  initial64:Tensor = tensor.tensor_zeros_2d(1, 1)
+  unsafe:
+    input64.data[0] = -1.0
+    input64.data[1] = -0.5
+    input64.data[2] = 0.5
+    input64.data[3] = 1.0
+    i:int = 0
+    while i < 4:
+      target64.data[i] = input64.data[i] * 2.5
+      i = i + 1
+  matrix:int = tensor_bridge.to_tztensor(input64)
+  target_matrix:int = tensor_bridge.to_tztensor(target64)
+  weight:int = tensor_bridge.to_tztensor(initial64)
+  if matrix == 0 || target_matrix == 0 || weight == 0: ret 1
+  tensor.tensor_free_tensor(input64)
+  tensor.tensor_free_tensor(target64)
+  tensor.tensor_free_tensor(initial64)
+  // Preserve the public values across independent storage and exercise the
+  // real CPU f32 autograd engine repeatedly; no test CUDA adapter is loaded.
+  if tztensor.tensor_set_requires_grad(weight, 1) != 0: ret 3
+  epoch:int = 0
+  while epoch < 200:
+    tztensor.tensor_zero_grad(weight)
+    prediction:int = tztensor.tensor_new_2d(4, 1, 1)
+    residual:int = tztensor.tensor_new_2d(4, 1, 1)
+    loss:int = tztensor.tensor_new_2d(4, 1, 1)
+    if prediction == 0 || residual == 0 || loss == 0: ret 4
+    if tztensor.tensor_matmul(matrix, weight, prediction) != 0: ret 5
+    if tztensor.tensor_sub(prediction, target_matrix, residual) != 0: ret 6
+    if tztensor.tensor_mul(residual, residual, loss) != 0: ret 7
+    if tztensor.tensor_backward(loss) != 0: ret 8
+    unsafe:
+      parameter:*f32 = tztensor.tensor_data(weight) as *f32
+      gradient:*f32 = tztensor.tensor_grad(weight) as *f32
+      expected:float = 5.0 * ((parameter[0] as float) - 2.5)
+      error:float = (gradient[0] as float) - expected
+      if error != error || error < -0.00001 || error > 0.00001: ret 9
+      parameter[0] = ((parameter[0] as float) - 0.1 * (gradient[0] as float)) as f32
+    tztensor.tensor_free(prediction)
+    tztensor.tensor_free(residual)
+    tztensor.tensor_free(loss)
+    epoch = epoch + 1
+  final:Tensor = tensor_bridge.to_tensor_detached(weight)
+  if final.size != 1 || final.requires_grad != 0: ret 10
+  unsafe:
+    if final.data[0] != final.data[0] || final.data[0] < 2.49999 || final.data[0] > 2.50001: ret 11
+  tensor.tensor_free_tensor(final)
+  tztensor.tensor_free(matrix)
+  tztensor.tensor_free(target_matrix)
+  tztensor.tensor_free(weight)
+  ret 0

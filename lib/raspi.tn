@@ -1,18 +1,8 @@
-// raspi module — TezzNative 2.0 Raspberry Pi Hardware Abstraction Layer
-//
-// Native Raspberry Pi support for all GPIO and peripheral access.
-// Works on RPi 1/2/3/4/5 via /sys/class/gpio and /dev/* interfaces.
-// Also supports RPi Pico (RP2040) via USB serial bridge.
-//
-// Compile for RPi: tezzc buildexe --target=aarch64-linux main.tn main
-// Compile for RPi Pico: tezzc buildexe --target=arm-cortex-m0 main.tn main.uf2
-//
-// GPIO: /sys/class/gpio (kernel sysfs) — no root required
-// PWM:  /sys/class/pwm (kernel pwm driver)
-// I2C:  /dev/i2c-* (i2c-dev kernel module)
-// SPI:  /dev/spidev* (spidev kernel module)
-// UART: /dev/ttyS0 or /dev/ttyAMA0
-// Camera: libcamera or V4L2 via /dev/video0
+// package-file raspi/pi3.tn 4E53162A
+// tezz-unavailable-module: raspi
+// Legacy Raspberry Pi API source; these broad wrappers remain unimplemented.
+// Use raspi.pi3 with --target raspi3b --freestanding for verified drivers.
+// Importing this distributed module is an explicit compile-time error.
 
 import "io"
 import "time"
@@ -122,7 +112,7 @@ fn gpio_export(pin:int) -> int:
   r:int = _pi_write_sysfs("/sys/class/gpio/export", ps)
   free(ps)
   // Small delay to let kernel create the sysfs entry
-  time.sleep_ms(50)
+  sleep_ms(50)
   ret r
 
 fn gpio_unexport(pin:int) -> int:
@@ -202,7 +192,7 @@ fn pwm_export(chip:int, channel:int) -> *PwmChannel:
   chs:str = _pi_itoa(channel)
   _pi_write_sysfs(exp_path, chs)
   free(exp_path); free(chs)
-  time.sleep_ms(100)
+  sleep_ms(100)
   p:*PwmChannel = (*PwmChannel)malloc(sizeof(PwmChannel))
   if p == 0: ret 0 as *PwmChannel
   (*p).chip = chip
@@ -605,10 +595,14 @@ fn pi_mem_mb() -> int:
   ret 0 - 1
 
 fn pi_delay(ms:int) -> int:
-  ret time.sleep_ms(ms)
+  ret sleep_ms(ms)
 
 fn pi_delay_us(us:int) -> int:
-  ret time.sleep_us(us)
+  // Hosted timer resolution is milliseconds, rounded up for positive input.
+  if us <= 0: ret 0
+  ms:int = us / 1000
+  if us % 1000 != 0: ms = ms + 1
+  ret sleep_ms(ms)
 
 // ─────────────────────────────────────────────────────────────
 // LED control (common pattern: GPIO 17 on breadboard)

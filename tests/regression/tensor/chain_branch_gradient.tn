@@ -1,0 +1,28 @@
+import "tensor"
+
+fn main() -> int:
+  tensor.tape_init()
+  x:Tensor = tensor.tensor_ones_1d(1)
+  tensor.tensor_set1(x, 0, 2.0)
+  x = tensor.tensor_require_grad(x)
+  y:Tensor = tensor.tensor_ones_1d(1)
+  tensor.tensor_set1(y, 0, 3.0)
+  y = tensor.tensor_require_grad(y)
+  xy:Tensor = tensor.tensor_mul(x, y)
+  xx:Tensor = tensor.tensor_mul(x, x)
+  sum:Tensor = tensor.tensor_add(xy, xx)
+  loss:Tensor = tensor.tensor_mean_all_t(sum)
+  tensor.tensor_backward(loss)
+  gx:float = tensor.tensor_grad_item(x, 0)
+  gy:float = tensor.tensor_grad_item(y, 0)
+  tensor.tape_reset()
+  tensor.tensor_free_tensor(loss)
+  tensor.tensor_free_tensor(sum)
+  tensor.tensor_free_tensor(xx)
+  tensor.tensor_free_tensor(xy)
+  tensor.tensor_free_tensor(y)
+  tensor.tensor_free_tensor(x)
+  if gx != 7.0 || gy != 2.0:
+    say "FAIL: chain and shared-input branch gradients; got ", gx, ", ", gy
+    ret 1
+  ret 0

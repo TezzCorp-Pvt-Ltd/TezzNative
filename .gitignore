@@ -33,6 +33,7 @@ benchmarks/results/**
 !.github/
 !.github/workflows/
 !.github/workflows/conformance.yml
+!.github/workflows/cuda-device.yml
 !.github/workflows/release-security.yml
 !tests/
 !tests/*.tn
@@ -42,6 +43,30 @@ benchmarks/results/**
 !tests/conformance/**
 !tests/gui/
 !tests/gui/**
+!tests/regression/
+!tests/regression/**
+!tests/hardware/
+!tests/hardware/**
+!tests/run.py
+!tests/kernel_numeric.py
+!tests/kernel_vision_numeric.py
+!tests/kernel_gpu_numeric.py
+!tests/verify_native.py
+!tests/sdk_training_numeric.py
+!tests/check_native_imports.py
+!tools/speech_train.tn
+!tools/speech_experiment.py
+!tools/speech_compare.py
+!tools/speech_dataset.py
+!tools/speech_tts_train.tn
+!tools/speech_tts_experiment.py
+!tools/speech_language.py
+!tools/speech_vocoder_quality.py
+!tools/speech_coverage.py
+!tools/speech_full_experiment.py
+!tools/speech_temporal_train.tn
+!tools/speech_transcribe.tn
+!tools/speech_text_normalize.tn
 !tezznative-vscode/
 !tezznative-vscode/**
 !tools/
@@ -50,7 +75,13 @@ benchmarks/results/**
 !tools/resolve_hashes.py
 !tools/test_cuda_tensor_llm.py
 !tools/package_distributed_sdk.py
+!tools/library_package.py
+!tools/tezz_hw.py
+!tools/hardware/
+!tools/hardware/**
 !tools/tezz_lib.py
+!tools/validate_speech_dataset.py
+!tools/generate_vm_bindings.py
 !tools/release/
 !tools/release/**
 
@@ -93,6 +124,13 @@ TezzCorp_WebSites/tn_tezzcorp_com/tezznative_source_backup.tar.gz
 TezzCorp_WebSites/tn_tezzcorp_com/*source_backup*
 
 # Temporary scratch scripts, logs, and artifacts
+# Local speech datasets, training checkpoints, and generated audio stay local.
+tezzmodel/
+tezzmodel/**
+tests/regression/**/*.exe
+tests/regression/**/__pycache__/
+tests/hardware/**/__pycache__/
+tools/hardware/**/__pycache__/
 scratch/
 scratch/**
 temp/

@@ -1,0 +1,37 @@
+import "tensor"
+import "math"
+
+fn main() -> int:
+  tensor.tape_init()
+  x:Tensor = tensor.tensor_2d(1, 2)
+  tensor.tensor_set2(x, 0, 0, 0.0 - 1.0)
+  tensor.tensor_set2(x, 0, 1, 1.0)
+  x = tensor.tensor_require_grad(x)
+  gamma:Tensor = tensor.tensor_ones_1d(2)
+  gamma = tensor.tensor_require_grad(gamma)
+  beta:Tensor = tensor.tensor_zeros_1d(2)
+  beta = tensor.tensor_require_grad(beta)
+  weights:Tensor = tensor.tensor_zeros_2d(1, 2)
+  tensor.tensor_set2(weights, 0, 0, 1.0)
+  normed:Tensor = tensor.tensor_layernorm(x, gamma, beta, 0.00001)
+  weighted:Tensor = tensor.tensor_mul(normed, weights)
+  loss:Tensor = tensor.tensor_sum_all_t(weighted)
+  tensor.tensor_backward(loss)
+  failed:int = 0
+  if tensor.tensor_grad_item(beta, 0) != 1.0 || tensor.tensor_grad_item(beta, 1) != 0.0:
+    failed = 1
+  if math.absf(tensor.tensor_grad_item(gamma, 0) + 0.9999950000374997) > 0.000001 || tensor.tensor_grad_item(gamma, 1) != 0.0:
+    failed = 1
+  if math.absf(tensor.tensor_grad_item(x, 0) - 0.00000499992500093749) > 0.00000001 || math.absf(tensor.tensor_grad_item(x, 1) + 0.00000499992500093749) > 0.00000001:
+    failed = 1
+  tensor.tape_reset()
+  tensor.tensor_free_tensor(loss)
+  tensor.tensor_free_tensor(weighted)
+  tensor.tensor_free_tensor(normed)
+  tensor.tensor_free_tensor(weights)
+  tensor.tensor_free_tensor(beta)
+  tensor.tensor_free_tensor(gamma)
+  tensor.tensor_free_tensor(x)
+  if failed != 0:
+    say "FAIL: LayerNorm input, scale, and bias gradients"
+  ret failed

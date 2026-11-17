@@ -1,0 +1,177 @@
+// runtime implementation: utility.
+
+import "runtime.format"
+import "runtime.memory"
+import "runtime.state"
+
+fn rt_abs(n:int) -> int:
+  if n < 0:
+    ret 0 - n
+  ret n
+
+fn rt_min(a:int, b:int) -> int:
+  if a < b:
+    ret a
+  ret b
+
+fn rt_max(a:int, b:int) -> int:
+  if a > b:
+    ret a
+  ret b
+
+fn rt_clamp(v:int, lo:int, hi:int) -> int:
+  if v < lo:
+    ret lo
+  if v > hi:
+    ret hi
+  ret v
+
+fn rt_fabs(f:float) -> float:
+  if f < 0.0:
+    ret 0.0 - f
+  ret f
+
+fn rt_fmin(a:float, b:float) -> float:
+  if a < b:
+    ret a
+  ret b
+
+fn rt_fmax(a:float, b:float) -> float:
+  if a > b:
+    ret a
+  ret b
+
+fn rt_fclamp(v:float, lo:float, hi:float) -> float:
+  if v < lo:
+    ret lo
+  if v > hi:
+    ret hi
+  ret v
+
+// ============================================================
+// SECTION 8: String allocation helpers (used by json, config, cli)
+// ============================================================
+
+// Allocate a zeroed buffer of n+1 bytes (null-terminated)
+
+fn rt_alloc_str(n:int) -> *char:
+  if n < 0:
+    n = 0
+  p:*char = (*char)malloc(n + 1)
+  if p == 0:
+    ret 0 as *char
+  unsafe:
+    p[n] = 0 as char
+  ret p
+
+// Duplicate a string into heap memory (caller frees)
+
+fn rt_strdup(s:str) -> *char:
+  if s == 0:
+    ret 0 as *char
+  n:int = runtime.memory.strlen(s)
+  out:*char = rt_alloc_str(n)
+  if out == 0:
+    ret 0 as *char
+  i:int = 0
+  while i < n:
+    unsafe:
+      out[i] = s[i]
+    i = i + 1
+  ret out
+
+// Duplicate exactly n bytes of s
+
+fn rt_strndup(s:str, n:int) -> *char:
+  if s == 0 || n <= 0:
+    ret 0 as *char
+  out:*char = rt_alloc_str(n)
+  if out == 0:
+    ret 0 as *char
+  i:int = 0
+  while i < n && s[i] != 0 as char:
+    unsafe:
+      out[i] = s[i]
+    i = i + 1
+  ret out
+
+// Concatenate two strings into a new heap string (caller frees)
+
+fn rt_strcat_new(a:str, b:str) -> *char:
+  al:int = runtime.memory.strlen(a)
+  bl:int = runtime.memory.strlen(b)
+  out:*char = rt_alloc_str(al + bl)
+  if out == 0:
+    ret 0 as *char
+  i:int = 0
+  while i < al:
+    unsafe:
+      out[i] = a[i]
+    i = i + 1
+  i = 0
+  while i < bl:
+    unsafe:
+      out[al + i] = b[i]
+    i = i + 1
+  ret out
+
+// Concatenate three strings into a new heap string (caller frees)
+
+fn rt_strcat3_new(a:str, b:str, c:str) -> *char:
+  al:int = runtime.memory.strlen(a)
+  bl:int = runtime.memory.strlen(b)
+  cl:int = runtime.memory.strlen(c)
+  out:*char = rt_alloc_str(al + bl + cl)
+  if out == 0:
+    ret 0 as *char
+  i:int = 0
+  while i < al:
+    unsafe:
+      out[i] = a[i]
+    i = i + 1
+  i = 0
+  while i < bl:
+    unsafe:
+      out[al + i] = b[i]
+    i = i + 1
+  i = 0
+  while i < cl:
+    unsafe:
+      out[al + bl + i] = c[i]
+    i = i + 1
+  ret out
+
+// ============================================================
+// SECTION 9: Integer/float to heap string helpers
+// ============================================================
+
+fn rt_int_to_str(n:int) -> str:
+  out:*char = runtime.format.itoa(n)
+  ret out as str
+
+fn rt_float_to_str(f:float) -> str:
+  out:*char = runtime.format.ftoa(f, 6)
+  ret out as str
+
+fn rt_float_to_str_g(f:float) -> str:
+  // Compact format: trim trailing zeros
+  out:*char = runtime.format.ftoa(f, 6)
+  if out == 0:
+    ret 0 as str
+  // Find dot position
+  di:int = 0 - 1
+  i:int = 0
+  while out[i] != 0 as char:
+    if out[i] as int == 46:
+      di = i
+    i = i + 1
+  total:int = i
+  if di < 0:
+    ret out as str  // no decimal point, already compact
+  // Trim trailing zeros
+  end:int = total - 1
+  while end > di + 1 && out[end] as int == 48:
+    unsafe:
+      out[end] = 0 as char
+    end = end - 1
+  ret out as str

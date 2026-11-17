@@ -1,0 +1,23 @@
+fn allocate() -> *char:
+  unsafe:
+    ret malloc(8)
+
+fn empty() -> *char:
+  unsafe:
+    ret 0 as *char
+
+fn main() -> int:
+  pointer:*char = allocate()
+  if pointer == 0: ret 99
+  unsafe:
+    free(pointer)
+  pointer = allocate()
+  if pointer == 0: ret 98
+  unsafe:
+    pointer[0] = 42 as char
+    if pointer[0] != 42 as char: ret 1
+    free(pointer)
+  pointer = empty()
+  if pointer != 0: ret 2
+  say "POINTER_REINITIALIZE", 0
+  ret 0

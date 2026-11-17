@@ -1,0 +1,54 @@
+import "tzgpu"
+import "tzcpu"
+import "math"
+
+fn near(actual:float, expected:float) -> int:
+  if actual != actual || math.absf(actual - expected) > 0.00002: ret 0
+  ret 1
+
+fn main() -> int:
+  if tzgpu.tz_cuda_device_count() <= 0: ret 1
+  host:int = tzcpu.tz_cpu_zeros(8)
+  unsafe:
+    p:*f32 = host as *f32
+    p[0] = 1.0 as f32
+    p[1] = 2.0 as f32
+    p[2] = 3.0 as f32
+    p[3] = 4.0 as f32
+  a:int = tzgpu.gpu_upload_f32(host, 4)
+  if a == 0: ret 2
+  c:int = tzgpu.gpu_matmul_f32(a, a, 2, 2, 2)
+  if c == 0: ret 3
+  if tzgpu.gpu_download_f32(c, host, 4) != 0: ret 4
+  unsafe:
+    p:*f32 = host as *f32
+    if p[0] != 7.0 as f32 || p[1] != 10.0 as f32 || p[2] != 15.0 as f32 || p[3] != 22.0 as f32: ret 5
+  linear:int = tzgpu.gpu_linear_f32(a, a, 0, 2, 2, 2)
+  if linear == 0: ret 6
+  if tzgpu.gpu_download_f32(linear, host, 4) != 0: ret 7
+  unsafe:
+    p:*f32 = host as *f32
+    if p[0] != 5.0 as f32 || p[1] != 11.0 as f32 || p[2] != 11.0 as f32 || p[3] != 25.0 as f32: ret 8
+  scores:int = tzgpu.gpu_attn_scores_f32(a, a, 1, 2, 2, 1)
+  if scores == 0: ret 9
+  if tzgpu.gpu_download_f32(scores, host, 4) != 0: ret 10
+  unsafe:
+    p:*f32 = host as *f32
+    if p[0] != 1.0 as f32 || p[1] != 0.0 as f32: ret 11
+    if near(p[2] as float + p[3] as float, 1.0) == 0: ret 12
+  // Invalid operations must not return allocated but unusable tensors.
+  if tzgpu.gpu_upload_f32(0, 2) != 0: ret 20
+  if tzgpu.gpu_matmul_f32(0, a, 2, 2, 2) != 0: ret 21
+  if tzgpu.gpu_matmul(0, 0, 2, 2, 2) != 0: ret 22
+  if tzgpu.gpu_softmax_inplace(0, 1, 2) == 0: ret 23
+  if tzgpu.gpu_layernorm_inplace(0, 1, 2, 0.00001) == 0: ret 24
+  if tzgpu.gpu_malloc_f32(4611686018427387905) != 0: ret 25
+  if tzgpu.gpu_download_f32(a, host, 4611686018427387905) == 0: ret 26
+  if tzgpu.gpu_sync() != 0: ret 27
+  tzgpu.gpu_free(a)
+  tzgpu.gpu_free(c)
+  tzgpu.gpu_free(linear)
+  tzgpu.gpu_free(scores)
+  tzcpu.tz_cpu_free(host)
+  say "CUDA language device checks passed"
+  ret 0

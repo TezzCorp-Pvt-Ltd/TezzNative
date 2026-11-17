@@ -1,0 +1,244 @@
+// mind implementation: forward.
+import "math"
+import "str"
+import "nn"
+import "mind.core"
+import "mind.kernels"
+import "mind.state"
+
+fn mind_forward(model:*float, token_id:int, pos:int, logits:*float) -> int:
+  if model == 0 as *float || logits == 0 as *float: ret 0 - 1
+  if mind.core.mind_is_valid(model) == 0: ret 0 - 1
+
+  vocab:int   = mind.core._mi(model, (*mind.state._state__MH_VOCAB()))
+  dim:int     = mind.core._mi(model, (*mind.state._state__MH_DIM()))
+  q_heads:int = mind.core._mi(model, (*mind.state._state__MH_QH()))
+  kv_heads:int = mind.core._mi(model, (*mind.state._state__MH_KVH()))
+  layers:int  = mind.core._mi(model, (*mind.state._state__MH_LAYERS()))
+  max_seq:int = mind.core._mi(model, (*mind.state._state__MH_SEQLEN()))
+  ffn:int     = mind.core._mi(model, (*mind.state._state__MH_FFN()))
+  head_dim:int = mind.core._mi(model, (*mind.state._state__MH_HDIM()))
+  kv_off:int  = mind.core._mi(model, (*mind.state._state__MH_KVOFF()))
+  w_off:int   = mind.core._mi(model, (*mind.state._state__MH_WOFF()))
+
+  q_dim:int  = q_heads  * head_dim
+  kv_dim:int = kv_heads * head_dim
+
+  if token_id < 0 || token_id >= vocab: ret 0 - 1
+  if pos < 0 || pos >= max_seq: ret 0 - 1
+
+  ws_raw:*char
+  unsafe:
+    ws_raw = malloc((dim * 8 + ffn) * 8)
+  if ws_raw == 0:
+    ret 0 - 1
+  x:*float; x_res:*float; x_norm:*float; q:*float; k:*float; v:*float; attn_out:*float; ffn_out:*float; ffn_down:*float
+  unsafe:
+    x       = (ws_raw + dim * 8 * 0) as *float
+    x_res   = (ws_raw + dim * 8 * 1) as *float
+    x_norm  = (ws_raw + dim * 8 * 2) as *float
+    q       = (ws_raw + dim * 8 * 3) as *float
+    k       = (ws_raw + dim * 8 * 4) as *float
+    v       = (ws_raw + dim * 8 * 5) as *float
+    attn_out = (ws_raw + dim * 8 * 6) as *float
+    ffn_out  = (ws_raw + dim * 8 * 7) as *float
+    ffn_down = (ws_raw + (dim * 7 + ffn) * 8) as *float
+
+  // Token embedding lookup
+  wi:int = w_off + token_id * dim
+  j:int = 0
+  while j < dim:
+    mind.core._mw(x, j, mind.core._mf(model, wi + j))
+    j = j + 1
+
+  lw:int = w_off + vocab * dim
+
+  l:int = 0
+  while l < layers:
+    j = 0
+    while j < dim:
+      mind.core._mw(x_res, j, mind.core._mf(x, j))
+      j = j + 1
+
+    // RMSNorm 1
+    ln1_off:int = lw
+    ln1_w:*float
+    unsafe:
+      ln1_w = (model as *char + ln1_off * 8) as *float
+    mind.kernels._rmsnorm_forward(x, x_norm, ln1_w, 1, dim)
+    lw = lw + dim
+
+    // Projections Q, K, V
+    w_q_off:int = lw; lw = lw + dim * q_dim
+    w_k_off:int = lw; lw = lw + dim * kv_dim
+    w_v_off:int = lw; lw = lw + dim * kv_dim
+    w_o_off:int = lw; lw = lw + q_dim * dim
+
+    w_q:*float; w_k:*float; w_v:*float; w_o:*float
+    unsafe:
+      w_q = (model as *char + w_q_off * 8) as *float
+      w_k = (model as *char + w_k_off * 8) as *float
+      w_v = (model as *char + w_v_off * 8) as *float
+      w_o = (model as *char + w_o_off * 8) as *float
+
+    mind.kernels._matmul_forward(x_norm, w_q, q, 1, dim, q_dim)
+    mind.kernels._matmul_forward(x_norm, w_k, k, 1, dim, kv_dim)
+    mind.kernels._matmul_forward(x_norm, w_v, v, 1, dim, kv_dim)
+
+    // RoPE
+    mind.kernels._rope_forward(q, k, 1, q_heads, kv_heads, head_dim, pos)
+
+    // Write K, V to Cache
+    kv_layer_sz:int = 2 * max_seq * kv_dim
+    kv_k_off:int = kv_off + l * kv_layer_sz + pos * kv_dim
+    kv_v_off:int = kv_off + l * kv_layer_sz + max_seq * kv_dim + pos * kv_dim
+    j = 0
+    while j < kv_dim:
+      mind.core._mw(model, kv_k_off + j, mind.core._mf(k, j))
+      mind.core._mw(model, kv_v_off + j, mind.core._mf(v, j))
+      j = j + 1
+
+    // GQA Attention
+    groups:int = q_heads / kv_heads
+    scale:float = 1.0 / math.sqrt(head_dim as float)
+
+    sc_raw:*char
+    unsafe:
+      sc_raw = malloc((pos + 1) * 8)
+    if sc_raw == 0:
+      unsafe:
+        free(ws_raw)
+      ret 0 - 1
+    scores:*float
+    unsafe:
+      scores = sc_raw as *float
+
+    qhh:int = 0
+    while qhh < q_heads:
+      kvhh:int = qhh / groups
+
+      max_sc:float = 0.0 - 1.0e+09
+      p_idx:int = 0
+      while p_idx <= pos:
+        dot:float = 0.0
+        c:int = 0
+        while c < head_dim:
+          qv:float = mind.core._mf(q, qhh * head_dim + c)
+          kv:float = mind.core._mf(model, kv_off + l * kv_layer_sz + p_idx * kv_dim + kvhh * head_dim + c)
+          dot = dot + qv * kv
+          c = c + 1
+        sc:float = dot * scale
+        mind.core._mw(scores, p_idx, sc)
+        if sc > max_sc:
+          max_sc = sc
+        p_idx = p_idx + 1
+
+      exp_sum:float = 0.0
+      p_idx = 0
+      while p_idx <= pos:
+        ev:float = math.exp(mind.core._mf(scores, p_idx) - max_sc)
+        mind.core._mw(scores, p_idx, ev)
+        exp_sum = exp_sum + ev
+        p_idx = p_idx + 1
+      if exp_sum > 0.0:
+        p_idx = 0
+        while p_idx <= pos:
+          mind.core._mw(scores, p_idx, mind.core._mf(scores, p_idx) / exp_sum)
+          p_idx = p_idx + 1
+
+      c:int = 0
+      while c < head_dim:
+        acc:float = 0.0
+        p_idx = 0
+        while p_idx <= pos:
+          attn:float = mind.core._mf(scores, p_idx)
+          vv:float   = mind.core._mf(model, kv_off + l * kv_layer_sz + max_seq * kv_dim + p_idx * kv_dim + kvhh * head_dim + c)
+          acc = acc + attn * vv
+          p_idx = p_idx + 1
+        mind.core._mw(attn_out, qhh * head_dim + c, acc)
+        c = c + 1
+
+      qhh = qhh + 1
+
+    unsafe:
+      free(sc_raw)
+
+    mind.kernels._matmul_forward(attn_out, w_o, ffn_out, 1, q_dim, dim)
+
+    j = 0
+    while j < dim:
+      mind.core._mw(x, j, mind.core._mf(x_res, j) + mind.core._mf(ffn_out, j))
+      j = j + 1
+
+    j = 0
+    while j < dim:
+      mind.core._mw(x_res, j, mind.core._mf(x, j))
+      j = j + 1
+
+    // RMSNorm 2
+    ln2_off:int = lw
+    ln2_w:*float
+    unsafe:
+      ln2_w = (model as *char + ln2_off * 8) as *float
+    mind.kernels._rmsnorm_forward(x, x_norm, ln2_w, 1, dim)
+    lw = lw + dim
+
+    // SwiGLU FFN
+    w_gate_off:int = lw; lw = lw + dim * ffn
+    w_up_off:int = lw; lw = lw + dim * ffn
+    w_down_off:int = lw; lw = lw + ffn * dim
+
+    w_gate_p:*float; w_up_p:*float; w_down_p:*float
+    unsafe:
+      w_gate_p = (model as *char + w_gate_off * 8) as *float
+      w_up_p   = (model as *char + w_up_off * 8) as *float
+      w_down_p = (model as *char + w_down_off * 8) as *float
+
+    gate_raw:*char
+    up_raw:*char
+    unsafe:
+      gate_raw = malloc(ffn * 8)
+      up_raw   = malloc(ffn * 8)
+    if gate_raw == 0 || up_raw == 0:
+      unsafe:
+        if gate_raw != 0: free(gate_raw)
+        if up_raw != 0: free(up_raw)
+        free(ws_raw)
+      ret 0 - 1
+    gate:*float = gate_raw as *float
+    up:*float = up_raw as *float
+
+    mind.kernels._matmul_forward(x_norm, w_gate_p, gate, 1, dim, ffn)
+    mind.kernels._matmul_forward(x_norm, w_up_p, up, 1, dim, ffn)
+    mind.kernels._swiglu_forward(gate, up, ffn_out, 1, ffn)
+    mind.kernels._matmul_forward(ffn_out, w_down_p, ffn_down, 1, ffn, dim)
+
+    unsafe:
+      free(gate_raw)
+      free(up_raw)
+
+    j = 0
+    while j < dim:
+      mind.core._mw(x, j, mind.core._mf(x_res, j) + mind.core._mf(ffn_down, j))
+      j = j + 1
+
+    l = l + 1
+
+  // Final RMSNorm
+  final_ln_off:int = lw
+  final_ln_w:*float
+  unsafe:
+    final_ln_w = (model as *char + final_ln_off * 8) as *float
+  mind.kernels._rmsnorm_forward(x, x_norm, final_ln_w, 1, dim)
+  lw = lw + dim
+
+  // LM Head
+  lm_head_off:int = lw
+  lm_head_w:*float
+  unsafe:
+    lm_head_w = (model as *char + lm_head_off * 8) as *float
+  mind.kernels._matmul_forward(x_norm, lm_head_w, logits, 1, dim, vocab)
+
+  unsafe:
+    free(ws_raw)
+  ret 0

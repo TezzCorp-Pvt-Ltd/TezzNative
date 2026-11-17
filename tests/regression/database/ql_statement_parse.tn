@@ -1,0 +1,13 @@
+import "tezzdbql.statements"
+
+fn main() -> int:
+  unsafe:
+    statement:*TzQlStatement = tezzdbql.statements.statement_new()
+    values:[str;1]
+    values[0] = "renamed"
+    parsed:int = tezzdbql.statements.parse(statement, "UPDATE users SET name = ? WHERE id = 1", &values[0], 1)
+    if parsed == 0:
+      say "FAIL: parse state", statement[0].kind, statement[0].count, statement[0].parameter_index
+      ret 1
+    tezzdbql.statements.statement_free(statement)
+  ret 0

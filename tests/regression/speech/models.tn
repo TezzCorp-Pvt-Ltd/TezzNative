@@ -1,0 +1,84 @@
+import "stt"
+import "tts"
+
+fn main() -> int:
+  unsafe:
+    failures:int = 0
+    mel:[float;640]
+    t:int = 0
+    while t < 8:
+      m:int = 0
+      while m < 80:
+        mel[t * 80 + m] = -10.0
+        m = m + 1
+      t = t + 1
+    t = 1
+    while t <= 3:
+      mel[t * 80] = 20.0
+      t = t + 1
+    t = 5
+    while t <= 7:
+      mel[t * 80 + 1] = 20.0
+      t = t + 1
+    labels:[int;2] = [3,4]
+    handle:int = stt.speech_stt_create(16, 0, 42)
+    if handle <= 0: ret 99
+    output:[char;32]
+    if stt.speech_stt_predict(handle, &mel[0], 8, &output[0], 32) != -1: failures = failures + 1
+    initial:float = 0.0
+    final:float = 0.0
+    t = 0
+    while t < 300:
+      if stt.speech_stt_train(handle, &mel[0], 8, &labels[0], 2, 2000, &final) != 0: ret 98
+      if t == 0: initial = final
+      t = t + 1
+    if final >= initial * 0.1: failures = failures + 1
+    if stt.speech_stt_predict(handle, &mel[0], 8, &output[0], 32) != 2: failures = failures + 1
+    if strcmp(&output[0], "ab") != 0: failures = failures + 1
+    if stt.speech_stt_decoder(handle, 32, 500000, 0) != -1: failures = failures + 1
+    if stt.speech_stt_text_train(handle, &labels[0], 2) != 0: failures = failures + 1
+    if stt.speech_stt_steps(handle) != 300: failures = failures + 1
+    if stt.speech_stt_decoder(handle, 129, 500000, 0) != -1: failures = failures + 1
+    if stt.speech_stt_decoder(handle, 32, 500000, 0) != 0: failures = failures + 1
+    if stt.speech_stt_predict(handle, &mel[0], 8, &output[0], 32) != 2: failures = failures + 1
+    if strcmp(&output[0], "ab") != 0: failures = failures + 1
+    if stt.speech_stt_save(handle, "stt-model.tns") != 0: failures = failures + 1
+    engine:*SttEngine = stt.stt_new()
+    if engine == 0: ret 97
+    if stt.stt_load_model(engine, "stt-model.tns") != 0: failures = failures + 1
+    if stt.stt_training_steps(engine) != 300: failures = failures + 1
+    if stt.stt_reset_text_model(engine) != 0: failures = failures + 1
+    if stt.stt_set_decoder(engine, 32, 500000, 0) != -1: failures = failures + 1
+    if stt.stt_train_text(engine, &labels[0], 2) != 0: failures = failures + 1
+    if stt.stt_set_decoder(engine, 32, 500000, 0) != 0: failures = failures + 1
+    stt.stt_free(engine)
+    if stt.speech_stt_free(handle) != 0: failures = failures + 1
+    if stt.speech_stt_steps(handle) != -1: failures = failures + 1
+    alignment:[int;8] = [0,0,0,0,1,1,1,1]
+    speaker:*TtsEngine = tts.tts_new()
+    if speaker == 0: ret 96
+    if tts.tts_create_trainable(speaker, 16, 42) != 0: ret 95
+    if (*speaker).model_loaded != 0: failures = failures + 1
+    if tts.tts_save_model(speaker, "untrained-tts.tns") != -1: failures = failures + 1
+    t = 0
+    while t < 300:
+      if tts.tts_train_mel(speaker, &mel[0], 8, &labels[0], 2, &alignment[0], 3000, &final) != 0: ret 94
+      if t == 0: initial = final
+      t = t + 1
+    if final >= initial * 0.1: failures = failures + 1
+    if tts.tts_save_model(speaker, "tts-model.tns") != 0: failures = failures + 1
+    if tts.tts_load_model(speaker, "tts-model.tns") != 0: failures = failures + 1
+    if tts.tts_training_steps(speaker) != 300: failures = failures + 1
+    if tts.tts_speak_to_file(speaker, "speech-model-output.wav", "ab") != 0: failures = failures + 1
+    if tts.tts_last_pcm_len(speaker) < 400 || tts.tts_last_pcm_len(speaker) > 480000: failures = failures + 1
+    pcm:*int = tts.tts_last_pcm(speaker)
+    peak:int = 0
+    t = 0
+    while t < tts.tts_last_pcm_len(speaker):
+      if pcm[t] < -32768 || pcm[t] > 32767: failures = failures + 1
+      if pcm[t] != 0: peak = 1
+      t = t + 1
+    if peak == 0: failures = failures + 1
+    tts.tts_free(speaker)
+    say "NATIVE_SPEECH_MODELS", failures
+    ret failures

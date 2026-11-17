@@ -1,0 +1,203 @@
+// Shared types and module constants for tezzdb.
+import "io"
+import "time"
+
+let TEZZDB_OK:int  = 0
+
+let TEZZDB_ERR:int = 0 - 1
+
+let TEZZDB_NOT_FOUND:int = 0 - 2
+
+let TEZZDB_DUPLICATE:int = 0 - 3
+
+let TEZZDB_FULL:int = 0 - 4
+
+let TEZZDB_LOCKED:int = 0 - 5
+
+let DB_PAGE_SIZE:int    = 8192
+
+let DB_PAGE_FREE:int    = 0
+
+let DB_PAGE_HEADER:int  = 1
+
+let DB_PAGE_BTREE_INTERNAL:int = 2
+
+let DB_PAGE_BTREE_LEAF:int     = 3
+
+let DB_PAGE_OVERFLOW:int       = 4
+
+let DB_PAGE_TABLE_META:int     = 5
+
+let DB_MAGIC:int   = 1413697364  // 'TZZD'
+
+let DB_VERSION:int = 2
+
+let DB_HEADER_PAYLOAD:int = 16  // byte offset of header payload in page
+
+let DB_PAGE_PAYLOAD:int   = 16  // byte offset of data payload in page
+
+// B+ tree leaf: max keys per page = (8192 - 16) / (8 + 4 + 4) = ~511 with short vals
+// We use variable-length values: key(8 bytes) + val_len(4 bytes) + val(N bytes)
+
+let DB_LEAF_KEY_SIZE:int = 8    // int64 primary key
+
+let DB_MAX_TABLES:int    = 102 // (8192 - 20) / 80 metadata entries
+
+let DB_MAX_INLINE_VAL:int = 512 // bytes stored inline in leaf; larger → overflow page
+
+let DB_WAL_MAGIC:int = 1464421428  // 'TWLG'
+
+// ─────────────────────────────────────────────────────────────
+// Core structs
+// ─────────────────────────────────────────────────────────────
+
+struct DbPage:
+  data:*char   // raw 8192-byte page buffer (heap)
+  page_id:int
+  dirty:int    // 1 if modified and not yet flushed
+
+struct DbTableMeta:
+  name:str          // table name (owned)
+  root_page:int     // root B+ tree page id
+  next_pk:int       // next auto-increment primary key
+  row_count:int     // total rows
+  idx_page:int      // secondary index root page (0=none)
+  idx_col:str       // secondary index column name (or 0)
+
+struct TezzDb:
+  path:str          // file path (owned)
+  wal_path:str      // WAL path (owned)
+  h:*char           // FILE* to database file
+  wal_h:*char       // FILE* to WAL file
+  page_count:int    // total pages in file
+  tables:*DbTableMeta  // table metadata array
+  table_count:int
+  table_cap:int
+  cache:*DbPage     // page cache array
+  cache_cap:int
+  cache_count:int
+  in_tx:int         // 1 if inside transaction
+  tx_start_page:int // page count at transaction start
+  write_failed:int  // stop writes after an I/O failure; reopen for WAL recovery
+
+struct DbRow:
+  pk:int            // primary key
+  data:str          // JSON or raw blob (heap-allocated, caller frees)
+  data_len:int      // byte count
+
+struct DbCursor:
+  db:*TezzDb
+  table_idx:int
+  leaf_page:int     // current leaf page id
+  leaf_pos:int      // position within leaf
+  pk_min:int        // -1 = no lower bound
+  pk_max:int        // -1 = no upper bound
+  done:int          // 1 when exhausted
+  error:int         // 1 after a malformed page or allocation failure
+  visited_pages:int // bound sibling traversal on malformed/cyclic page chains
+
+// ─────────────────────────────────────────────────────────────
+// Internal helpers
+// ─────────────────────────────────────────────────────────────
+
+let DB_TABLE_ENTRY_SIZE:int = 80
+
+let DB_LEAF_ENTRY_MIN:int = 12  // key(8) + val_len(4)
+
+let DB_WAL_ENTRY_SIZE:int = 8200   // 4+4+8192
+
+@inline
+fn _get_TEZZDB_OK() -> int:
+  ret TEZZDB_OK
+
+@inline
+fn _get_TEZZDB_ERR() -> int:
+  ret TEZZDB_ERR
+
+@inline
+fn _get_TEZZDB_NOT_FOUND() -> int:
+  ret TEZZDB_NOT_FOUND
+
+@inline
+fn _get_TEZZDB_DUPLICATE() -> int:
+  ret TEZZDB_DUPLICATE
+
+@inline
+fn _get_TEZZDB_FULL() -> int:
+  ret TEZZDB_FULL
+
+@inline
+fn _get_TEZZDB_LOCKED() -> int:
+  ret TEZZDB_LOCKED
+
+@inline
+fn _get_DB_PAGE_SIZE() -> int:
+  ret DB_PAGE_SIZE
+
+@inline
+fn _get_DB_PAGE_FREE() -> int:
+  ret DB_PAGE_FREE
+
+@inline
+fn _get_DB_PAGE_HEADER() -> int:
+  ret DB_PAGE_HEADER
+
+@inline
+fn _get_DB_PAGE_BTREE_INTERNAL() -> int:
+  ret DB_PAGE_BTREE_INTERNAL
+
+@inline
+fn _get_DB_PAGE_BTREE_LEAF() -> int:
+  ret DB_PAGE_BTREE_LEAF
+
+@inline
+fn _get_DB_PAGE_OVERFLOW() -> int:
+  ret DB_PAGE_OVERFLOW
+
+@inline
+fn _get_DB_PAGE_TABLE_META() -> int:
+  ret DB_PAGE_TABLE_META
+
+@inline
+fn _get_DB_MAGIC() -> int:
+  ret DB_MAGIC
+
+@inline
+fn _get_DB_VERSION() -> int:
+  ret DB_VERSION
+
+@inline
+fn _get_DB_HEADER_PAYLOAD() -> int:
+  ret DB_HEADER_PAYLOAD
+
+@inline
+fn _get_DB_PAGE_PAYLOAD() -> int:
+  ret DB_PAGE_PAYLOAD
+
+@inline
+fn _get_DB_LEAF_KEY_SIZE() -> int:
+  ret DB_LEAF_KEY_SIZE
+
+@inline
+fn _get_DB_MAX_TABLES() -> int:
+  ret DB_MAX_TABLES
+
+@inline
+fn _get_DB_MAX_INLINE_VAL() -> int:
+  ret DB_MAX_INLINE_VAL
+
+@inline
+fn _get_DB_WAL_MAGIC() -> int:
+  ret DB_WAL_MAGIC
+
+@inline
+fn _get_DB_TABLE_ENTRY_SIZE() -> int:
+  ret DB_TABLE_ENTRY_SIZE
+
+@inline
+fn _get_DB_LEAF_ENTRY_MIN() -> int:
+  ret DB_LEAF_ENTRY_MIN
+
+@inline
+fn _get_DB_WAL_ENTRY_SIZE() -> int:
+  ret DB_WAL_ENTRY_SIZE

@@ -1,0 +1,28 @@
+import "tzgui"
+
+fn main() -> int:
+  unsafe:
+    tree:TzWidgetTree
+    spec:TzWidgetSpec
+    if tzgui.tree_init(&tree, 340, 560) != 0: ret 1
+    spec.parent = 0
+    spec.kind = 2
+    spec.x = 0
+    spec.y = 0
+    spec.w = 120
+    spec.h = 40
+    spec.z = 0
+    spec.visible = 1
+    spec.bg = 0
+    spec.fg = 0xFFFFFF
+    spec.text = 0 as str
+    id:int = tzgui.widget_add_text(&tree, &spec, "start")
+    if id <= 0: ret 2
+    if tzgui.tree_widget_count(&tree) != 1: ret 3
+    tzgui.widget_set_text_copy(&tree, id, "updated")
+    if len(tree.widgets[0].text) != 7: ret 4
+    tzgui.widget_animate_bounds(&tree, id, 100, 50, 200, 80, 100, 0)
+    if tzgui.tree_animate_tick(&tree, 100) != 1: ret 5
+    if tree.widgets[0].x != 100 || tree.widgets[0].w != 200: ret 6
+    tzgui.tree_deinit(&tree)
+  ret 0

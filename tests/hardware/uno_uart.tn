@@ -1,0 +1,19 @@
+import "arduino.uno"
+
+fn main() -> int:
+  if arduino.uno.uart_begin(9600) != 0: ret 1
+  // An empty transmit queue must flush without waiting for a nonexistent byte.
+  if arduino.uno.uart_flush() != 0: ret 2
+  if arduino.uno.uart_write_byte(85) != 1: ret 3
+  if arduino.uno.uart_write_byte(78) != 1: ret 4
+  if arduino.uno.uart_write_byte(79) != 1: ret 5
+  if arduino.uno.uart_write_byte(10) != 1: ret 6
+  start:int = arduino.uno.micros()
+  while arduino.uno.uart_available() == 0:
+    if arduino.uno.micros() - start > 50000: ret 7
+  if arduino.uno.uart_read_byte() != 90: ret 8
+  if arduino.uno.uart_read_byte() != -1: ret 9
+  if arduino.uno.uart_write_byte(256) != -1: ret 10
+  if arduino.uno.uart_begin(0) != -1: ret 11
+  if arduino.uno.uart_flush() != 0: ret 12
+  ret 0

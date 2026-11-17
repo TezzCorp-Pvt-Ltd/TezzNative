@@ -1,32 +1,8 @@
-// arduino module — TezzNative 2.0 Arduino Hardware Abstraction Layer
-//
-// Enables writing native TezzNative programs for Arduino AVR boards.
-// Compiles to AVR machine code via TezzNative's cross-compile target:
-//   tezzc buildexe --target=avr-atmega328p main.tn main.hex
-//
-// Supported boards (via target flag):
-//   avr-atmega328p  — Arduino Uno, Nano, Mini
-//   avr-atmega2560  — Arduino Mega
-//   avr-attiny85    — Digispark, ATtiny85
-//
-// All timing functions use AVR hardware timers (no floating-point).
-// All I/O maps directly to AVR port registers (PORTB, PORTC, PORTD).
-//
-// Usage:
-//   import "arduino"
-//   fn setup() -> int:
-//     arduino.pin_mode(13, arduino.OUTPUT)
-//     ret 0
-//   fn loop() -> int:
-//     arduino.digital_write(13, arduino.HIGH)
-//     arduino.delay(500)
-//     arduino.digital_write(13, arduino.LOW)
-//     arduino.delay(500)
-//     ret 0
-//   fn main() -> int:
-//     setup()
-//     while 1: loop()
-//     ret 0
+// package-file arduino/uno.tn 6494E2A6
+// tezz-unavailable-module: arduino
+// Legacy Arduino API source; these broad wrappers remain unimplemented.
+// Use arduino.uno with --target arduino-uno --freestanding for verified drivers.
+// Importing this distributed module is an explicit compile-time error.
 
 // ─────────────────────────────────────────────────────────────
 // Constants

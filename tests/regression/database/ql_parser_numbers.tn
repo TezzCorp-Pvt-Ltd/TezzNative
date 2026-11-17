@@ -1,0 +1,17 @@
+import "tezzdbql"
+
+fn main() -> int:
+  unsafe:
+    minimum:int = 0 - 9223372036854775807 - 1
+    value:int = 0
+    ending:int = 0
+    if tezzdbql._ql_read_number("-9223372036854775808", 0, &value, &ending) != 1: ret 1
+    if value != minimum || ending != 20: ret 2
+    if tezzdbql._ql_read_number("9223372036854775807", 0, &value, &ending) != 1: ret 3
+    if value != 9223372036854775807: ret 4
+    if tezzdbql._ql_read_number("9223372036854775808", 0, &value, &ending) != 0: ret 5
+    if tezzdbql._ql_read_number("-9223372036854775809", 0, &value, &ending) != 0: ret 6
+    text:str = tezzdbql._ql_itoa(minimum)
+    if strcmp(text, "-9223372036854775808") != 0: ret 7
+    free(text)
+  ret 0

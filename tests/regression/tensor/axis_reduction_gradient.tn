@@ -1,0 +1,22 @@
+import "tensor"
+
+fn main() -> int:
+  tensor.tape_init()
+  x:Tensor = tensor.tensor_ones_2d(2, 3)
+  x = tensor.tensor_require_grad(x)
+  reduced:Tensor = tensor.tensor_sum(x, 1, 0)
+  loss:Tensor = tensor.tensor_mean_all_t(reduced)
+  tensor.tensor_backward(loss)
+  failed:int = 0
+  i:int = 0
+  while i < 6:
+    if tensor.tensor_grad_item(x, i) != 0.5:
+      failed = 1
+    i = i + 1
+  tensor.tape_reset()
+  tensor.tensor_free_tensor(loss)
+  tensor.tensor_free_tensor(reduced)
+  tensor.tensor_free_tensor(x)
+  if failed != 0:
+    say "FAIL: axis reduction gradients"
+  ret failed

@@ -1,0 +1,53 @@
+import "tnx"
+import "math"
+
+fn main() -> int:
+  value:*TnxValue = tnx.decode("1.25")
+  if value == 0: ret 1
+  n:float = tnx.tnx_as_float(value)
+  tnx.release(value)
+  if n != 1.25:
+    say "FAIL: TNX fractional parse got ", n
+    ret 2
+  value = tnx.decode("-2.5e2")
+  if value == 0: ret 3
+  n = tnx.tnx_as_float(value)
+  tnx.release(value)
+  if n != 0.0 - 250.0: ret 4
+  value = tnx.decode("100e-310")
+  if value == 0: ret 5
+  n = tnx.tnx_as_float(value)
+  tnx.release(value)
+  if n <= 0.0 || math.absf(n / 1.0e-308 - 1.0) > 0.00000001:
+    say "FAIL: representable subnormal scaling"
+    ret 6
+  value = tnx.decode("100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e-320")
+  if value == 0: ret 7
+  n = tnx.tnx_as_float(value)
+  tnx.release(value)
+  if n < 0.99999999 || n > 1.00000001:
+    say "FAIL: mantissa overflow before compensating exponent"
+    ret 8
+  value = tnx.decode("1e9999999999999999999999999999999999999999999999999999999999999")
+  if value != 0: ret 10
+  value = tnx.decode("5e-324")
+  if value == 0: ret 11
+  n = tnx.tnx_as_float(value)
+  tnx.release(value)
+  if n != 5.0e-324: ret 12
+  value = tnx.decode("1.7976931348623157e308")
+  if value == 0: ret 13
+  n = tnx.tnx_as_float(value)
+  tnx.release(value)
+  if n != n || n == 1.0 / 0.0 || math.absf(n / 1.7976931348623157e308 - 1.0) > 0.00000001: ret 14
+  value = tnx.decode("-0.0")
+  if value == 0: ret 15
+  n = tnx.tnx_as_float(value)
+  tnx.release(value)
+  if 1.0 / n != 0.0 - (1.0 / 0.0): ret 16
+  value = tnx.decode("1.00000000000000033306690738754696212708950042724609375")
+  if value == 0: ret 17
+  n = tnx.tnx_as_float(value)
+  tnx.release(value)
+  if n != 1.0000000000000004: ret 18
+  ret 0

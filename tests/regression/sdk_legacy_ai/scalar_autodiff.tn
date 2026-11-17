@@ -1,0 +1,19 @@
+import "autodiff"
+import "math"
+
+fn main() -> int:
+  unsafe:
+    x:*Node = autodiff.node(1.0)
+    y:*Node = autodiff.node_sigmoid(x)
+    autodiff.backward(y, 1.0)
+    expected:float = 1.0 / (1.0 + math.exp(0.0 - 1.0))
+    failed:int = 0
+    if math.absf(y.val - expected) > 0.000001 || math.absf(x.grad - expected * (1.0 - expected)) > 0.000001: failed = 1
+    autodiff.free_node(y)
+    shared:*Node = autodiff.node(2.0)
+    square:*Node = autodiff.node_mul(shared, shared)
+    autodiff.backward(square, 1.0)
+    if shared.grad != 4.0: failed = 1
+    if autodiff.free_node(square) != 0: failed = 1
+    if failed != 0: say "FAIL: scalar sigmoid derivative or shared-node lifetime"
+    ret failed

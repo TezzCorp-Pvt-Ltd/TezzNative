@@ -1,50 +1,61 @@
-/* lib/result.tn - Phase 9: Result(T) stdlib helpers
- * Convenience wrappers for the Result(T) types produced by the compiler.
- * Usage: import "lib/result" in your .tn source file. */
+// Concrete result types; the compiler does not support Result(T) generics.
+// Error strings are borrowed and must outlive the result.
+import "sys"
 
-/* --- Integer Result helpers --- */
+struct ResultInt:
+  ok:int
+  val:int
+  err:str
 
-/* Check if a Result(int) carries a success value. Returns 1 or 0. */
-fn result_ok(r: Result(int)) -> int:
+struct ResultF64:
+  ok:int
+  val:f64
+  err:str
+
+fn ok(value:int) -> ResultInt:
+  ret ResultInt { ok: 1, val: value, err: "" }
+
+fn err(message:str) -> ResultInt:
+  ret ResultInt { ok: 0, val: 0, err: message }
+
+fn ok_f64(value:f64) -> ResultF64:
+  ret ResultF64 { ok: 1, val: value, err: "" }
+
+fn err_f64(message:str) -> ResultF64:
+  ret ResultF64 { ok: 0, val: 0.0, err: message }
+
+fn result_ok(r:ResultInt) -> int:
   ret r.ok
 
-/* Unwrap the int value. Call result_ok() first to avoid UB. */
-fn result_val(r: Result(int)) -> int:
+fn result_val(r:ResultInt) -> int:
   ret r.val
 
-/* Return the error string (or empty string on Ok). */
-fn result_err(r: Result(int)) -> str:
+fn result_err(r:ResultInt) -> str:
   if r.ok == 0:
     ret r.err
   ret ""
 
-/* Unwrap or die: crashes with msg if the Result is an Err. */
-fn result_expect(r: Result(int), msg: str) -> int:
+fn result_expect(r:ResultInt, message:str) -> int:
   if r.ok == 0:
-    say msg
+    say message
     say r.err
-    ret -1
+    sys.sys_exit(1)
   ret r.val
 
-/* --- Float Result helpers --- */
-
-fn result_ok_f64(r: Result(f64)) -> int:
+fn result_ok_f64(r:ResultF64) -> int:
   ret r.ok
 
-fn result_val_f64(r: Result(f64)) -> f64:
+fn result_val_f64(r:ResultF64) -> f64:
   ret r.val
 
-fn result_err_f64(r: Result(f64)) -> str:
+fn result_err_f64(r:ResultF64) -> str:
   if r.ok == 0:
     ret r.err
   ret ""
 
-/* --- Chaining helpers --- */
-
-/* Map: apply fn to Ok(v), passthrough on Err.
- * Usage: let r2 = result_map(r, |x| x * 2) */
-fn result_map(r: Result(int), f: *void) -> Result(int):
+fn result_map(r:ResultInt, f:fn(int)->int) -> ResultInt:
   if r.ok == 0:
     ret r
-  /* f is a fn(int)->int pointer; call via CALLPTR */
-  ret Ok(r.val)
+  if f == 0 as fn(int)->int:
+    ret err("result_map requires a function")
+  ret ok(f(r.val))

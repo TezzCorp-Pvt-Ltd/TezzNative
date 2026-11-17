@@ -1,0 +1,69 @@
+// tnx implementation: aliases.
+import "io"
+import "tnx.state"
+import "tnx.binary"
+import "tnx.core"
+import "tnx.text"
+
+fn obj() -> *TnxValue:
+  ret tnx.core.tnx_obj()
+
+fn arr() -> *TnxValue:
+  ret tnx.core.tnx_arr()
+
+fn arr_push(a:*TnxValue, v:*TnxValue) -> int:
+  ret tnx.core.tnx_arr_push(a, v)
+
+fn arr_get(a:*TnxValue, idx:int) -> *TnxValue:
+  ret tnx.core.tnx_arr_get(a, idx)
+
+fn obj_set(o:*TnxValue, key:str, v:*TnxValue) -> int:
+  ret tnx.core.tnx_obj_set(o, key, v)
+
+fn obj_get(o:*TnxValue, key:str) -> *TnxValue:
+  ret tnx.core.tnx_obj_get(o, key)
+
+fn as_int(v:*TnxValue) -> int:
+  ret tnx.core.tnx_as_int(v)
+
+fn as_float(v:*TnxValue) -> float:
+  ret tnx.core.tnx_as_float(v)
+
+fn as_str(v:*TnxValue) -> str:
+  ret tnx.core.tnx_as_str(v)
+
+fn decode(s:str) -> *TnxValue:
+  ret tnx.text.tnx_parse(s)
+
+fn validate(s:str) -> int:
+  ret tnx.text.tnx_validate(s)
+
+fn stringify(v:*TnxValue) -> str:
+  ret tnx.text.tnx_stringify(v)
+
+fn load(path:str) -> *TnxValue:
+  ret tnx.text.tnx_read_file(path)
+
+fn save(path:str, v:*TnxValue) -> int:
+  ret tnx.text.tnx_write_file(path, v)
+
+fn release(v:*TnxValue) -> int:
+  ret tnx.core.tnx_free(v)
+
+fn encode_b(v:*TnxValue) -> *TnxBytes:
+  ret tnx.binary.tnx_encode_b(v)
+
+fn free_bytes(b:*TnxBytes) -> int:
+  ret tnx.binary.tnx_free_bytes(b)
+
+fn decode_b(buf:*char, len:int) -> *TnxValue:
+  ret tnx.binary.tnx_parse_b(buf, len)
+
+fn validate_b(buf:*char, len:int) -> int:
+  ret tnx.binary.tnx_validate_b(buf, len)
+
+fn load_b(path:str) -> *TnxValue:
+  ret tnx.binary.tnx_read_file_b(path)
+
+fn save_b(path:str, v:*TnxValue) -> int:
+  ret tnx.binary.tnx_write_file_b(path, v)

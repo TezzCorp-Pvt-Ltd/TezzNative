@@ -1,0 +1,11 @@
+import "nn"
+import "math"
+
+fn main() -> int:
+  logits:[float;2] = [0.0, 0.0]
+  unsafe:
+    loss:float = nn.nn_cross_entropy(&logits[0], 1, 0 as *float, 2)
+    if math.absf(loss - 0.6931471805599453) > 1.0e-12:
+      say "FAIL loss without gradient buffer"
+      ret 1
+  ret 0

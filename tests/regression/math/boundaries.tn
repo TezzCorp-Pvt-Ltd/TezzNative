@@ -1,0 +1,50 @@
+import "math"
+
+fn is_nan(x:float) -> int:
+  ret x != x
+
+fn main() -> int:
+  let failures:int = 0
+  let inf:float = math.INF()
+  let negative_inf:float = 0.0 - inf
+  let zero:float = 0.0
+  let nan:float = zero / zero
+  if math.log(inf) != inf || math.sqrt(inf) != inf || math.exp(inf) != inf:
+    say "FAIL positive infinity"
+    failures = failures + 1
+  if math.exp(negative_inf) != 0.0 || math.exp(-746.0) != 0.0:
+    say "FAIL exponential underflow"
+    failures = failures + 1
+  if math.exp(710.0) != inf:
+    say "FAIL exponential overflow"
+    failures = failures + 1
+  if math.floor(inf) != inf || math.ceil(negative_inf) != negative_inf || math.trunc(inf) != inf:
+    say "FAIL infinite rounding"
+    failures = failures + 1
+  if is_nan(math.floor(nan)) == 0 || is_nan(math.ceil(nan)) == 0 || is_nan(math.trunc(nan)) == 0:
+    say "FAIL NaN rounding"
+    failures = failures + 1
+  if is_nan(math.sqrt(nan)) == 0 || is_nan(math.log(nan)) == 0 || is_nan(math.exp(nan)) == 0:
+    say "FAIL NaN functions"
+    failures = failures + 1
+  if math.sqrt(-1.0) != 0.0 || math.log(0.0) != -1.0e15 || math.log(-1.0) != -1.0e15:
+    say "FAIL existing invalid-domain behavior"
+    failures = failures + 1
+  if math.pow(-2.0, 0.5) != 0.0 || math.pow(0.0, -1.0) != 1.0 || math.pow(nan, 0.0) != 1.0:
+    say "FAIL existing power boundaries"
+    failures = failures + 1
+  if math.absf(math.atan(inf) - math.PI() * 0.5) > 1.0e-15:
+    say "FAIL atan infinity"
+    failures = failures + 1
+  if math.absf(math.atan2(inf, inf) - math.PI() * 0.25) > 1.0e-15:
+    say "FAIL atan2 infinity quadrant"
+    failures = failures + 1
+  if math.absf(math.log(4.9406564584124654e-324) + 744.4400719213812) > 1.0e-12:
+    say "FAIL minimum subnormal logarithm"
+    failures = failures + 1
+  let tiny_sqrt:float = math.sqrt(4.9406564584124654e-324)
+  if math.absf(tiny_sqrt / 2.2227587494850775e-162 - 1.0) > 1.0e-14:
+    say "FAIL minimum subnormal square root"
+    failures = failures + 1
+  say "ASSERTION_FAILURES", failures
+  ret failures

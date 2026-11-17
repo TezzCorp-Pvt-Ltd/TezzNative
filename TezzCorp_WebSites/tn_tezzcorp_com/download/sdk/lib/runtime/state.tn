@@ -1,0 +1,42 @@
+// Shared declarations and the single owner of module state.
+
+let _RT_ENV_MAX:int = 64
+
+let _RT_ENV_KEY_MAX:int = 128
+
+let _RT_ENV_VAL_MAX:int = 4096
+
+struct _RtEnvEntry:
+  key:*char
+  value:*char
+  used:int
+
+let _rt_env_table:*_RtEnvEntry = 0 as *_RtEnvEntry
+
+let _rt_env_count:int = 0
+
+let _rt_env_cap:int = 0
+
+fn _state__RT_ENV_MAX() -> *int:
+  unsafe:
+    ret &_RT_ENV_MAX
+
+fn _state__RT_ENV_KEY_MAX() -> *int:
+  unsafe:
+    ret &_RT_ENV_KEY_MAX
+
+fn _state__RT_ENV_VAL_MAX() -> *int:
+  unsafe:
+    ret &_RT_ENV_VAL_MAX
+
+fn _state__rt_env_table() -> **_RtEnvEntry:
+  unsafe:
+    ret &_rt_env_table
+
+fn _state__rt_env_count() -> *int:
+  unsafe:
+    ret &_rt_env_count
+
+fn _state__rt_env_cap() -> *int:
+  unsafe:
+    ret &_rt_env_cap

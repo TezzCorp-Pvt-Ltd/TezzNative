@@ -1,0 +1,26 @@
+import "tensor"
+import "math"
+
+fn main() -> int:
+  tensor.tape_init()
+  logits:Tensor = tensor.tensor_zeros_1d(2)
+  logits = tensor.tensor_require_grad(logits)
+  target:Tensor = tensor.tensor_zeros_1d(2)
+  tensor.tensor_set1(target, 0, 1.0)
+  target = tensor.tensor_require_grad(target)
+  loss:Tensor = tensor.tensor_cross_entropy_loss(logits, target)
+  tensor.tensor_backward(loss)
+  failed:int = 0
+  if math.absf(tensor.tensor_get1(loss, 0) - 0.6931471805599453) > 0.000001:
+    failed = 1
+  if tensor.tensor_grad_item(logits, 0) != 0.0 - 0.5 || tensor.tensor_grad_item(logits, 1) != 0.5:
+    failed = 1
+  if math.absf(tensor.tensor_grad_item(target, 0) - 0.6931471805599453) > 0.000001 || math.absf(tensor.tensor_grad_item(target, 1) - 0.6931471805599453) > 0.000001:
+    failed = 1
+  tensor.tape_reset()
+  tensor.tensor_free_tensor(loss)
+  tensor.tensor_free_tensor(target)
+  tensor.tensor_free_tensor(logits)
+  if failed != 0:
+    say "FAIL: vector cross-entropy reduction and target gradients"
+  ret failed

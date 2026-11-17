@@ -1,0 +1,31 @@
+import "tensor"
+
+fn main() -> int:
+  tensor.tape_init()
+  x:Tensor = tensor.tensor_zeros_1d(5)
+  tensor.tensor_set1(x, 0, 0.0 - 2.0)
+  tensor.tensor_set1(x, 1, 0.0 - 1.0)
+  tensor.tensor_set1(x, 3, 1.0)
+  tensor.tensor_set1(x, 4, 2.0)
+  x = tensor.tensor_require_grad(x)
+  y:Tensor = tensor.tensor_clamp(x, 0.0 - 1.0, 1.0)
+  loss:Tensor = tensor.tensor_sum_all_t(y)
+  status:int = tensor.tensor_backward(loss)
+  failed:int = 0
+  i:int = 0
+  while i < 5:
+    expected:float = 1.0
+    if i == 0 || i == 4:
+      expected = 0.0
+    if tensor.tensor_grad_item(x, i) != expected:
+      failed = 1
+    i = i + 1
+  if status != 0 || tensor.tensor_get1(y, 0) != 0.0 - 1.0 || tensor.tensor_get1(y, 4) != 1.0:
+    failed = 1
+  tensor.tape_reset()
+  tensor.tensor_free_tensor(loss)
+  tensor.tensor_free_tensor(y)
+  tensor.tensor_free_tensor(x)
+  if failed != 0:
+    say "FAIL: clamp gradient must mask saturated values and retain boundary values"
+  ret failed

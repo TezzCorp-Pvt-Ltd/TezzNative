@@ -1,0 +1,58 @@
+name: CUDA physical device verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      architecture:
+        description: Explicit CUDA SM target for the runner
+        required: true
+        default: sm_75
+        type: string
+
+permissions:
+  contents: read
+
+# Requires an explicitly provisioned NVIDIA runner. Hosted CPU jobs cannot
+# substitute for this gate, and missing toolkit/device is a failure.
+jobs:
+  cuda-device:
+    runs-on: [self-hosted, linux, x64, nvidia-gpu]
+    timeout-minutes: 35
+    env:
+      CUDA_ARCH: ${{ inputs.architecture }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install isolated pinned CUDA toolchain
+        run: python3 tests/regression/cuda/install_toolchain.py --prefix build/deps/cuda
+      - name: Build checked-out compiler and CPU runtime
+        run: python3 tests/run.py --build --suite core --backend bc --out build/verification/cuda-compiler
+      - name: Build and execute complete CUDA exports through both ABIs
+        run: |
+          set -euo pipefail
+          python3 tests/regression/cuda/check_device.py --cuda-root build/deps/cuda --arch "$CUDA_ARCH" --out build/verification/cuda-host
+          python3 tests/regression/cuda/check_device.py --cuda-root build/deps/cuda --arch "$CUDA_ARCH" --native-abi --out build/verification/cuda-native
+      - name: Check real device memory accesses
+        run: |
+          build/deps/cuda/bin/compute-sanitizer --tool memcheck --leak-check full --error-exitcode 99 --log-file build/verification/cuda-memcheck.log \
+            python3 tests/regression/cuda/check_device.py --cuda-root build/deps/cuda --arch "$CUDA_ARCH" \
+            --library build/verification/cuda-host/libtzgpu.so --out build/verification/cuda-memcheck
+      - name: Verify temporal convolution gradients on CPU and CUDA
+        run: python3 tests/regression/temporal/check_conv1d.py --cpu-library build/verification/cuda-compiler/compiler/libtzcpu-native.so --gpu-library build/verification/cuda-native/libtzgpu.so --native-abi --out build/verification/temporal-convolution-cuda
+      - name: Verify language integration, training and error propagation
+        run: |
+          set -euo pipefail
+          for fixture in language_device nn_training_device nn_errors_device conv1d_gpu stt_cuda; do
+            python3 tests/regression/cuda/check_language.py --tezzc build/verification/cuda-compiler/compiler/tezzc \
+              --library build/verification/cuda-native/libtzgpu.so --fixture "$fixture" --out "build/verification/cuda-$fixture"
+          done
+      - name: Verify asynchronous failure propagation in an isolated process
+        run: python3 tests/regression/cuda/check_async_failure.py --cuda-root build/deps/cuda --arch "$CUDA_ARCH" --library build/verification/cuda-host/libtzgpu.so --out build/verification/cuda-async
+      - name: Retain device evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cuda-physical-device
+          path: |
+            build/verification/**/results.json
+            build/verification/cuda-memcheck.log
+          if-no-files-found: error

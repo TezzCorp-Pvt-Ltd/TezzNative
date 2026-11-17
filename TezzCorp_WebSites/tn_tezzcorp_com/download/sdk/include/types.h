@@ -43,6 +43,7 @@ struct Type {
   int size;
   int align;
   int incomplete; // for forward-declared structs
+  int layout_state; // transient DFS mark while finalizing aggregate value layouts
   SrcLoc decl_loc;
 };
 
@@ -78,6 +79,7 @@ typedef struct {
 
 void tenv_init(TypeEnv* E);
 void tenv_free(TypeEnv* E);
+void tenv_finalize_layouts(TypeEnv* E);
 
 Type* type_ptr(TypeEnv* E, Type* elem);
 Type* type_array(TypeEnv* E, Type* elem, long long n);

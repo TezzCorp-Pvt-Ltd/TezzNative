@@ -1,0 +1,26 @@
+import "tensor"
+
+fn main() -> int:
+  tensor.tape_init()
+  matrix:Tensor = tensor.tensor_ones_2d(2, 3)
+  vector:Tensor = tensor.tensor_ones_1d(3)
+  vector = tensor.tensor_require_grad(vector)
+  sum:Tensor = tensor.tensor_add(matrix, vector)
+  loss:Tensor = tensor.tensor_sum_all_t(sum)
+  tensor.tensor_backward(loss)
+  failed:int = 0
+  if sum.ndim != 2 || sum.shape0 != 2 || sum.shape1 != 3:
+    failed = 1
+  i:int = 0
+  while i < 3:
+    if tensor.tensor_grad_item(vector, i) != 2.0:
+      failed = 1
+    i = i + 1
+  tensor.tape_reset()
+  tensor.tensor_free_tensor(loss)
+  tensor.tensor_free_tensor(sum)
+  tensor.tensor_free_tensor(vector)
+  tensor.tensor_free_tensor(matrix)
+  if failed != 0:
+    say "FAIL: vector broadcasting must align trailing dimensions and collapse gradients"
+  ret failed

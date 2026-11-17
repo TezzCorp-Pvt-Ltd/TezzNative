@@ -1,0 +1,7 @@
+import "./externs/nested.tn"
+
+fn measure(text:str) -> int:
+  ret externs.nested.measure(text)
+
+fn same(left:str, right:str) -> int:
+  ret externs.nested.same(left, right)

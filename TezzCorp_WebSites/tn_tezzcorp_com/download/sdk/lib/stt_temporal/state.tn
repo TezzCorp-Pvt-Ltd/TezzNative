@@ -1,0 +1,185 @@
+import "math"
+import "tzcpu"
+import "tzgpu"
+
+struct TemporalStt:
+  hidden:i64
+  device:i64
+  count:i64
+  step:i64
+  seed:i64
+  params:i64
+  gradient:i64
+  moment:i64
+  variance:i64
+  beta1_power:f64
+  beta2_power:f64
+  w0:i64
+  b0:i64
+  w1:i64
+  b1:i64
+  w2:i64
+  b2:i64
+  w3:i64
+  b3:i64
+
+fn finite(value:f64):
+  if value != value || value > 1.7976931348623157e+308 || value < -1.7976931348623157e+308:
+    ret 0
+  ret 1
+
+fn buffer_new(count:i64, device:i64):
+  if count < 1 || count > 12000000:
+    ret 0
+  if device == 0:
+    ret tzcpu.tz_cpu_zeros(count)
+  if device != 1:
+    ret 0
+  let data = tzgpu.tz_cuda_malloc(count * 4)
+  if data == 0:
+    ret 0
+  if tzgpu.tz_gpu_fill_f32(data, count, 0) != 0:
+    tzgpu.tz_cuda_free(data)
+    ret 0
+  ret data
+
+fn buffer_free(data:i64, device:i64):
+  if data == 0:
+    ret 0
+  if device == 0:
+    ret tzcpu.tz_cpu_free(data)
+  if device == 1:
+    ret tzgpu.tz_cuda_free(data)
+  ret -1
+
+fn to_host(destination:i64, source:i64, count:i64, device:i64):
+  if destination == 0 || source == 0 || count < 1 || count > 12000000:
+    ret -1
+  if device == 0:
+    ret tzcpu.tz_cpu_memcpy(destination, source, count * 4)
+  if device == 1:
+    ret tzgpu.tz_cuda_memcpy(destination, source, count * 4, 2)
+  ret -1
+
+fn from_host(destination:i64, source:i64, count:i64, device:i64):
+  if destination == 0 || source == 0 || count < 1 || count > 12000000:
+    ret -1
+  if device == 0:
+    ret tzcpu.tz_cpu_memcpy(destination, source, count * 4)
+  if device == 1:
+    ret tzgpu.tz_cuda_memcpy(destination, source, count * 4, 1)
+  ret -1
+
+fn clear(data:i64, count:i64, device:i64):
+  if data == 0 || count < 1 || count > 12000000:
+    ret -1
+  if device == 0:
+    ret tzcpu.tz_cpu_fill_f32(data, count, 0)
+  if device == 1:
+    ret tzgpu.tz_gpu_fill_f32(data, count, 0)
+  ret -1
+
+fn offset(data:i64, index:i64):
+  ret data + index * 4
+
+fn parameter_count(hidden:i64):
+  if hidden < 8 || hidden > 256:
+    ret 0
+  ret 80 * hidden * 5 + hidden * hidden * 10 + hidden * 29 + hidden * 3 + 29
+
+fn valid(model:*TemporalStt):
+  if model == 0:
+    ret 0
+  unsafe:
+    if (*model).hidden < 8 || (*model).hidden > 256 || (*model).device < 0 || (*model).device > 1:
+      ret 0
+    if (*model).count != parameter_count((*model).hidden) || (*model).step < 0 || (*model).step > 1000000000:
+      ret 0
+    if (*model).params == 0 || (*model).gradient == 0 || (*model).moment == 0 || (*model).variance == 0:
+      ret 0
+  ret 1
+
+fn destroy(model:*TemporalStt):
+  if model == 0:
+    ret 0
+  unsafe:
+    buffer_free((*model).params, (*model).device)
+    buffer_free((*model).gradient, (*model).device)
+    buffer_free((*model).moment, (*model).device)
+    buffer_free((*model).variance, (*model).device)
+    free(model as *u8)
+  ret 0
+
+fn create(hidden:i64, device:i64, seed:i64) -> *TemporalStt:
+  if parameter_count(hidden) == 0 || device < 0 || device > 1 || seed < 0 || seed > 4294967295:
+    ret 0 as *TemporalStt
+  if device == 1 && tzgpu.tz_cuda_device_count() <= 0:
+    ret 0 as *TemporalStt
+  unsafe:
+    let model:*TemporalStt = malloc(sizeof(TemporalStt)) as *TemporalStt
+    if model == 0:
+      ret model
+    let bytes:*u8 = model as *u8
+    let i = 0
+    while i < sizeof(TemporalStt):
+      bytes[i] = 0 as u8
+      i = i + 1
+    (*model).hidden = hidden
+    (*model).device = device
+    (*model).seed = seed
+    (*model).count = parameter_count(hidden)
+    (*model).beta1_power = 1
+    (*model).beta2_power = 1
+    (*model).w0 = 0
+    (*model).b0 = 80 * hidden * 5
+    (*model).w1 = (*model).b0 + hidden
+    (*model).b1 = (*model).w1 + hidden * hidden * 5
+    (*model).w2 = (*model).b1 + hidden
+    (*model).b2 = (*model).w2 + hidden * hidden * 5
+    (*model).w3 = (*model).b2 + hidden
+    (*model).b3 = (*model).w3 + hidden * 29
+    (*model).params = buffer_new((*model).count, device)
+    (*model).gradient = buffer_new((*model).count, device)
+    (*model).moment = buffer_new((*model).count, device)
+    (*model).variance = buffer_new((*model).count, device)
+    let host = tzcpu.tz_cpu_zeros((*model).count)
+    if valid(model) == 0 || host == 0:
+      tzcpu.tz_cpu_free(host)
+      destroy(model)
+      ret 0 as *TemporalStt
+    let data:*f32 = host as *f32
+    let random = seed
+    let layer = 0
+    while layer < 4:
+      let start = (*model).w0
+      let end = (*model).b0
+      let fan = 80 * 5
+      if layer == 1:
+        start = (*model).w1
+        end = (*model).b1
+        fan = hidden * 5
+      else:
+        if layer == 2:
+          start = (*model).w2
+          end = (*model).b2
+          fan = hidden * 5
+        else:
+          if layer == 3:
+            start = (*model).w3
+            end = (*model).b3
+            fan = hidden
+      let scale:f64 = math.sqrt(6 / fan as f64)
+      i = start
+      while i < end:
+        random = random * 1664525 + 1013904223 & 4294967295
+        let unit:f64 = (random >> 8) as f64 / 16777216
+        data[i] = ((unit * 2 - 1) * scale) as f32
+        i = i + 1
+      layer = layer + 1
+    let status = from_host((*model).params, host, (*model).count, device)
+    tzcpu.tz_cpu_free(host)
+    if status != 0:
+      destroy(model)
+      ret 0 as *TemporalStt
+    ret model
+

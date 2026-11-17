@@ -1,0 +1,19 @@
+import "tezzapi"
+
+fn main() -> int:
+  unsafe:
+    response:*ApiResponse = tezzapi.api_resp_new()
+    if response == 0: ret 1
+    tezzapi.api_resp_text(response, "hello")
+    if response[0].body_len != 5: ret 2
+    if response[0].status != 200: ret 3
+    tezzapi.api_resp_free(response)
+    payload:TnxbBuffer = tezzapi.tnxb_encode(1, "/users", "hello")
+    if payload.len != 27: ret 4
+    packet:TnxbPacket = tezzapi.tnxb_decode_buf(payload)
+    if packet.op != 1: ret 5
+    if len(packet.route) != 6: ret 6
+    if len(packet.body) != 5: ret 7
+    tezzapi.tnxb_packet_release(&packet)
+    tezzapi.tnxb_release(payload)
+  ret 0

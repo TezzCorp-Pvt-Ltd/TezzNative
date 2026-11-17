@@ -1,0 +1,10 @@
+fn weighted(a:int, b:int, c:int) -> int:
+  ret a + b * 3 + c * 7
+
+fn invoke(operation:fn(int, int, int) -> int, value:int) -> int:
+  ret operation(value, 5, 11)
+
+fn main() -> int:
+  operation:fn(int, int, int) -> int = weighted
+  if invoke(operation, 13) != 105: ret 1
+  ret 0

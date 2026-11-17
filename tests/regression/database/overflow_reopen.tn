@@ -1,0 +1,31 @@
+import "tezzdb"
+
+fn main() -> int:
+  unsafe:
+    remove("overflow_reopen.tdb")
+    remove("overflow_reopen.tdb.wal")
+    db:*TezzDb = tezzdb.open("overflow_reopen.tdb")
+    if db == 0: ret 1
+    if tezzdb.table_create(db, "items") != 0: ret 2
+    size:int = 20000
+    value:*char = malloc(size + 1)
+    i:int = 0
+    while i < size:
+      value[i] = (65 + i % 26) as char
+      i = i + 1
+    value[size] = 0 as char
+    if tezzdb.insert(db, "items", value as str) != 1: ret 3
+    if tezzdb.close(db) != 0: ret 4
+    db = tezzdb.open("overflow_reopen.tdb")
+    if db == 0: ret 5
+    loaded:str = tezzdb.get(db, "items", 1)
+    if loaded == 0 || strcmp(loaded, value as str) != 0: ret 6
+    free(loaded)
+    free(value)
+    if tezzdb.update(db, "items", 1, "small") != 1: ret 7
+    if tezzdb.close(db) != 0: ret 8
+    db = tezzdb.open("overflow_reopen.tdb")
+    loaded = tezzdb.get(db, "items", 1)
+    if loaded == 0 || strcmp(loaded, "small") != 0: ret 9
+    free(loaded)
+    ret tezzdb.close(db)

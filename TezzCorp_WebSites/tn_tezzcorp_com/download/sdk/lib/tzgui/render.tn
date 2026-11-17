@@ -1,0 +1,106 @@
+// tzgui implementation: render.
+import "gui"
+import "frame"
+import "io"
+import "os"
+import "tzgui.state"
+import "tzgui.geometry"
+
+fn tree_render_dirty(tree:*TzWidgetTree, surface:*GuiSurface) -> int:
+  if tree == 0 || surface == 0:
+    ret 0 - 1
+  gui.gui_clip_reset()
+  tree[0].present_x = 0
+  tree[0].present_y = 0
+  tree[0].present_w = 0
+  tree[0].present_h = 0
+  n:int = frame.tz_damage_count(tree[0].damage)
+  if n <= 0:
+    ret 0
+  idxs:[int;256]
+  d_i:int = 0
+  while d_i < n:
+    dr:TzRect
+    if frame.tz_damage_take(tree[0].damage, d_i, &dr) != 0:
+      expand_more:int = 1
+      expand_pass:int = 0
+      while expand_more != 0 && expand_pass < tzgui.state._get_TZ_WIDGET_MAX():
+        expand_more = 0
+        expand_slot:int = 0
+        while expand_slot < tzgui.state._get_TZ_WIDGET_MAX():
+          if tree[0].widgets[expand_slot].alive != 0 && tree[0].widgets[expand_slot].visible != 0 && tzgui.geometry._tree_effective_visible(tree, expand_slot) != 0:
+            text_bounds:TzRect
+            overlap:TzRect
+            expanded:TzRect
+            clipped:TzRect
+            if tzgui.geometry._tree_widget_text_bounds(tree, expand_slot, &text_bounds) > 0 && frame.tz_rect_intersect(&overlap, &text_bounds, &dr) != 0:
+              frame.tz_rect_union(&expanded, &dr, &text_bounds)
+              if frame.tz_rect_clip(&clipped, &expanded, surface[0].width, surface[0].height) != 0:
+                if clipped.x != dr.x || clipped.y != dr.y || clipped.w != dr.w || clipped.h != dr.h:
+                  dr.x = clipped.x
+                  dr.y = clipped.y
+                  dr.w = clipped.w
+                  dr.h = clipped.h
+                  expand_more = 1
+          expand_slot = expand_slot + 1
+        expand_pass = expand_pass + 1
+      if tree[0].present_w == 0 || tree[0].present_h == 0:
+        tree[0].present_x = dr.x
+        tree[0].present_y = dr.y
+        tree[0].present_w = dr.w
+        tree[0].present_h = dr.h
+      else:
+        px1:int = tree[0].present_x
+        py1:int = tree[0].present_y
+        px2:int = px1 + tree[0].present_w
+        py2:int = py1 + tree[0].present_h
+        if dr.x < px1:
+          px1 = dr.x
+        if dr.y < py1:
+          py1 = dr.y
+        if dr.x + dr.w > px2:
+          px2 = dr.x + dr.w
+        if dr.y + dr.h > py2:
+          py2 = dr.y + dr.h
+        tree[0].present_x = px1
+        tree[0].present_y = py1
+        tree[0].present_w = px2 - px1
+        tree[0].present_h = py2 - py1
+      gui.gui_clip_set(surface, dr.x, dr.y, dr.w, dr.h)
+      gui.gui_rect(surface, dr.x, dr.y, dr.w, dr.h, tree[0].clear_color)
+      w_i:int = 0
+      c:int = 0
+      while w_i < tzgui.state._get_TZ_WIDGET_MAX():
+        if tree[0].widgets[w_i].alive != 0 && tree[0].widgets[w_i].visible != 0 && tzgui.geometry._tree_effective_visible(tree, w_i) != 0:
+          wr:TzRect
+          ir:TzRect
+          if tzgui.geometry._tree_widget_render_bounds(tree, w_i, &wr) > 0 && frame.tz_rect_intersect(&ir, &wr, &dr) != 0:
+            idxs[c] = w_i
+            c = c + 1
+        w_i = w_i + 1
+      tzgui.geometry._tree_sort_widgets(tree, &idxs[0], c)
+      j:int = 0
+      while j < c:
+        // The widget render bounds already include its text bounds. Draw text
+        // with every intersecting widget so GDI and direct framebuffer paths
+        // don't lose labels when a damage rectangle only clips their glyphs.
+        tzgui.geometry._tree_draw_widget(tree, surface, idxs[j], 1)
+        tree[0].widgets[idxs[j]].dirty = 0
+        j = j + 1
+      gui.gui_clip_reset()
+    d_i = d_i + 1
+  frame.tz_damage_reset(tree[0].damage)
+  tree[0].full_redraw_reason = tzgui.state._get_TZ_FULL_REDRAW_NONE()
+  ret n
+
+fn tree_present_dirty(tree:*TzWidgetTree, surface:*GuiSurface) -> int:
+  n:int = tree_render_dirty(tree, surface)
+  if n > 0:
+    if tree != 0 && tree[0].present_w > 0 && tree[0].present_h > 0 && os.fb_host_windowing() != 0:
+      if gui.gui_present_region(tree[0].present_x, tree[0].present_y, tree[0].present_w, tree[0].present_h) != 0:
+        gui.gui_end(surface)
+    else:
+      gui.gui_end(surface)
+  ret n
+
+// ── Retained Widget Animation Engine ──────────────────────────────────────

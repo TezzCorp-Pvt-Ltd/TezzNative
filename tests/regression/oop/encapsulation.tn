@@ -1,0 +1,8 @@
+import "./support/lib/owner.tn"
+
+fn main() -> int:
+  record:PrivateRecord = owner.make_record(42)
+  if record.tag != 1 || record.get() != 42:
+    say "FAIL legal factory and getter"
+    ret 1
+  ret 0

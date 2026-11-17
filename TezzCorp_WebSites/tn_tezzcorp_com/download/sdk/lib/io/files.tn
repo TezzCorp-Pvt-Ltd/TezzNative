@@ -1,0 +1,248 @@
+// io implementation: files.
+
+import "io.state"
+
+fn seek_set() -> int:
+  ret io.state._get_SEEK_SET()
+
+fn seek_cur() -> int:
+  ret io.state._get_SEEK_CUR()
+
+fn seek_end() -> int:
+  ret io.state._get_SEEK_END()
+
+// ─────────────────────────────────────────────────────────────
+// Standard File handle
+// ─────────────────────────────────────────────────────────────
+
+fn file_open(path:str, mode:str) -> *File:
+  if path == 0 || mode == 0:
+    ret 0 as *File
+  h:*char = fopen(path, mode)
+  if h == 0 as *char:
+    ret 0 as *File
+  f:*File = (*File)malloc(sizeof(File))
+  if f == 0:
+    fclose(h)
+    ret 0 as *File
+  (*f).h = h
+  (*f).owned = 1
+  ret f
+
+fn file_from_handle(h:*char) -> *File:
+  if h == 0 as *char:
+    ret 0 as *File
+  f:*File = (*File)malloc(sizeof(File))
+  if f == 0:
+    ret 0 as *File
+  (*f).h = h
+  (*f).owned = 0
+  ret f
+
+fn file_close(f:*File) -> int:
+  if f == 0:
+    ret 0 - 1
+  r:int = 0
+  if (*f).owned != 0 && (*f).h != 0 as *char:
+    r = fclose((*f).h)
+  (*f).h = 0 as *char
+  free(f)
+  ret r
+
+fn file_flush(f:*File) -> int:
+  if f == 0:
+    ret 0 - 1
+  if (*f).h == 0 as *char:
+    ret 0 - 1
+  h:*char = (*f).h
+  ret fflush(h)
+
+fn file_read(f:*File, buf:*char, n:int) -> int:
+  if f == 0 || buf == 0:
+    ret 0
+  if (*f).h == 0 as *char:
+    ret 0
+  if n <= 0:
+    ret 0
+  h:*char = (*f).h
+  ret fread(buf, 1, n, h)
+
+fn file_write(f:*File, buf:*char, n:int) -> int:
+  if f == 0 || buf == 0:
+    ret 0
+  if (*f).h == 0 as *char:
+    ret 0
+  if n <= 0:
+    ret 0
+  h:*char = (*f).h
+  ret fwrite(buf, 1, n, h)
+
+fn file_write_line(f:*File, s:str) -> int:
+  if f == 0 || s == 0:
+    ret 0 - 1
+  if (*f).h == 0 as *char:
+    ret 0 - 1
+  h:*char = (*f).h
+  n:int = len(s)
+  p:*char
+  unsafe:
+    p = s as *char
+  if n > 0:
+    if fwrite(p, 1, n, h) != n:
+      ret 0 - 1
+  nl:str = "\n"
+  np:*char
+  unsafe:
+    np = nl as *char
+  if fwrite(np, 1, 1, h) != 1:
+    ret 0 - 1
+  ret 0
+
+fn file_read_line(f:*File) -> str:
+  if f == 0:
+    ret 0 as str
+  if (*f).h == 0 as *char:
+    ret 0 as str
+  h:*char = (*f).h
+  cap:int = 128
+  line:*char = malloc(cap)
+  if line == 0:
+    ret 0 as str
+  one:*char = malloc(1)
+  if one == 0:
+    free(line)
+    ret 0 as str
+  used:int = 0
+  for ;;:
+    got:int = fread(one, 1, 1, h)
+    if got <= 0:
+      free(one)
+      if used == 0:
+        free(line)
+        ret 0 as str
+      unsafe:
+        line[used] = 0 as char
+      ret line as str
+    ch:int = 0
+    unsafe:
+      ch = one[0] as int
+    if ch == 10:
+      break
+    if ch == 13:
+      got = fread(one, 1, 1, h)
+      if got == 1:
+        next:int = 0
+        unsafe:
+          next = one[0] as int
+        if next != 10:
+          fseek(h, 0 - 1, io.state._get_SEEK_CUR())
+      break
+    if used + 1 >= cap:
+      new_cap:int = cap * 2
+      new_line:*char = malloc(new_cap)
+      if new_line == 0:
+        free(one)
+        free(line)
+        ret 0 as str
+      if used > 0:
+        memcpy(new_line, line, used)
+      free(line)
+      line = new_line
+      cap = new_cap
+    unsafe:
+      line[used] = one[0]
+    used += 1
+  free(one)
+  unsafe:
+    line[used] = 0 as char
+  ret line as str
+
+fn file_seek(f:*File, off:int, whence:int) -> int:
+  if f == 0:
+    ret 0 - 1
+  if (*f).h == 0 as *char:
+    ret 0 - 1
+  h:*char = (*f).h
+  ret fseek(h, off, whence)
+
+fn file_tell(f:*File) -> int:
+  if f == 0:
+    ret 0 - 1
+  if (*f).h == 0 as *char:
+    ret 0 - 1
+  h:*char = (*f).h
+  ret ftell(h)
+
+fn file_eof(f:*File) -> int:
+  if f == 0:
+    ret 1
+  if (*f).h == 0 as *char:
+    ret 1
+  h:*char = (*f).h
+  ret io_eof(h)
+
+fn file_err() -> int:
+  ret io_err()
+
+fn file_valid(f:*File) -> int:
+  if f == 0:
+    ret 0
+  if (*f).h == 0 as *char:
+    ret 0
+  ret 1
+
+fn stdin_file() -> *File:
+  h:*char = stdin()
+  ret file_from_handle(h)
+
+fn stdout_file() -> *File:
+  h:*char = stdout()
+  ret file_from_handle(h)
+
+fn stderr_file() -> *File:
+  h:*char = stderr()
+  ret file_from_handle(h)
+
+// ─────────────────────────────────────────────────────────────
+// Standard open helpers
+// ─────────────────────────────────────────────────────────────
+
+fn open_r(path:str) -> *File:
+  ret file_open(path, "r")
+
+fn open_w(path:str) -> *File:
+  ret file_open(path, "w")
+
+fn open_a(path:str) -> *File:
+  ret file_open(path, "a")
+
+fn open_rb(path:str) -> *File:
+  ret file_open(path, "rb")
+
+fn open_wb(path:str) -> *File:
+  ret file_open(path, "wb")
+
+fn open_ab(path:str) -> *File:
+  ret file_open(path, "ab")
+
+fn open_rw(path:str) -> *File:
+  ret file_open(path, "r+b")
+
+// ─────────────────────────────────────────────────────────────
+// BigFile — streaming GB/TB/PB file reader
+//
+// BigFile reads files in configurable chunks without ever
+// loading the entire file into memory. Suitable for:
+//   • Log processing (hundreds of GB)
+//   • Dataset ingestion (TB-scale training data)
+//   • Binary blob streaming (PB-scale storage pipelines)
+//
+// Usage:
+//   bf:*BigFile = bigfile_open("huge.dat", 0)  // 0 = default chunk
+//   while bigfile_eof(bf) == 0:
+//     chunk:str = bigfile_read_chunk(bf)
+//     if chunk == 0: break
+//     // process chunk (len = bigfile_last_read(bf) bytes)
+//     free(chunk)
+//   bigfile_close(bf)
+// ─────────────────────────────────────────────────────────────

@@ -1,4 +1,5 @@
-// autodiff module (Phase 4 scaffold)
+// Scalar forward/reverse autodiff. free_node owns the entire reachable graph.
+import "math"
 
 struct Dual:
   val:float
@@ -208,10 +209,10 @@ fn node_mul(a:*Node, b:*Node) -> *Node:
   ret n
 
 fn _sigmoid_f(x:float) -> float:
-  ax:float = x
-  if ax < 0.0:
-    ax = 0.0 - ax
-  ret 0.5 * (x / (1.0 + ax)) + 0.5
+  if x >= 0.0:
+    ret 1.0 / (1.0 + math.exp(0.0 - x))
+  e:float = math.exp(x)
+  ret e / (1.0 + e)
 
 fn node_sub(a:*Node, b:*Node) -> *Node:
   if a == 0 || b == 0:
@@ -290,12 +291,48 @@ fn backward(n:*Node, seed:float) -> int:
 fn free_node(n:*Node) -> int:
   if n == 0:
     ret 0
-  unsafe:
-    if (*n).a != 0:
-      free_node((*n).a)
-    if (*n).b != 0:
-      free_node((*n).b)
-    free(n as *char)
+  capacity:int = 32
+  nodes:*int = (*int)malloc(capacity * 8)
+  if nodes == 0 as *int: ret 0 - 1
+  count:int = 1
+  nodes[0] = n as int
+  cursor:int = 0
+  // Collect before freeing: a shared child must be dereferenced and freed once.
+  while cursor < count:
+    current:*Node = nodes[cursor] as *Node
+    children:[int;2]
+    children[0] = current.a as int
+    children[1] = current.b as int
+    side:int = 0
+    while side < 2:
+      child:int = children[side]
+      found:int = 0
+      i:int = 0
+      while i < count:
+        if nodes[i] == child: found = 1
+        i = i + 1
+      if child != 0 && found == 0:
+        if count == capacity:
+          if capacity > 576460752303423487:
+            free(nodes as *char)
+            ret 0 - 1
+          grown:*int = (*int)malloc(capacity * 16)
+          if grown == 0 as *int:
+            free(nodes as *char)
+            ret 0 - 1
+          memcpy(grown as *char, nodes as *char, count * 8)
+          free(nodes as *char)
+          nodes = grown
+          capacity = capacity * 2
+        nodes[count] = child
+        count = count + 1
+      side = side + 1
+    cursor = cursor + 1
+  cursor = 0
+  while cursor < count:
+    free(nodes[cursor] as *char)
+    cursor = cursor + 1
+  free(nodes as *char)
   ret 0
 
 // mixed-mode: forward-mode for Dual + reverse-mode for Node

@@ -1,0 +1,13 @@
+import "tztensor"
+import "./support/lib/values.tn"
+
+fn main() -> int:
+  x:int = tztensor.tensor_new_1d(1, 1)
+  first:int = tztensor.tensor_backward(x)
+  second:int = tztensor.tensor_backward(x)
+  failed:int = 0
+  if first != 0 || second != 0 || values.gradient(x, 0) != 2.0:
+    failed = 1
+  tztensor.tensor_free(x)
+  if failed != 0: say "FAIL: SDK leaf backward must accumulate its unit adjoint"
+  ret failed

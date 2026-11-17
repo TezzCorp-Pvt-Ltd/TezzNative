@@ -1,0 +1,19 @@
+import "arduino.uno"
+
+fn main() -> int:
+  if arduino.uno.analog_reference(arduino.uno.DEFAULT()) != 0: ret 1
+  reading:int = arduino.uno.analog_read(arduino.uno.A0())
+  if reading < 511 || reading > 512: ret 2
+  if arduino.uno.analog_read(arduino.uno.A1()) != 0: ret 3
+  if arduino.uno.analog_read(arduino.uno.A2()) != 1023: ret 4
+  if arduino.uno.analog_read(6) != -1: ret 5
+  if arduino.uno.analog_reference(2) != -1: ret 6
+  if arduino.uno.eeprom_write(0, 42) != 0: ret 7
+  if arduino.uno.eeprom_write(1023, 165) != 0: ret 8
+  if arduino.uno.eeprom_read(0) != 42: ret 9
+  if arduino.uno.eeprom_read(1023) != 165: ret 10
+  if arduino.uno.eeprom_read(-1) != -1: ret 11
+  if arduino.uno.eeprom_write(1024, 1) != -1: ret 12
+  if arduino.uno.eeprom_write(0, 256) != -1: ret 13
+  if arduino.uno.eeprom_read(0) != 42: ret 14
+  ret 0

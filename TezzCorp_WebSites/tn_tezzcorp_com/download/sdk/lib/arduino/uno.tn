@@ -1,0 +1,68 @@
+// tezz-hardware-module: arduino-uno
+// Arduino UNO R3 integer MCU profile. No heap or hosted runtime is required.
+// GPIO/ADC/EEPROM invalid arguments return -1; UART writes return byte counts.
+
+fn INPUT() -> int: ret 0
+fn OUTPUT() -> int: ret 1
+fn INPUT_PULLUP() -> int: ret 2
+fn LOW() -> int: ret 0
+fn HIGH() -> int: ret 1
+fn LED_BUILTIN() -> int: ret 13
+fn A0() -> int: ret 14
+fn A1() -> int: ret 15
+fn A2() -> int: ret 16
+fn A3() -> int: ret 17
+fn A4() -> int: ret 18
+fn A5() -> int: ret 19
+fn PORT_B() -> int: ret 0
+fn PORT_C() -> int: ret 1
+fn PORT_D() -> int: ret 2
+fn DEFAULT() -> int: ret 1
+fn EXTERNAL() -> int: ret 0
+fn INTERNAL() -> int: ret 3
+
+extern fn tn_uno_pin_mode(pin:int, mode:int) -> int
+extern fn tn_uno_digital_write(pin:int, value:int) -> int
+extern fn tn_uno_digital_read(pin:int) -> int
+extern fn tn_uno_digital_toggle(pin:int) -> int
+extern fn tn_uno_port_write(port:int, mask:int, value:int) -> int
+extern fn tn_uno_port_read(port:int) -> int
+extern fn tn_uno_millis() -> int
+extern fn tn_uno_delay_ms(milliseconds:int) -> int
+extern fn tn_hw_micros() -> int
+extern fn tn_hw_delay_us(microseconds:int) -> int
+extern fn tn_uno_analog_reference(reference:int) -> int
+extern fn tn_uno_analog_read(pin:int) -> int
+extern fn tn_uno_eeprom_read(address:int) -> int
+extern fn tn_uno_eeprom_write(address:int, value:int) -> int
+extern fn tn_uno_uart_begin(baud:int) -> int
+extern fn tn_uno_uart_write_byte(value:int) -> int
+extern fn tn_uno_uart_available() -> int
+extern fn tn_uno_uart_read_byte() -> int
+extern fn tn_uno_uart_flush() -> int
+extern fn tn_hw_irq_enable() -> int
+extern fn tn_hw_irq_disable() -> int
+extern fn tn_hw_irq_state() -> int
+
+fn pin_mode(pin:int, mode:int) -> int: ret tn_uno_pin_mode(pin, mode)
+fn digital_write(pin:int, value:int) -> int: ret tn_uno_digital_write(pin, value)
+fn digital_read(pin:int) -> int: ret tn_uno_digital_read(pin)
+fn digital_toggle(pin:int) -> int: ret tn_uno_digital_toggle(pin)
+fn port_write(port:int, mask:int, value:int) -> int: ret tn_uno_port_write(port, mask, value)
+fn port_read(port:int) -> int: ret tn_uno_port_read(port)
+fn millis() -> int: ret tn_uno_millis()
+fn micros() -> int: ret tn_hw_micros()
+fn delay(milliseconds:int) -> int: ret tn_uno_delay_ms(milliseconds)
+fn delay_us(microseconds:int) -> int: ret tn_hw_delay_us(microseconds)
+fn analog_reference(reference:int) -> int: ret tn_uno_analog_reference(reference)
+fn analog_read(pin:int) -> int: ret tn_uno_analog_read(pin)
+fn eeprom_read(address:int) -> int: ret tn_uno_eeprom_read(address)
+fn eeprom_write(address:int, value:int) -> int: ret tn_uno_eeprom_write(address, value)
+fn uart_begin(baud:int) -> int: ret tn_uno_uart_begin(baud)
+fn uart_write_byte(value:int) -> int: ret tn_uno_uart_write_byte(value)
+fn uart_available() -> int: ret tn_uno_uart_available()
+fn uart_read_byte() -> int: ret tn_uno_uart_read_byte()
+fn uart_flush() -> int: ret tn_uno_uart_flush()
+fn interrupts_enable() -> int: ret tn_hw_irq_enable()
+fn interrupts_disable() -> int: ret tn_hw_irq_disable()
+fn interrupts_enabled() -> int: ret tn_hw_irq_state()

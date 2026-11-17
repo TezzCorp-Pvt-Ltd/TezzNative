@@ -1,0 +1,30 @@
+import "tezzdb"
+
+fn main() -> int:
+  unsafe:
+    remove("transactions.tdb")
+    remove("transactions.tdb.wal")
+    db:*TezzDb = tezzdb.open("transactions.tdb")
+    if db == 0: ret 1
+    tezzdb.table_create(db, "items")
+    tezzdb.insert_pk(db, "items", 1, "first")
+    failed:int = 0
+    if tezzdb.begin(db) != 0 || tezzdb.begin(db) != 0 - 5: failed = 1
+    tezzdb.insert_pk(db, "items", 2, "rolled back")
+    if tezzdb.rollback(db) != 0: failed = 1
+    if tezzdb.get(db, "items", 2) != 0 as str || tezzdb.table_row_count(db, "items") != 1: failed = 1
+    tezzdb.begin(db)
+    tezzdb.insert_pk(db, "items", 3, "committed")
+    if tezzdb.commit(db) != 0: failed = 1
+    tezzdb.begin(db)
+    tezzdb.insert_pk(db, "items", 4, "close must roll back")
+    tezzdb.close(db)
+    db = tezzdb.open("transactions.tdb")
+    if db == 0: ret 2
+    committed:str = tezzdb.get(db, "items", 3)
+    if committed == 0 || strcmp(committed, "committed") != 0: failed = 1
+    free(committed)
+    if tezzdb.get(db, "items", 4) != 0 as str || tezzdb.table_row_count(db, "items") != 2: failed = 1
+    tezzdb.close(db)
+    if failed != 0: say "FAIL: database logical transactions or close rollback"
+    ret failed

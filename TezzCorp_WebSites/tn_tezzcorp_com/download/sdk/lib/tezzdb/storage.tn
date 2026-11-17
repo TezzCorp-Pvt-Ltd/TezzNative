@@ -1,0 +1,699 @@
+// tezzdb implementation: storage.
+import "io"
+import "time"
+import "tezzdb.state"
+
+fn _db_null_str() -> str:
+  ret 0 as str
+
+fn _db_null_page() -> *DbPage:
+  ret 0 as *DbPage
+
+fn _db_null_db() -> *TezzDb:
+  ret 0 as *TezzDb
+
+fn _db_r32_le(p:*char, off:int) -> int:
+  b0:int = (p[off] as int) & 255
+  b1:int = (p[off+1] as int) & 255
+  b2:int = (p[off+2] as int) & 255
+  b3:int = (p[off+3] as int) & 255
+  ret b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
+
+fn _db_w32_le(p:*char, off:int, v:int) -> int:
+  p[off]   = (v & 255) as char
+  p[off+1] = ((v >> 8) & 255) as char
+  p[off+2] = ((v >> 16) & 255) as char
+  p[off+3] = ((v >> 24) & 255) as char
+  ret 0
+
+fn _db_r64_le(p:*char, off:int) -> int:
+  lo:int = _db_r32_le(p, off)
+  hi:int = _db_r32_le(p, off + 4)
+  ret lo | (hi << 32)
+
+fn _db_w64_le(p:*char, off:int, v:int) -> int:
+  _db_w32_le(p, off, v & 4294967295)  // low 32 bits
+  _db_w32_le(p, off + 4, (v >> 32) & 4294967295)
+  ret 0
+
+fn _db_streq(a:str, b:str) -> int:
+  if a == 0 && b == 0: ret 1
+  if a == 0 || b == 0: ret 0
+  ret strcmp(a, b) == 0
+
+fn _db_strdup(s:str) -> str:
+  if s == 0: ret 0 as str
+  n:int = len(s)
+  p:*char = malloc(n + 1)
+  if p == 0: ret 0 as str
+  unsafe:
+    memcpy(p, s as *char, n)
+  p[n] = 0 as char
+  ret p as str
+
+fn _db_join2(a:str, b:str) -> str:
+  if a == 0: ret _db_strdup(b)
+  if b == 0: ret _db_strdup(a)
+  na:int = len(a)
+  nb:int = len(b)
+  p:*char = malloc(na + nb + 1)
+  if p == 0: ret 0 as str
+  unsafe:
+    memcpy(p, a as *char, na)
+    memcpy(p + na, b as *char, nb)
+  p[na+nb] = 0 as char
+  ret p as str
+
+fn _db_itoa(v:int) -> str:
+  if v < 0:
+    s:str = _db_itoa(0 - v)
+    out:str = _db_join2("-", s)
+    free(s)
+    ret out
+  tmp:[char;24]
+  i:int = 0
+  n:int = v
+  if n == 0:
+    tmp[i] = 48 as char
+    i = i + 1
+  while n > 0:
+    tmp[i] = (48 + n % 10) as char
+    i = i + 1
+    n = n / 10
+  p:*char = malloc(i + 1)
+  if p == 0: ret 0 as str
+  j:int = 0
+  while j < i:
+    p[j] = tmp[i - j - 1]
+    j = j + 1
+  p[i] = 0 as char
+  ret p as str
+
+fn _db_crc32_str(s:str) -> int:
+  if s == 0: ret 0
+  h:int = 5381
+  i:int = 0
+  while s[i] != 0:
+    b:int = (s[i] as int) & 255
+    h = ((h << 5) + h + b) & 2147483647
+    i = i + 1
+  ret h
+
+fn str_contains(hay:str, needle:str) -> int:
+  if hay == 0 || needle == 0: ret 0
+  n:int = len(needle)
+  if n == 0: ret 1
+  i:int = 0
+  while hay[i] != 0:
+    j:int = 0
+    while needle[j] != 0 && hay[i + j] == needle[j]:
+      j = j + 1
+    if needle[j] == 0: ret 1
+    i = i + 1
+  ret 0
+
+fn _cache_find(db:*TezzDb, page_id:int) -> *DbPage:
+  if db == 0: ret _db_null_page()
+  i:int = 0
+  while i < (*db).cache_count:
+    if (*db).cache[i].page_id == page_id:
+      ret &(*db).cache[i]
+    i = i + 1
+  ret _db_null_page()
+
+fn _page_flush(db:*TezzDb, pg:*DbPage) -> int:
+  if db == 0 || pg == 0 || (*pg).data == 0 as *char: ret 0 - 1
+  if (*db).h == 0 as *char || (*db).in_tx == 1: ret 0 - 1
+  off:int = (*pg).page_id * tezzdb.state._get_DB_PAGE_SIZE()
+  if fseek((*db).h, off, 0) != 0: ret 0 - 1
+  n:int = fwrite((*pg).data, 1, tezzdb.state._get_DB_PAGE_SIZE(), (*db).h)
+  if n != tezzdb.state._get_DB_PAGE_SIZE(): ret 0 - 1
+  (*pg).dirty = 0
+  ret 0
+
+fn _cache_evict_one(db:*TezzDb) -> int:
+  if db == 0 || (*db).cache_count <= 0: ret 0 - 1
+  // Dirty pages stay in memory until the complete WAL batch is sealed.
+  best:int = 0 - 1
+  i:int = 0
+  while i < (*db).cache_count:
+    if (*db).cache[i].dirty == 0:
+      best = i
+      break
+    i = i + 1
+  if best < 0: ret 0 - 1
+  free((*db).cache[best].data)
+  i = best
+  while i + 1 < (*db).cache_count:
+    (*db).cache[i] = (*db).cache[i + 1]
+    i = i + 1
+  (*db).cache_count = (*db).cache_count - 1
+  ret 0
+
+fn _db_error(db:*TezzDb) -> int:
+  if db != 0: (*db).write_failed = 1
+  ret 0 - 1
+
+// Call at a public mutation boundary, before retaining any page-header pointers.
+fn _cache_reserve(db:*TezzDb, slots:int) -> int:
+  if db == 0 || slots < 0 || slots > 2147483647: ret 0 - 1
+  while (*db).cache_cap - (*db).cache_count < slots:
+    if _cache_evict_one(db) != 0: break
+  if (*db).cache_cap - (*db).cache_count >= slots: ret 0
+  needed:int = (*db).cache_count + slots
+  if needed > 2147483647: ret 0 - 1
+  capacity:int = (*db).cache_cap * 2
+  if capacity < needed: capacity = needed
+  pages:*DbPage = (*DbPage)malloc(capacity * sizeof(DbPage))
+  if pages == 0: ret 0 - 1
+  memcpy(pages as *char, (*db).cache as *char, (*db).cache_count * sizeof(DbPage))
+  free((*db).cache as *char)
+  (*db).cache = pages
+  (*db).cache_cap = capacity
+  ret 0
+
+fn _page_valid(db:*TezzDb, data:*char, page_id:int) -> int:
+  if data == 0 || page_id < 0 || page_id >= (*db).page_count: ret 0
+  if _db_r32_le(data, 4) != page_id: ret 0
+  kind:int = _db_r32_le(data, 0)
+  count:int = _db_r32_le(data, 12)
+  next_page:int = _db_r32_le(data, 8)
+  if next_page < 0 || next_page >= (*db).page_count || (next_page != 0 && next_page == page_id): ret 0
+  if page_id == 0:
+    if kind != tezzdb.state._get_DB_PAGE_HEADER(): ret 0
+    if _db_r32_le(data, 16) != tezzdb.state._get_DB_MAGIC() || _db_r32_le(data, 20) != tezzdb.state._get_DB_VERSION(): ret 0
+    pages:int = _db_r32_le(data, 24)
+    ret pages >= 2 && pages <= (*db).page_count && _db_r32_le(data, 28) <= tezzdb.state._get_DB_MAX_TABLES()
+  if page_id == 1:
+    if kind != tezzdb.state._get_DB_PAGE_TABLE_META(): ret 0
+    tables:int = _db_r32_le(data, 16)
+    if tables > tezzdb.state._get_DB_MAX_TABLES() || count != tables: ret 0
+    i:int = 0
+    while i < tables:
+      offset:int = 20 + i * 80
+      root:int = _db_r32_le(data, offset + 56)
+      index:int = _db_r32_le(data, offset + 72)
+      if data[offset] == 0 as char || root < 2 || root >= (*db).page_count: ret 0
+      if index != 0 && (index < 2 || index >= (*db).page_count): ret 0
+      if _db_r64_le(data, offset + 60) < 0: ret 0
+      i = i + 1
+    ret 1
+  if kind == tezzdb.state._get_DB_PAGE_BTREE_LEAF():
+    if count < 0 || count > 681: ret 0
+    offset:int = 16
+    i:int = 0
+    previous:int = 0
+    while i < count:
+      if offset > 8192 - 12: ret 0
+      key:int = _db_r64_le(data, offset)
+      if i > 0 && key <= previous: ret 0
+      previous = key
+      length:int = _db_r32_le(data, offset + 8)
+      entry:int = _leaf_entry_size(length)
+      if entry < 12 || entry > 8192 - offset: ret 0
+      if length > tezzdb.state._get_DB_MAX_INLINE_VAL():
+        overflow:int = _db_r32_le(data, offset + 12)
+        if overflow < 2 || overflow >= (*db).page_count: ret 0
+        if length > (*db).page_count * 8176: ret 0
+      offset = offset + entry
+      i = i + 1
+    ret 1
+  if kind == tezzdb.state._get_DB_PAGE_BTREE_INTERNAL():
+    if count < 0 || count > 681: ret 0
+    child:int = _db_r32_le(data, 16)
+    if child < 2 || child >= (*db).page_count || child == page_id: ret 0
+    i:int = 0
+    previous:int = 0
+    while i < count:
+      key:int = _db_r64_le(data, 20 + i * 12)
+      if i > 0 && key <= previous: ret 0
+      previous = key
+      child = _db_r32_le(data, 28 + i * 12)
+      if child < 2 || child >= (*db).page_count || child == page_id: ret 0
+      i = i + 1
+    ret 1
+  if kind == tezzdb.state._get_DB_PAGE_OVERFLOW():
+    ret count > 0 && count <= 8176
+  ret kind == tezzdb.state._get_DB_PAGE_FREE()
+
+fn _page_load(db:*TezzDb, page_id:int) -> *DbPage:
+  if db == 0 || page_id < 0 || page_id >= (*db).page_count || (*db).h == 0: ret _db_null_page()
+  cached:*DbPage = _cache_find(db, page_id)
+  if cached != 0: ret cached
+  if (*db).cache_count >= (*db).cache_cap:
+    if _cache_evict_one(db) != 0: ret _db_null_page()
+  data:*char = malloc(tezzdb.state._get_DB_PAGE_SIZE())
+  if data == 0: ret _db_null_page()
+  if fseek((*db).h, page_id * tezzdb.state._get_DB_PAGE_SIZE(), 0) != 0:
+    free(data)
+    ret _db_null_page()
+  if fread(data, 1, tezzdb.state._get_DB_PAGE_SIZE(), (*db).h) != tezzdb.state._get_DB_PAGE_SIZE():
+    free(data)
+    ret _db_null_page()
+  if _page_valid(db, data, page_id) == 0:
+    free(data)
+    ret _db_null_page()
+  slot:*DbPage = &(*db).cache[(*db).cache_count]
+  (*slot).data = data
+  (*slot).page_id = page_id
+  (*slot).dirty = 0
+  (*db).cache_count = (*db).cache_count + 1
+  ret slot
+
+fn _page_new(db:*TezzDb, page_type:int) -> *DbPage:
+  if db == 0 || (*db).write_failed != 0 || (*db).page_count >= 2147483647: ret _db_null_page()
+  if (*db).cache_count >= (*db).cache_cap: ret _db_null_page()
+  data:*char = malloc(tezzdb.state._get_DB_PAGE_SIZE())
+  if data == 0: ret _db_null_page()
+  i:int = 0
+  while i < tezzdb.state._get_DB_PAGE_SIZE():
+    data[i] = 0 as char
+    i = i + 1
+  pid:int = (*db).page_count
+  _db_w32_le(data, 0, page_type)
+  _db_w32_le(data, 4, pid)
+  slot:*DbPage = &(*db).cache[(*db).cache_count]
+  (*slot).data = data
+  (*slot).page_id = pid
+  (*slot).dirty = 1
+  (*db).page_count = pid + 1
+  (*db).cache_count = (*db).cache_count + 1
+  ret slot
+
+fn _db_flush_all(db:*TezzDb) -> int:
+  if db == 0 || (*db).h == 0 || (*db).in_tx == 1: ret 0 - 1
+  i:int = 0
+  while i < (*db).cache_count:
+    if (*db).cache[i].dirty != 0:
+      if _page_flush(db, &(*db).cache[i]) != 0: ret _db_error(db)
+    i = i + 1
+  if fflush((*db).h) != 0: ret _db_error(db)
+  ret 0
+
+// ─────────────────────────────────────────────────────────────
+// Database header page (page 0)
+// Header page payload (offset 16):
+//   [16..19] magic
+//   [20..23] version
+//   [24..27] page_count
+//   [28..31] table_count
+//   [32..39] table_meta_page (first table meta page)
+// ─────────────────────────────────────────────────────────────
+
+fn _db_write_header(db:*TezzDb) -> int:
+  if db == 0: ret 0 - 1
+  pg:*DbPage = _page_load(db, 0)
+  if pg == 0 as *DbPage: ret 0 - 1
+  d:*char = (*pg).data
+  _db_w32_le(d, 0, tezzdb.state._get_DB_PAGE_HEADER())
+  _db_w32_le(d, 4, 0)
+  _db_w32_le(d, 8, 0)
+  _db_w32_le(d, 12, 0)
+  _db_w32_le(d, 16, tezzdb.state._get_DB_MAGIC())
+  _db_w32_le(d, 20, tezzdb.state._get_DB_VERSION())
+  _db_w32_le(d, 24, (*db).page_count)
+  _db_w32_le(d, 28, (*db).table_count)
+  (*pg).dirty = 1
+  ret 0
+
+fn _db_read_header(db:*TezzDb) -> int:
+  if db == 0: ret 0 - 1
+  pg:*DbPage = _page_load(db, 0)
+  if pg == 0: ret 0 - 1
+  data:*char = (*pg).data
+  if _db_r32_le(data, 16) != tezzdb.state._get_DB_MAGIC(): ret 0 - 1
+  if _db_r32_le(data, 20) != tezzdb.state._get_DB_VERSION(): ret 0 - 1
+  pages:int = _db_r32_le(data, 24)
+  tables:int = _db_r32_le(data, 28)
+  if pages < 2 || pages > 2147483647 || tables > tezzdb.state._get_DB_MAX_TABLES(): ret 0 - 1
+  if fseek((*db).h, 0, 2) != 0: ret 0 - 1
+  bytes:int = ftell((*db).h)
+  if bytes < pages * 8192 || bytes % 8192 != 0: ret 0 - 1
+  (*db).page_count = pages
+  (*db).table_count = tables
+  ret 0
+
+// ─────────────────────────────────────────────────────────────
+// Table metadata persistence
+// Table meta page payload (offset 16):
+//   [16..19] table_count
+//   per entry (64 bytes each):
+//     [0..7]   name (up to 56 chars) + null
+//     [56..59] root_page
+//     [60..63] next_pk (low 32)
+//     [64..67] next_pk (high 32)
+//     [68..71] row_count
+//     [72..75] idx_page
+// ─────────────────────────────────────────────────────────────
+
+fn _db_save_tables(db:*TezzDb) -> int:
+  if db == 0: ret 0 - 1
+  if (*db).table_count < 0 || (*db).table_count > tezzdb.state._get_DB_MAX_TABLES(): ret 0 - 1
+  // Use page 1 as table metadata page
+  pg:*DbPage = _page_load(db, 1)
+  if pg == 0 as *DbPage: ret 0 - 1
+  d:*char = (*pg).data
+  _db_w32_le(d, 0, tezzdb.state._get_DB_PAGE_TABLE_META())
+  _db_w32_le(d, 4, 1)
+  _db_w32_le(d, 12, (*db).table_count)
+  _db_w32_le(d, 16, (*db).table_count)
+  i:int = 0
+  base:int = 20
+  while i < (*db).table_count:
+    off:int = base + i * tezzdb.state._get_DB_TABLE_ENTRY_SIZE()
+    // Zero entry
+    j:int = 0
+    while j < tezzdb.state._get_DB_TABLE_ENTRY_SIZE():
+      d[off + j] = 0 as char
+      j = j + 1
+    // Name (up to 56 chars)
+    nm:str = (*db).tables[i].name
+    if nm != 0:
+      nlen:int = len(nm)
+      if nlen > 56: nlen = 56
+      unsafe:
+        memcpy(d + off, nm as *char, nlen)
+    _db_w32_le(d, off + 56, (*db).tables[i].root_page)
+    _db_w32_le(d, off + 60, (*db).tables[i].next_pk & 4294967295)
+    _db_w32_le(d, off + 64, ((*db).tables[i].next_pk >> 32) & 4294967295)
+    _db_w32_le(d, off + 68, (*db).tables[i].row_count)
+    _db_w32_le(d, off + 72, (*db).tables[i].idx_page)
+    i = i + 1
+  (*pg).dirty = 1
+  ret 0
+
+fn _db_load_tables(db:*TezzDb) -> int:
+  if db == 0 || (*db).page_count < 2: ret 0 - 1
+  pg:*DbPage = _page_load(db, 1)
+  if pg == 0: ret 0 - 1
+  data:*char = (*pg).data
+  if _db_r32_le(data, 0) != tezzdb.state._get_DB_PAGE_TABLE_META(): ret 0 - 1
+  count:int = _db_r32_le(data, 16)
+  if count > tezzdb.state._get_DB_MAX_TABLES() || count != (*db).table_count: ret 0 - 1
+  (*db).table_count = 0
+  if count > (*db).table_cap:
+    entries:*DbTableMeta = (*DbTableMeta)malloc(sizeof(DbTableMeta) * count)
+    if entries == 0: ret 0 - 1
+    free((*db).tables as *char)
+    (*db).tables = entries
+    (*db).table_cap = count
+  i:int = 0
+  while i < (*db).table_cap:
+    (*db).tables[i].name = 0 as str
+    (*db).tables[i].idx_col = 0 as str
+    i = i + 1
+  i = 0
+  while i < count:
+    offset:int = 20 + i * tezzdb.state._get_DB_TABLE_ENTRY_SIZE()
+    name:[char;57]
+    j:int = 0
+    while j < 56 && data[offset + j] != 0 as char:
+      name[j] = data[offset + j]
+      j = j + 1
+    if j == 0: ret 0 - 1
+    name[j] = 0 as char
+    root:int = _db_r32_le(data, offset + 56)
+    if root < 2 || root >= (*db).page_count: ret 0 - 1
+    idx:int = _db_r32_le(data, offset + 72)
+    if idx != 0 && (idx < 2 || idx >= (*db).page_count): ret 0 - 1
+    np:*char = &name[0]
+    (*db).tables[i].name = _db_strdup(np as str)
+    if (*db).tables[i].name == 0: ret 0 - 1
+    (*db).table_count = i + 1
+    (*db).tables[i].root_page = root
+    (*db).tables[i].next_pk = _db_r64_le(data, offset + 60)
+    if (*db).tables[i].next_pk < 0: ret 0 - 1
+    (*db).tables[i].row_count = _db_r32_le(data, offset + 68)
+    // Older v2 metadata did not persist index column names. Queries use scans.
+    (*db).tables[i].idx_page = 0
+    (*db).tables[i].idx_col = 0 as str
+    (*db).table_count = i + 1
+    k:int = 0
+    while k < i:
+      if _db_streq((*db).tables[k].name, (*db).tables[i].name) != 0: ret 0 - 1
+      k = k + 1
+    i = i + 1
+  ret 0
+
+// ─────────────────────────────────────────────────────────────
+// B+ Tree leaf operations
+// Leaf page payload (offset 16):
+//   count entries, each:
+//   [0..7]  key (i64 LE)
+//   [8..11] val_len (u32)
+//   [12..]  val bytes (val_len bytes, inline if <= DB_MAX_INLINE_VAL)
+//           OR [12..15] overflow_page_id if val_len > DB_MAX_INLINE_VAL
+// ─────────────────────────────────────────────────────────────
+
+fn _leaf_entry_size(val_len:int) -> int:
+  if val_len < 0 || val_len > 2147483647: ret 0 - 1
+  if val_len > tezzdb.state._get_DB_MAX_INLINE_VAL(): ret 16
+  ret 12 + val_len
+
+fn _leaf_count(pg:*DbPage) -> int:
+  if pg == 0 as *DbPage: ret 0
+  ret _db_r32_le((*pg).data, 12)
+
+fn _leaf_entry_offset(pg:*DbPage, idx:int) -> int:
+  if pg == 0 || (*pg).data == 0 || idx < 0: ret 0 - 1
+  count:int = _leaf_count(pg)
+  if idx > count || count > 681: ret 0 - 1
+  offset:int = 16
+  i:int = 0
+  while i < idx:
+    if offset > 8192 - 12: ret 0 - 1
+    entry:int = _leaf_entry_size(_db_r32_le((*pg).data, offset + 8))
+    if entry < 12 || entry > 8192 - offset: ret 0 - 1
+    offset = offset + entry
+    i = i + 1
+  ret offset
+
+fn _leaf_find_key(pg:*DbPage, key:int) -> int:
+  // Binary search — returns index (0..count-1) or -1 if not found
+  if pg == 0 as *DbPage: ret 0 - 1
+  count:int = _leaf_count(pg)
+  lo:int = 0
+  hi:int = count - 1
+  while lo <= hi:
+    mid:int = (lo + hi) / 2
+    mid_off:int = _leaf_entry_offset(pg, mid)
+    mk:int = _db_r64_le((*pg).data, mid_off)
+    if mk == key: ret mid
+    if mk < key: lo = mid + 1
+    else: hi = mid - 1
+  ret 0 - 1
+
+fn _leaf_find_insert_pos(pg:*DbPage, key:int) -> int:
+  if pg == 0 as *DbPage: ret 0
+  count:int = _leaf_count(pg)
+  lo:int = 0
+  hi:int = count - 1
+  while lo <= hi:
+    mid:int = (lo + hi) / 2
+    mid_off:int = _leaf_entry_offset(pg, mid)
+    mk:int = _db_r64_le((*pg).data, mid_off)
+    if mk < key: lo = mid + 1
+    else: hi = mid - 1
+  ret lo
+
+fn _leaf_used_bytes(pg:*DbPage) -> int:
+  if pg == 0 as *DbPage: ret tezzdb.state._get_DB_PAGE_PAYLOAD()
+  count:int = _leaf_count(pg)
+  ret _leaf_entry_offset(pg, count)
+
+fn _leaf_free_bytes(pg:*DbPage) -> int:
+  used:int = _leaf_used_bytes(pg)
+  if used < 16 || used > 8192: ret 0
+  ret 8192 - used
+
+fn _leaf_can_insert(pg:*DbPage, val_len:int) -> int:
+  need:int = _leaf_entry_size(val_len)
+  ret need >= 12 && _leaf_free_bytes(pg) >= need
+
+// Insert key+value into leaf at position pos
+
+fn _leaf_insert_at(pg:*DbPage, pos:int, key:int, val:*char, val_len:int) -> int:
+  if pg == 0 as *DbPage: ret 0 - 1
+  if val_len < 0 || (val_len > 0 && val == 0): ret 0 - 1
+  d:*char = (*pg).data
+  count:int = _leaf_count(pg)
+  if pos < 0 || pos > count || _leaf_can_insert(pg, val_len) == 0: ret 0 - 1
+  ins_off:int = _leaf_entry_offset(pg, pos)
+  entry_sz:int = _leaf_entry_size(val_len)
+  // Move entries after pos to make room
+  used:int = _leaf_entry_offset(pg, count)
+  move_bytes:int = used - ins_off
+  if move_bytes > 0:
+    unsafe:
+      // memmove semantics needed (overlapping) — copy backwards
+      src:*char = d + ins_off
+      dst:*char = d + ins_off + entry_sz
+      i:int = move_bytes - 1
+      while i >= 0:
+        dst[i] = src[i]
+        i = i - 1
+  // Write entry
+  _db_w64_le(d, ins_off, key)
+  _db_w32_le(d, ins_off + 8, val_len)
+  if val_len > 0 && val != 0 as *char:
+    inline_len:int = val_len
+    if inline_len > tezzdb.state._get_DB_MAX_INLINE_VAL(): inline_len = 4
+    unsafe:
+      memcpy(d + ins_off + 12, val, inline_len)
+  _db_w32_le(d, 12, count + 1)
+  (*pg).dirty = 1
+  ret 0
+
+// Delete entry at pos from leaf
+
+fn _leaf_delete_at(pg:*DbPage, pos:int) -> int:
+  if pg == 0 as *DbPage: ret 0 - 1
+  d:*char = (*pg).data
+  count:int = _leaf_count(pg)
+  if pos < 0 || pos >= count: ret 0 - 1
+  del_off:int = _leaf_entry_offset(pg, pos)
+  vlen:int = _db_r32_le(d, del_off + 8)
+  entry_sz:int = _leaf_entry_size(vlen)
+  next_off:int = del_off + entry_sz
+  used:int = _leaf_entry_offset(pg, count)
+  move_bytes:int = used - next_off
+  src:*char = d + next_off
+  dst:*char = d + del_off
+  i:int = 0
+  while i < move_bytes:
+    dst[i] = src[i]
+    i = i + 1
+  _db_w32_le(d, 12, count - 1)
+  (*pg).dirty = 1
+  ret 0
+
+// ─────────────────────────────────────────────────────────────
+// WAL (Write-Ahead Log) for crash recovery
+// WAL entries: [magic:4][page_id:4][data:8192]
+// ─────────────────────────────────────────────────────────────
+
+fn _wal_open(db:*TezzDb) -> int:
+  if db == 0 || (*db).wal_path == 0: ret 0 - 1
+  if (*db).wal_h != 0: ret 0
+  (*db).wal_h = fopen((*db).wal_path, "ab")
+  if (*db).wal_h == 0: ret 0 - 1
+  ret 0
+
+fn _wal_log_page(db:*TezzDb, pg:*DbPage) -> int:
+  if db == 0 || pg == 0 || (*db).wal_h == 0: ret 0 - 1
+  header:[char;8]
+  _db_w32_le(&header[0], 0, tezzdb.state._get_DB_WAL_MAGIC())
+  _db_w32_le(&header[0], 4, (*pg).page_id)
+  if fwrite(&header[0], 1, 8, (*db).wal_h) != 8: ret 0 - 1
+  if fwrite((*pg).data, 1, 8192, (*db).wal_h) != 8192: ret 0 - 1
+  ret 0
+
+fn _wal_seal(db:*TezzDb) -> int:
+  if db == 0 || (*db).wal_h == 0: ret 0 - 1
+  footer:[char;8]
+  _db_w32_le(&footer[0], 0, tezzdb.state._get_DB_WAL_MAGIC())
+  _db_w32_le(&footer[0], 4, 4294967295)
+  if fwrite(&footer[0], 1, 8, (*db).wal_h) != 8: ret 0 - 1
+  ret fflush((*db).wal_h)
+
+fn _wal_replay(db:*TezzDb) -> int:
+  if db == 0 || (*db).wal_path == 0: ret 0 - 1
+  if io.file_exists((*db).wal_path) == 0: ret 0
+  h:*char = fopen((*db).wal_path, "rb")
+  if h == 0: ret 0 - 1
+  if fseek(h, 0, 2) != 0:
+    fclose(h)
+    ret 0 - 1
+  bytes:int = ftell(h)
+  // Ignore a batch whose footer was not completely written. No main-file
+  // page is written by the new commit path before this footer is flushed.
+  if bytes < 8 || (bytes - 8) % 8200 != 0:
+    fclose(h)
+    ret 0
+  header:[char;8]
+  if fseek(h, bytes - 8, 0) != 0:
+    fclose(h)
+    ret 0 - 1
+  if fread(&header[0], 1, 8, h) != 8:
+    fclose(h)
+    ret 0 - 1
+  if _db_r32_le(&header[0], 0) != tezzdb.state._get_DB_WAL_MAGIC() || _db_r32_le(&header[0], 4) != 4294967295:
+    fclose(h)
+    ret 0
+  records:int = (bytes - 8) / 8200
+  if records == 0:
+    fclose(h)
+    ret 0
+  page:*char = malloc(8192)
+  if page == 0:
+    fclose(h)
+    ret 0 - 1
+  planned:int = 0
+  header_tables:int = 0 - 1
+  metadata_tables:int = 0 - 1
+  highest:int = 0
+  status:int = 0
+  if fseek(h, 0, 0) != 0:
+    free(page)
+    fclose(h)
+    ret 0 - 1
+  i:int = 0
+  while i < records:
+    if fread(&header[0], 1, 8, h) != 8 || fread(page, 1, 8192, h) != 8192:
+      status = 0 - 1
+      break
+    pid:int = _db_r32_le(&header[0], 4)
+    if _db_r32_le(&header[0], 0) != tezzdb.state._get_DB_WAL_MAGIC() || pid > 2147483646 || _db_r32_le(page, 4) != pid:
+      status = 0 - 1
+      break
+    if pid > highest: highest = pid
+    if pid == 0:
+      if _db_r32_le(page, 16) != tezzdb.state._get_DB_MAGIC() || _db_r32_le(page, 20) != tezzdb.state._get_DB_VERSION():
+        status = 0 - 1
+        break
+      planned = _db_r32_le(page, 24)
+      header_tables = _db_r32_le(page, 28)
+    if pid == 1: metadata_tables = _db_r32_le(page, 16)
+    i = i + 1
+  if planned < 2 || planned > 2147483647 || highest >= planned || header_tables < 0 || header_tables != metadata_tables: status = 0 - 1
+  if status == 0:
+    (*db).page_count = planned
+    // Validate every redo page before applying any of them.
+    if fseek(h, 0, 0) != 0: status = 0 - 1
+    i = 0
+    while status == 0 && i < records:
+      if fread(&header[0], 1, 8, h) != 8 || fread(page, 1, 8192, h) != 8192:
+        status = 0 - 1
+        break
+      if _page_valid(db, page, _db_r32_le(&header[0], 4)) == 0: status = 0 - 1
+      i = i + 1
+  if status == 0:
+    if fseek(h, 0, 0) != 0: status = 0 - 1
+    i = 0
+    while status == 0 && i < records:
+      if fread(&header[0], 1, 8, h) != 8 || fread(page, 1, 8192, h) != 8192:
+        status = 0 - 1
+        break
+      pid:int = _db_r32_le(&header[0], 4)
+      if fseek((*db).h, pid * 8192, 0) != 0 || fwrite(page, 1, 8192, (*db).h) != 8192:
+        status = 0 - 1
+        break
+      i = i + 1
+    if fflush((*db).h) != 0: status = 0 - 1
+  free(page)
+  if fclose(h) != 0: status = 0 - 1
+  ret status
+
+fn _wal_clear(db:*TezzDb) -> int:
+  if db == 0 || (*db).wal_path == 0: ret 0 - 1
+  if (*db).wal_h != 0:
+    status:int = fclose((*db).wal_h)
+    (*db).wal_h = 0 as *char
+    if status != 0: ret 0 - 1
+  h:*char = fopen((*db).wal_path, "wb")
+  if h == 0: ret 0 - 1
+  ret fclose(h)
+
+// ─────────────────────────────────────────────────────────────
+// Table operations
+// ─────────────────────────────────────────────────────────────
