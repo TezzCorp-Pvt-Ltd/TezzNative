@@ -84,6 +84,9 @@ benchmarks/results/**
 !tools/generate_vm_bindings.py
 !tools/release/
 !tools/release/**
+!tools/vocoder/
+!tools/vocoder/*.py
+!tools/vocoder/*.md
 
 # Allow specific files
 !README.md
@@ -127,6 +130,12 @@ TezzCorp_WebSites/tn_tezzcorp_com/*source_backup*
 # Local speech datasets, training checkpoints, and generated audio stay local.
 tezzmodel/
 tezzmodel/**
+tools/vocoder/checkpoints/
+tools/vocoder/__pycache__/
+*.pt
+TezzCorp_WebSites/tn_tezzcorp_com/download/sdk/build/CMake*
+TezzCorp_WebSites/tn_tezzcorp_com/download/sdk/build/CMakeFiles/
+TezzCorp_WebSites/tn_tezzcorp_com/download/sdk/build_mingw/
 tests/regression/**/*.exe
 tests/regression/**/__pycache__/
 tests/hardware/**/__pycache__/

@@ -69,17 +69,17 @@ fn _tensor_track_view(view_value:Tensor, source:Tensor) -> Tensor:
 fn _tensor_gradient_retain(g:*Tensor) -> int:
   if g != 0 as *Tensor:
     owner:*TensorGradient = (*TensorGradient)g
-    owner.refs = owner.refs + 1
+    (*owner).refs = (*owner).refs + 1
   ret 0
 
 fn _tensor_gradient_release(g:*Tensor) -> int:
   if g == 0 as *Tensor:
     ret 0
   owner:*TensorGradient = (*TensorGradient)g
-  owner.refs = owner.refs - 1
-  if owner.refs <= 0:
-    if g.data != 0 as *float:
-      free(g.data as *char)
+  (*owner).refs = (*owner).refs - 1
+  if (*owner).refs <= 0:
+    if (*g).data != 0 as *float:
+      free((*g).data as *char)
     free(g as *char)
   ret 0
 

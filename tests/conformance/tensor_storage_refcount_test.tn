@@ -1,0 +1,85 @@
+// Task 5.2: Tensor Storage and Reference Counting Test
+// Tests pointer dereferencing fixes in lib/tensor/storage.tn, tape.tn, backward.tn
+// Focus: Verify compilation and basic tensor operations work with fixed (*ptr).field syntax
+//
+// This test verifies that the pointer dereferencing syntax fixes are correct:
+// - lib/tensor/storage.tn: (*owner).refs for reference counting
+// - lib/tensor/tape.tn: (*node).field for tape recording
+// - lib/tensor/tape.tn: (*p).field for tensor load/store in unsafe blocks
+// - lib/tensor/backward.tn: (*node).field for gradient computation
+
+import "tensor"
+
+fn main() -> int:
+  tensor.tape_init()
+  
+  failed:int = 0
+  
+  // Test 1: Tensor creation and storage allocation
+  // This exercises the storage allocation code
+  x:Tensor = tensor.tensor_zeros_1d(4)
+  tensor.tensor_set1(x, 0, 1.0)
+  tensor.tensor_set1(x, 1, 2.0)
+  tensor.tensor_set1(x, 2, 3.0)
+  tensor.tensor_set1(x, 3, 4.0)
+  
+  if tensor.tensor_get1(x, 0) != 1.0:
+    say "FAIL: Tensor creation - value mismatch"
+    failed = 1
+  
+  // Test 2: Gradient storage allocation and reference counting
+  // This exercises (*owner).refs syntax in _tensor_gradient_retain/release
+  x = tensor.tensor_require_grad(x)
+  
+  // Test 3: Tensor cloning (storage allocation)
+  y:Tensor = tensor.tensor_clone(x)
+  if tensor.tensor_get1(y, 0) != 1.0 || tensor.tensor_get1(y, 3) != 4.0:
+    say "FAIL: Tensor cloning - value mismatch"
+    failed = 1
+  
+  // Test 4: Tensor view operations
+  // This exercises tape recording with (*node).field syntax
+  z:Tensor = tensor.tensor_reshape_2d(y, 2, 2)
+  if z.shape0 != 2 || z.shape1 != 2:
+    say "FAIL: Tensor reshape - shape mismatch"
+    failed = 1
+  
+  // Test 5: Reference counting stress - multiple tensors with gradients
+  // This exercises (*owner).refs increment/decrement in retain/release
+  i:int = 0
+  for i = 0; i < 5; i++:
+    t:Tensor = tensor.tensor_zeros_1d(3)
+    t = tensor.tensor_require_grad(t)
+    tensor.tensor_set1(t, 0, 1.0 + (i as float))
+    tensor.tensor_free_tensor(t)
+    // Gradient should be released - uses (*owner).refs syntax
+  
+  // Test 6: Tape recording
+  // Create tensors for operations - exercises (*node).field in tape recording
+  a:Tensor = tensor.tensor_ones_1d(3)
+  a = tensor.tensor_require_grad(a)
+  
+  b:Tensor = tensor.tensor_ones_1d(3)
+  b = tensor.tensor_require_grad(b)
+  
+  // Test 7: Contiguous copy (storage allocation)
+  c:Tensor = tensor.tensor_contiguous(a)
+  tensor.tensor_set1(c, 0, 5.0)
+  
+  if tensor.tensor_get1(a, 0) != 1.0:
+    say "FAIL: Contiguous copy - independent storage"
+    failed = 1
+  
+  // Cleanup
+  tensor.tape_reset()
+  tensor.tensor_free_tensor(c)
+  tensor.tensor_free_tensor(b)
+  tensor.tensor_free_tensor(a)
+  tensor.tensor_free_tensor(z)
+  tensor.tensor_free_tensor(y)
+  tensor.tensor_free_tensor(x)
+  
+  if failed == 0:
+    say "PASS: Storage and reference counting tests"
+  
+  ret failed

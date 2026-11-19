@@ -1,0 +1,27 @@
+// Test B: Mutually recursive pointers - Valid pattern that must be preserved
+// This test verifies that mutually recursive pointer references work correctly.
+// Node points to List, List points to Node - valid because they use pointers.
+// Expected: compiles successfully with correct layout
+// Preservation requirement: Mutually recursive pointer structs must continue working after the fix
+
+struct Node:
+  data:int
+  owner:*List
+
+struct List:
+  head:*Node
+  count:int
+
+fn main() -> int:
+  // Verify the types are properly defined
+  lst:List
+  lst.count = 0
+  unsafe:
+    lst.head = 0 as *Node
+  
+  node:Node
+  node.data = 42
+  unsafe:
+    node.owner = 0 as *List
+  
+  ret 0

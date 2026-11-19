@@ -164,7 +164,9 @@ fn rsqrt(x:float) -> float:
 fn floor(x:float) -> float:
   if x != x || x == 0.0:
     ret x
-  if x >= 4503599627370496.0 || x <= -4503599627370496.0:
+  // 2^52: beyond this, floats don't have fractional precision
+  large:float = 4503599627370496.0
+  if x >= large || x <= 0.0 - large:
     ret x
   n:int = x as int
   fn2:float = n as float
@@ -176,7 +178,8 @@ fn floor(x:float) -> float:
 fn ceil(x:float) -> float:
   if x != x || x == 0.0:
     ret x
-  if x >= 4503599627370496.0 || x <= -4503599627370496.0:
+  large:float = 4503599627370496.0
+  if x >= large || x <= 0.0 - large:
     ret x
   n:int = x as int
   fn2:float = n as float
@@ -194,7 +197,8 @@ fn round(x:float) -> float:
 fn trunc(x:float) -> float:
   if x != x || x == 0.0:
     ret x
-  if x >= 4503599627370496.0 || x <= -4503599627370496.0:
+  large:float = 4503599627370496.0
+  if x >= large || x <= 0.0 - large:
     ret x
   ret (x as int) as float
 
@@ -362,9 +366,11 @@ fn _exp_core(x:float) -> float:
 fn exp(x:float) -> float:
   if x != x:
     ret x
-  if x > 709.782712893384:
+  max_exp:float = 709.782712893384
+  min_exp:float = 0.0 - 745.1332191019411
+  if x > max_exp:
     ret INF()
-  if x < -745.1332191019411:
+  if x < min_exp:
     ret 0.0
   q:float = x / LN2()
   k:int = 0
@@ -447,7 +453,8 @@ fn pow(base:float, exp2:float) -> float:
       ret 0.0
     magnitude = 0.0 - magnitude
     // Above 2^53 every representable finite exponent is an even integer.
-    if absf(exp2) < 9007199254740992.0:
+    pow2_53:float = 9007199254740992.0
+    if absf(exp2) < pow2_53:
       n:int = exp2 as int
       negative = n & 1
   result:float = exp(exp2 * log(magnitude))

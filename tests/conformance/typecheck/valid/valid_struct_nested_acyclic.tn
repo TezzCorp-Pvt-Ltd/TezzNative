@@ -1,0 +1,32 @@
+// Test C: Acyclic dependencies - Valid pattern that must be preserved
+// This test verifies acyclic value type dependencies work correctly.
+// Point -> Rect -> Scene forms a dependency chain without cycles.
+// Expected: compiles successfully with correct sizeof calculations
+// Preservation requirement: Acyclic nested structs must produce identical layouts after the fix
+
+struct Point:
+  x:int
+  y:int
+
+struct Rect:
+  topleft:Point
+  bottomright:Point
+
+struct Scene:
+  bounds:Rect
+  id:int
+
+fn main() -> int:
+  // Verify nested struct initialization and access
+  scene:Scene
+  scene.id = 1
+  scene.bounds.topleft.x = 0
+  scene.bounds.topleft.y = 0
+  scene.bounds.bottomright.x = 100
+  scene.bounds.bottomright.y = 100
+  
+  // Verify calculations work
+  if scene.bounds.bottomright.x != 100:
+    ret 1
+  
+  ret 0

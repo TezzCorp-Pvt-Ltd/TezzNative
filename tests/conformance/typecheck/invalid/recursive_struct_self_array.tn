@@ -1,0 +1,15 @@
+// Test D: Self-referential array
+// This test demonstrates a self-referential struct through an array field.
+// Node contains an array of 2 Nodes by value.
+// This creates a size paradox: sizeof(Node) = 4 + 2 * sizeof(Node)
+// implying sizeof(Node) = 4 + 2*sizeof(Node), which has no solution for positive sizes.
+// Expected: compiler should reject with "recursive value type has no finite size"
+// Bug behavior: compiler may accept this code (incorrectly)
+
+struct Node:
+  data:int
+  children:[Node; 2]
+
+fn main() -> int:
+  ret 0
+

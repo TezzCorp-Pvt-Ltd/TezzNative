@@ -180,6 +180,9 @@ void tenv_add_alias(TypeEnv* E, const char* name, int len, Type* ty, SrcLoc loc)
   E->alias_n++;
 }
 
+/* Compute provisional struct layout. This function is only used during
+ * finalization (via finalize_layout), not during struct registration.
+ * Calling this prematurely bypasses cycle detection. */
 static void compute_struct_layout(Type* st){
   int off=0;
   int maxa=1;
@@ -260,7 +263,7 @@ Type* tenv_add_struct(TypeEnv* E, const char* name, int len, Field* fields, int 
       }
     }
 
-    compute_struct_layout(existing);
+    // Layout deferred to tenv_finalize_layouts()
     return existing;
   }
 
@@ -285,7 +288,7 @@ Type* tenv_add_struct(TypeEnv* E, const char* name, int len, Field* fields, int 
     }
   }
 
-  compute_struct_layout(st);
+  // Layout deferred to tenv_finalize_layouts()
 
   tenv_ensure(E);
   E->items[E->count++] = st;

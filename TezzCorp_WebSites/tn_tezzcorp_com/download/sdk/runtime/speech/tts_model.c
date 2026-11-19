@@ -177,13 +177,33 @@ done:
   atomic_flag_clear(&model->busy); return result;
 }
 
+TN_NATIVE_API long long tn_speech_tts_load_vocoder(const char* path){
+  if(!path || !*path) return -1;
+  return speech_neural_vocoder_load(path) == 0 ? 0 : -1;
+}
+
 TN_NATIVE_API long long tn_speech_tts_pcm(long long handle, const int64_t* labels, long long count,
   int64_t* pcm, long long capacity, long long speed_ppm, long long pitch_ppm, long long energy_ppm){
   if(!pcm || capacity<400 || capacity>480000 || pitch_ppm<100000 || pitch_ppm>4000000 || energy_ppm<0 || energy_ppm>4000000) return -1;
   int max_frames=(int)((capacity-400)/160+1); if(max_frames>TN_SPEECH_MAX_FRAMES) max_frames=TN_SPEECH_MAX_FRAMES;
   double* mel=(double*)malloc((size_t)max_frames*TN_SPEECH_MELS*sizeof(double)); if(!mel) return -1;
   long long frames=tn_speech_tts_mel(handle,labels,count,mel,max_frames,speed_ppm);
-  long long result=frames>0 ? speech_vocode(mel,(int)frames,pcm,(int)capacity,(double)pitch_ppm*1e-6,(double)energy_ppm*1e-6) : -1;
+  long long result = -1;
+  if(frames > 0){
+    if(!speech_neural_vocoder_is_loaded()){
+      // Attempt auto-load of default vocoder weights if present
+      if(speech_neural_vocoder_load("tools/vocoder/checkpoints/vocoder_weights.bin") != 0 &&
+         speech_neural_vocoder_load("build/speech/vocoder_weights.bin") != 0){
+        speech_neural_vocoder_load("vocoder_weights.bin");
+      }
+    }
+    if(speech_neural_vocoder_is_loaded()){
+      result = speech_neural_vocode(mel, (int)frames, pcm, (int)capacity, (double)pitch_ppm*1e-6, (double)energy_ppm*1e-6);
+    }
+    if(result <= 0){
+      result = speech_vocode(mel, (int)frames, pcm, (int)capacity, (double)pitch_ppm*1e-6, (double)energy_ppm*1e-6);
+    }
+  }
   free(mel); return result;
 }
 

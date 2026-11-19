@@ -1,0 +1,45 @@
+// Test D: Mixed pointers and values - Complex but valid struct graph
+// This test verifies complex struct layouts with mixed field types work correctly.
+// Includes nested structs, pointers, and various primitive types.
+// Expected: compiles successfully with correct alignment and field offsets
+// Preservation requirement: Field offsets and sizes must remain identical after the fix
+
+struct Inner:
+  a:int
+  b:int
+  c:int
+
+struct Outer:
+  x:int
+  inner:Inner
+  y:int
+
+struct Container:
+  flag:int
+  outer:Outer
+  ptr:*Inner
+  count:int
+
+fn main() -> int:
+  // Verify complex nested initialization
+  container:Container
+  container.flag = 1
+  container.count = 5
+  unsafe:
+    container.ptr = 0 as *Inner
+  
+  // Access deeply nested fields
+  container.outer.x = 10
+  container.outer.inner.a = 1
+  container.outer.inner.b = 100
+  container.outer.inner.c = 20
+  container.outer.y = 2
+  
+  // Verify values
+  if container.outer.inner.b != 100:
+    ret 1
+  
+  if container.count != 5:
+    ret 2
+  
+  ret 0

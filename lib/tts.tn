@@ -21,6 +21,7 @@ extern fn speech_tts_steps(handle:int) -> int
 extern fn speech_tts_train(handle:int, mel:*float, frames:int, labels:*int, count:int, alignment:*int, rate_ppm:int, loss:*float) -> int
 extern fn speech_tts_mel(handle:int, labels:*int, count:int, mel:*float, capacity:int, speed_ppm:int) -> int
 extern fn speech_tts_pcm(handle:int, labels:*int, count:int, pcm:*int, capacity:int, speed_ppm:int, pitch_ppm:int, energy_ppm:int) -> int
+extern fn speech_tts_load_vocoder(path:str) -> int
 
 // ─────────────────────────────────────────────────────────────
 // Constants
@@ -283,6 +284,10 @@ fn tts_load_model(eng:*TtsEngine, model_path:str) -> int:
   (*eng).use_neural = 1
   (*eng).sample_rate = 16000
   ret TTS_OK
+
+fn tts_load_vocoder(eng:*TtsEngine, vocoder_path:str) -> int:
+  if eng == 0 || vocoder_path == 0: ret TTS_ERR
+  ret speech_tts_load_vocoder(vocoder_path)
 
 fn tts_create_trainable(eng:*TtsEngine, hidden:int, seed:int) -> int:
   if eng == 0: ret TTS_ERR

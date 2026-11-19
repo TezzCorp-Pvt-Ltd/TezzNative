@@ -1,0 +1,17 @@
+// Test C: Array-mediated cycle
+// This test demonstrates a recursive value type cycle through an array field.
+// Container contains an array of 5 Items, and Item contains a Container.
+// This creates a size paradox: sizeof(Container) = 5 * sizeof(Item)
+// and sizeof(Item) = sizeof(Container), implying sizeof(Container) = 5 * sizeof(Container)
+// Expected: compiler should reject with "recursive value type has no finite size"
+// Bug behavior: compiler may accept with size 0 or incorrect size
+
+struct Container:
+  items:[Item; 5]
+
+struct Item:
+  c:Container
+
+fn main() -> int:
+  ret 0
+

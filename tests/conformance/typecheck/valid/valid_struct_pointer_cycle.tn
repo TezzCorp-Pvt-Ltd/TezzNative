@@ -1,0 +1,34 @@
+// Test A: Pointer cycles (allowed) - Valid pattern that must be preserved
+// This test verifies that pointer-based recursive references are valid.
+// Unlike value cycles, pointer cycles are allowed because pointer sizes are known and finite.
+// struct Node with *Node next creates a valid self-referential structure.
+// Expected: compiles successfully with consistent sizeof(Node)
+// Preservation requirement: This pattern must continue working after the fix
+
+struct Node:
+  data:int
+  next:*Node
+
+struct Tree:
+  left:*Tree
+  right:*Tree
+  val:int
+
+fn main() -> int:
+  // Verify basic compilation and type checking
+  n:Node
+  n.data = 42
+  unsafe:
+    n.next = 0 as *Node
+  
+  t:Tree
+  t.val = 100
+  unsafe:
+    t.left = 0 as *Tree
+    t.right = 0 as *Tree
+  
+  // Basic sizeof check - these should be valid and consistent
+  // Node should have size for int + pointer
+  // Tree should have size for int + two pointers
+  
+  ret 0

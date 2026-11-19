@@ -1,0 +1,19 @@
+// Test B: Indirect three-struct cycle
+// This test demonstrates an indirect recursive value type cycle through three structs.
+// A contains B by value, B contains C by value, C contains A by value.
+// This creates a cycle: A → B → C → A
+// Expected: compiler should reject with "recursive value type has no finite size"
+// Bug behavior: compiler accepts this code (incorrectly)
+
+struct A:
+  b:B
+
+struct B:
+  c:C
+
+struct C:
+  a:A
+
+fn main() -> int:
+  ret 0
+

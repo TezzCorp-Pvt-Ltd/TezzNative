@@ -78,6 +78,11 @@ TN_NATIVE_API long long tn_speech_stt_text_train(long long handle, const int64_t
 TN_NATIVE_API long long tn_speech_stt_decoder(long long handle, long long width, long long lm_weight_ppm, long long insertion_ppm);
 
 int speech_vocode(const double* mel, int frames, int64_t* pcm, int capacity, double pitch, double energy);
+int speech_neural_vocoder_load(const char* weights_path);
+void speech_neural_vocoder_free(void);
+int speech_neural_vocoder_is_loaded(void);
+int speech_neural_vocode(const double* mel, int frames, int64_t* pcm, int capacity, double pitch, double energy);
+TN_NATIVE_API long long tn_speech_tts_load_vocoder(const char* path);
 TN_NATIVE_API long long tn_speech_tts_create(long long hidden, long long seed);
 TN_NATIVE_API long long tn_speech_tts_free(long long handle);
 TN_NATIVE_API long long tn_speech_tts_train(long long handle, const double* mel, long long frames,

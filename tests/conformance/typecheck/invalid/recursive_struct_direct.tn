@@ -1,0 +1,17 @@
+// Test A: Direct two-struct cycle
+// This test demonstrates a direct recursive value type cycle.
+// struct A contains B by value, struct B contains A by value.
+// This creates an impossible type layout: sizeof(A) depends on sizeof(B) and vice versa.
+// Expected: compiler should reject with "recursive value type has no finite size"
+// Bug behavior: compiler accepts this code (incorrectly)
+
+struct A:
+  x:int
+  b:B
+
+struct B:
+  a:A
+
+fn main() -> int:
+  ret 0
+
